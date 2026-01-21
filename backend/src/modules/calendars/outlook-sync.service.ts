@@ -119,6 +119,10 @@ export interface OutlookCalendarEvent {
     range: { type: string; startDate: string; endDate?: string; numberOfOccurrences?: number };
   };
   isCancelled?: boolean;
+  // For exception instances (modified occurrences)
+  seriesMasterId?: string;
+  type?: 'singleInstance' | 'occurrence' | 'exception' | 'seriesMaster';
+  originalStart?: { dateTime: string; timeZone: string };
 }
 
 export async function fetchOutlookEvents(
@@ -147,7 +151,7 @@ export async function fetchOutlookEvents(
     const response = await client.api(nextLink).get();
 
     for (const event of response.value || []) {
-      if (!event.isCancelled && event.id) {
+      if (event.id) {
         events.push({
           id: event.id,
           subject: event.subject || undefined,
@@ -158,6 +162,9 @@ export async function fetchOutlookEvents(
           isAllDay: event.isAllDay || false,
           recurrence: event.recurrence || undefined,
           isCancelled: event.isCancelled || false,
+          seriesMasterId: event.seriesMasterId || undefined,
+          type: event.type || 'singleInstance',
+          originalStart: event.originalStart || undefined,
         });
       }
     }
@@ -345,9 +352,21 @@ export async function syncCalendarFromOutlook(
 
   const outlookEventIds = new Set(outlookEvents.map((e) => e.id));
 
-  // Process Outlook events
-  for (const outlookEvent of outlookEvents) {
+  // Separate master events and exception instances
+  const masterEvents = outlookEvents.filter(e => e.type === 'seriesMaster' || (!e.seriesMasterId && !e.type));
+  const exceptionEvents = outlookEvents.filter(e => e.type === 'exception' || e.seriesMasterId);
+
+  // Map external IDs to db IDs for linking exceptions to masters
+  const externalIdToDbId: Record<string, string> = {};
+
+  // First pass: Process master events and single instances
+  for (const outlookEvent of masterEvents) {
     const existing = existingByExternalId.get(outlookEvent.id);
+
+    // Skip cancelled events without valid start/end
+    if (outlookEvent.isCancelled || !outlookEvent.start) {
+      continue;
+    }
 
     const isAllDay = outlookEvent.isAllDay || false;
     const startTime = new Date(outlookEvent.start.dateTime);
@@ -364,6 +383,7 @@ export async function syncCalendarFromOutlook(
       endTime,
       allDay: isAllDay,
       recurrenceRule,
+      recurrenceStatus: recurrenceRule ? 'master' as const : null,
       externalId: outlookEvent.id,
       updatedAt: new Date(),
     };
@@ -374,9 +394,73 @@ export async function syncCalendarFromOutlook(
         .update(calendarEvents)
         .set(eventData)
         .where(eq(calendarEvents.id, existing.id));
+      externalIdToDbId[outlookEvent.id] = existing.id;
       updated++;
     } else {
       // Create new event
+      const [inserted] = await db.insert(calendarEvents).values({
+        calendarId,
+        ...eventData,
+      }).returning();
+      externalIdToDbId[outlookEvent.id] = inserted.id;
+      created++;
+    }
+  }
+
+  // Second pass: Process exception instances
+  for (const outlookEvent of exceptionEvents) {
+    const existing = existingByExternalId.get(outlookEvent.id);
+
+    const isAllDay = outlookEvent.isAllDay || false;
+    const isCancelled = outlookEvent.isCancelled || false;
+
+    // Get original start time
+    let originalStartTime: Date | null = null;
+    if (outlookEvent.originalStart) {
+      originalStartTime = new Date(outlookEvent.originalStart.dateTime);
+    }
+
+    // Find master event ID
+    const masterDbId = outlookEvent.seriesMasterId
+      ? externalIdToDbId[outlookEvent.seriesMasterId]
+      : null;
+
+    // For cancelled instances, we might not have valid start/end
+    let startTime = originalStartTime;
+    let endTime = originalStartTime;
+
+    if (!isCancelled && outlookEvent.start) {
+      startTime = new Date(outlookEvent.start.dateTime);
+      endTime = new Date(outlookEvent.end.dateTime);
+    }
+
+    if (!startTime || !endTime) {
+      continue;
+    }
+
+    const eventData = {
+      title: outlookEvent.subject || 'Untitled Event',
+      description: outlookEvent.bodyPreview || null,
+      location: outlookEvent.location?.displayName || null,
+      startTime,
+      endTime,
+      allDay: isAllDay,
+      recurringEventId: masterDbId,
+      originalStartTime,
+      recurrenceStatus: isCancelled ? 'cancelled' as const : 'exception' as const,
+      externalId: outlookEvent.id,
+      updatedAt: new Date(),
+    };
+
+    if (existing) {
+      // Update existing exception
+      await db
+        .update(calendarEvents)
+        .set(eventData)
+        .where(eq(calendarEvents.id, existing.id));
+      updated++;
+    } else {
+      // Create new exception
       await db.insert(calendarEvents).values({
         calendarId,
         ...eventData,

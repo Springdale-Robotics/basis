@@ -71,6 +71,19 @@ install_deps() {
   fi
 }
 
+# Helper: kill existing dev processes to avoid port conflicts
+cleanup_processes() {
+  # Kill any existing tsx/node processes for backend
+  pkill -f "tsx.*src/index" 2>/dev/null || true
+  pkill -f "node.*backend.*dev" 2>/dev/null || true
+  # Kill any existing vite processes for frontend
+  pkill -f "vite.*5173" 2>/dev/null || true
+  # Kill anything on our dev ports
+  lsof -ti:3000 | xargs kill -9 2>/dev/null || true
+  lsof -ti:5173 | xargs kill -9 2>/dev/null || true
+  sleep 1
+}
+
 # Helper: start infrastructure (postgres + redis)
 start_infra() {
   echo -e "${BLUE}Starting PostgreSQL and Redis...${NC}"
@@ -91,6 +104,7 @@ case "${1:-help}" in
     case "${2:-all}" in
       all|"")
         # Full stack: infra + backend + frontend
+        cleanup_processes
         start_infra
         setup_backend_env
         install_deps
@@ -114,6 +128,7 @@ case "${1:-help}" in
 
       backend)
         # Backend only
+        cleanup_processes
         start_infra
         setup_backend_env
         if [ ! -d "$BACKEND_DIR/node_modules" ]; then
@@ -131,6 +146,9 @@ case "${1:-help}" in
 
       frontend)
         # Frontend only (assumes backend is running)
+        # Only kill frontend port, not backend
+        lsof -ti:5173 | xargs kill -9 2>/dev/null || true
+        sleep 1
         if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
           (cd "$FRONTEND_DIR" && npm install)
         fi

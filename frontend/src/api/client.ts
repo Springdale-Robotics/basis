@@ -4,6 +4,7 @@ import { API_BASE_URL } from '@/lib/constants';
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
+  data?: unknown;
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
@@ -141,12 +142,17 @@ export async function apiPatch<T, D = unknown>(
 }
 
 export async function apiDelete<T>(path: string, options?: RequestOptions): Promise<T> {
-  const { params, ...fetchOptions } = options || {};
+  const { params, data, ...fetchOptions } = options || {};
   const url = buildUrl(path, params);
 
   const response = await fetch(url, {
     method: 'DELETE',
     credentials: 'include',
+    headers: data ? {
+      'Content-Type': 'application/json',
+      ...fetchOptions?.headers,
+    } : fetchOptions?.headers,
+    body: data ? JSON.stringify(data) : undefined,
     ...fetchOptions,
   });
 

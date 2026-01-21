@@ -1,4 +1,3 @@
-import { createServer } from 'http';
 import { buildApp } from './app.js';
 import { initializeWebSocket } from './websocket/index.js';
 import { initializeWorkers, scheduleRecurringJobs, shutdownWorkers } from './jobs/index.js';
@@ -16,11 +15,11 @@ async function main(): Promise<void> {
     // Build Fastify app
     const app = await buildApp();
 
-    // Create HTTP server from Fastify
-    const server = createServer(app.server);
+    // Wait for Fastify to be ready (plugins loaded, routes registered)
+    await app.ready();
 
-    // Initialize WebSocket
-    initializeWebSocket(server);
+    // Initialize WebSocket on Fastify's internal HTTP server
+    initializeWebSocket(app.server);
     logger.info('WebSocket server attached');
 
     // Initialize background workers

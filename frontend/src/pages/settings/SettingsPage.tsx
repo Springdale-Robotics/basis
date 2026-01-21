@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { ProfileSettingsPage } from './ProfileSettingsPage';
 import { ThemeSettingsPage } from './ThemeSettingsPage';
 import { HouseholdSettingsPage } from './HouseholdSettingsPage';
+import { CalendarSettingsPage } from './CalendarSettingsPage';
 
 export function SettingsPage() {
   return (
@@ -48,6 +49,7 @@ export function SettingsPage() {
             <Route path="notifications" element={<PlaceholderSettings title="Notifications" />} />
             <Route path="household" element={<HouseholdSettingsPage />} />
             <Route path="members" element={<PlaceholderSettings title="Members" />} />
+            <Route path="calendars" element={<CalendarSettingsPage />} />
             <Route path="devices" element={<PlaceholderSettings title="Devices" />} />
             <Route path="remote-access" element={<PlaceholderSettings title="Remote Access" />} />
             <Route path="backup" element={<PlaceholderSettings title="Backup" />} />

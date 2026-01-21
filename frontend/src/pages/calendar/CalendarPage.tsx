@@ -9,6 +9,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EventForm } from '@/components/calendar/EventForm';
 import { EventDetail } from '@/components/calendar/EventDetail';
 import { CalendarForm } from '@/components/calendar/CalendarForm';
+import { EditRecurringEventDialog, type RecurrenceEditScope } from '@/components/calendar/EditRecurringEventDialog';
+import { DeleteRecurringEventDialog, type RecurrenceDeleteScope } from '@/components/calendar/DeleteRecurringEventDialog';
 import { CalendarSearch, CalendarSearchRef } from '@/components/calendar/CalendarSearch';
 import { useCalendarShortcuts, KEYBOARD_SHORTCUTS } from '@/hooks/useCalendarShortcuts';
 import { calendarsApi } from '@/api/calendars';
@@ -40,6 +42,9 @@ export function CalendarPage() {
   const [visibleCalendars, setVisibleCalendars] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [defaultEventDate, setDefaultEventDate] = useState<Date | undefined>(undefined);
+  const [editRecurringDialogOpen, setEditRecurringDialogOpen] = useState(false);
+  const [deleteRecurringDialogOpen, setDeleteRecurringDialogOpen] = useState(false);
+  const [pendingFormData, setPendingFormData] = useState<EventFormData | null>(null);
   const queryClient = useQueryClient();
   const searchRef = useRef<CalendarSearchRef>(null);
 
@@ -52,6 +57,7 @@ export function CalendarPage() {
       calendarsApi.getEvents({
         start: startDate.toISOString(),
         end: endDate.toISOString(),
+        expandRecurring: true,
       }),
   });
 
@@ -153,6 +159,8 @@ export function CalendarPage() {
   // Convert recurrence to iCal RRULE format
   const recurrenceToRRule = (recurrence: string | undefined): string | undefined => {
     if (!recurrence || recurrence === 'none') return undefined;
+    // If it's already an RRULE string, return as-is
+    if (recurrence.includes('FREQ=')) return recurrence;
     const map: Record<string, string> = {
       'daily': 'FREQ=DAILY',
       'weekly': 'FREQ=WEEKLY',
@@ -173,39 +181,103 @@ export function CalendarPage() {
       allDay: data.allDay,
       recurrenceRule: recurrenceToRRule(data.recurrence),
     }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['events'] });
+    onSuccess: async () => {
+      // Invalidate and refetch all event queries to ensure fresh data
+      await queryClient.invalidateQueries({ queryKey: ['events'] });
       setFormOpen(false);
       setSelectedEvent(null);
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: EventFormData) => {
+    mutationFn: async ({ data, scope }: { data: EventFormData; scope?: RecurrenceEditScope }) => {
       if (!selectedEvent) throw new Error('No event selected');
-      return calendarsApi.updateEvent(selectedEvent.calendarId, selectedEvent.id, {
+
+      // Determine the actual event to update (master for virtual instances)
+      const isVirtual = selectedEvent.isVirtualInstance;
+      const masterEvent = isVirtual ? selectedEvent.masterEvent : selectedEvent;
+      const eventId = masterEvent?.id || selectedEvent.id;
+      const calendarId = masterEvent?.calendarId || selectedEvent.calendarId;
+
+      // For recurring events with scope
+      if (scope && masterEvent?.recurrenceRule) {
+        if (scope === 'single') {
+          // Create an exception for this single instance
+          const result = await calendarsApi.createException(calendarId, eventId, {
+            originalStartTime: selectedEvent.startTime,
+            title: data.title,
+            description: data.description,
+            location: data.location,
+            startTime: data.startTime,
+            endTime: data.endTime,
+            allDay: data.allDay,
+          });
+          return { event: result.exception };
+        } else if (scope === 'all') {
+          // Update master event but preserve original start/end times for the series
+          // Only update recurrence rule and non-time fields
+          return calendarsApi.updateEvent(calendarId, eventId, {
+            title: data.title,
+            description: data.description,
+            location: data.location,
+            allDay: data.allDay,
+            recurrenceRule: recurrenceToRRule(data.recurrence),
+            scope: 'all',
+          });
+        } else {
+          // 'following' - update this and future events
+          return calendarsApi.updateEvent(calendarId, eventId, {
+            title: data.title,
+            description: data.description,
+            location: data.location,
+            startTime: data.startTime,
+            endTime: data.endTime,
+            allDay: data.allDay,
+            recurrenceRule: recurrenceToRRule(data.recurrence),
+            scope: 'following',
+            originalStartTime: selectedEvent.startTime,
+          });
+        }
+      }
+
+      // Non-recurring event or no scope specified
+      return calendarsApi.updateEvent(calendarId, eventId, {
         title: data.title,
         description: data.description,
+        location: data.location,
         startTime: data.startTime,
         endTime: data.endTime,
         allDay: data.allDay,
         recurrenceRule: recurrenceToRRule(data.recurrence),
       });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['events'] });
+    onSuccess: async () => {
+      // Invalidate and refetch all event queries to ensure fresh data
+      await queryClient.invalidateQueries({ queryKey: ['events'] });
       setFormOpen(false);
       setSelectedEvent(null);
+      setPendingFormData(null);
     },
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: (scope?: RecurrenceDeleteScope) => {
       if (!selectedEvent) throw new Error('No event selected');
-      return calendarsApi.deleteEvent(selectedEvent.calendarId, selectedEvent.id);
+
+      // Determine the actual event (master for virtual instances)
+      const isVirtual = selectedEvent.isVirtualInstance;
+      const masterEvent = isVirtual ? selectedEvent.masterEvent : selectedEvent;
+      const eventId = masterEvent?.id || selectedEvent.id;
+      const calendarId = masterEvent?.calendarId || selectedEvent.calendarId;
+
+      return calendarsApi.deleteEvent(calendarId, eventId, {
+        scope,
+        originalStartTime: scope === 'single' || scope === 'following' ? selectedEvent.startTime : undefined,
+      });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['events'] });
+    onSuccess: async () => {
+      // Invalidate and refetch all event queries to ensure fresh data
+      await queryClient.invalidateQueries({ queryKey: ['events'] });
       setFormOpen(false);
       setDetailOpen(false);
       setSelectedEvent(null);
@@ -231,10 +303,48 @@ export function CalendarPage() {
 
   const handleFormSubmit = (data: EventFormData) => {
     if (selectedEvent) {
-      updateMutation.mutate(data);
+      // Check if this is a recurring event (either master or virtual instance)
+      const isRecurring = selectedEvent.recurrenceRule ||
+        selectedEvent.isVirtualInstance ||
+        selectedEvent.masterEvent?.recurrenceRule;
+
+      if (isRecurring) {
+        // Store the form data and show the scope dialog
+        setPendingFormData(data);
+        setEditRecurringDialogOpen(true);
+      } else {
+        updateMutation.mutate({ data });
+      }
     } else {
       createMutation.mutate(data);
     }
+  };
+
+  const handleEditRecurringConfirm = (scope: RecurrenceEditScope) => {
+    setEditRecurringDialogOpen(false);
+    if (pendingFormData) {
+      updateMutation.mutate({ data: pendingFormData, scope });
+    }
+  };
+
+  const handleDeleteEvent = () => {
+    if (!selectedEvent) return;
+
+    // Check if this is a recurring event
+    const isRecurring = selectedEvent.recurrenceRule ||
+      selectedEvent.isVirtualInstance ||
+      selectedEvent.masterEvent?.recurrenceRule;
+
+    if (isRecurring) {
+      setDeleteRecurringDialogOpen(true);
+    } else {
+      deleteMutation.mutate(undefined);
+    }
+  };
+
+  const handleDeleteRecurringConfirm = (scope: RecurrenceDeleteScope) => {
+    setDeleteRecurringDialogOpen(false);
+    deleteMutation.mutate(scope);
   };
 
   const handleFormClose = (open: boolean) => {
@@ -312,7 +422,7 @@ export function CalendarPage() {
     },
     onDelete: () => {
       if (selectedEvent && detailOpen) {
-        deleteMutation.mutate();
+        handleDeleteEvent();
       }
     },
   });
@@ -595,7 +705,7 @@ export function CalendarPage() {
         event={selectedEvent}
         calendar={calendars.find((c) => c.id === selectedEvent?.calendarId)}
         onEdit={handleEditFromDetail}
-        onDelete={() => deleteMutation.mutate()}
+        onDelete={handleDeleteEvent}
         isDeleting={deleteMutation.isPending}
       />
 
@@ -620,6 +730,20 @@ export function CalendarPage() {
         onDelete={() => selectedCalendar && deleteCalendarMutation.mutate(selectedCalendar.id)}
         isSubmitting={createCalendarMutation.isPending || updateCalendarMutation.isPending}
         isDeleting={deleteCalendarMutation.isPending}
+      />
+
+      <EditRecurringEventDialog
+        open={editRecurringDialogOpen}
+        onOpenChange={setEditRecurringDialogOpen}
+        onConfirm={handleEditRecurringConfirm}
+        eventTitle={selectedEvent?.title}
+      />
+
+      <DeleteRecurringEventDialog
+        open={deleteRecurringDialogOpen}
+        onOpenChange={setDeleteRecurringDialogOpen}
+        onConfirm={handleDeleteRecurringConfirm}
+        eventTitle={selectedEvent?.title}
       />
     </div>
   );

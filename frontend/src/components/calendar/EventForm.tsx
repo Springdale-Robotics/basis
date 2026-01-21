@@ -1,8 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { format } from 'date-fns';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronUp, Repeat } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -20,9 +20,21 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { Switch } from '@/components/ui/switch';
 import { eventSchema, type EventFormData } from '@/types/forms';
 import type { CalendarEvent, Calendar } from '@/types/models';
+import {
+  RecurrenceEditor,
+  type RecurrenceOptions,
+  getRecurrenceSummary,
+  optionsToRRule,
+  parseRRule,
+} from './RecurrenceEditor';
 
 interface EventFormProps {
   open: boolean;
@@ -35,13 +47,15 @@ interface EventFormProps {
   isSubmitting?: boolean;
 }
 
-const recurrenceOptions = [
+const quickRecurrenceOptions = [
   { value: 'none', label: 'Does not repeat' },
   { value: 'daily', label: 'Daily' },
   { value: 'weekly', label: 'Weekly' },
   { value: 'biweekly', label: 'Every 2 weeks' },
   { value: 'monthly', label: 'Monthly' },
   { value: 'yearly', label: 'Yearly' },
+  { value: 'weekdays', label: 'Every weekday (Mon-Fri)' },
+  { value: 'custom', label: 'Custom...' },
 ];
 
 export function EventForm({
@@ -55,6 +69,12 @@ export function EventForm({
   isSubmitting,
 }: EventFormProps) {
   const isEditing = !!event;
+  const [showCustomRecurrence, setShowCustomRecurrence] = useState(false);
+  const [recurrenceOptions, setRecurrenceOptions] = useState<RecurrenceOptions>({
+    frequency: 'none',
+    interval: 1,
+    endType: 'never',
+  });
 
   const {
     register,
@@ -74,7 +94,7 @@ export function EventForm({
           allDay: event.allDay,
           calendarId: event.calendarId,
           location: event.location || '',
-          recurrence: typeof event.recurrenceRule === 'string' ? event.recurrenceRule : 'none',
+          recurrence: event.recurrenceRule || 'none',
         }
       : {
           title: '',
@@ -98,11 +118,31 @@ export function EventForm({
   const startTime = watch('startTime');
   const endTime = watch('endTime');
 
+  // Parse start date for recurrence options
+  const startDate = useMemo(() => {
+    return startTime ? new Date(startTime) : new Date();
+  }, [startTime]);
+
+  // Initialize recurrence options from event
+  useEffect(() => {
+    if (event?.recurrenceRule) {
+      const parsed = parseRRule(event.recurrenceRule);
+      setRecurrenceOptions(parsed);
+      // Check if it's a custom rule (has complex options)
+      const isCustom = parsed.frequency !== 'none' && (
+        (parsed.byDay && parsed.byDay.length > 1) ||
+        parsed.endType !== 'never' ||
+        (parsed.interval && parsed.interval > 1) ||
+        parsed.monthlyType === 'dayOfWeek'
+      );
+      setShowCustomRecurrence(isCustom);
+    }
+  }, [event?.recurrenceRule]);
+
   // Handle format conversion when toggling all-day switch
   useEffect(() => {
     if (startTime && endTime) {
       if (allDay) {
-        // Converting to date-only format (yyyy-MM-dd)
         if (startTime.includes('T')) {
           setValue('startTime', startTime.split('T')[0]);
         }
@@ -110,7 +150,6 @@ export function EventForm({
           setValue('endTime', endTime.split('T')[0]);
         }
       } else {
-        // Converting to datetime-local format (yyyy-MM-dd'T'HH:mm)
         if (!startTime.includes('T')) {
           setValue('startTime', `${startTime}T09:00`);
         }
@@ -134,8 +173,10 @@ export function EventForm({
           allDay: event.allDay,
           calendarId: event.calendarId,
           location: event.location || '',
-          recurrence: typeof event.recurrenceRule === 'string' ? event.recurrenceRule : 'none',
+          recurrence: event.recurrenceRule || 'none',
         });
+        const parsed = parseRRule(event.recurrenceRule);
+        setRecurrenceOptions(parsed);
       } else {
         reset({
           title: '',
@@ -151,23 +192,115 @@ export function EventForm({
           location: '',
           recurrence: 'none',
         });
+        setRecurrenceOptions({
+          frequency: 'none',
+          interval: 1,
+          endType: 'never',
+        });
+        setShowCustomRecurrence(false);
       }
     }
   }, [open, event, defaultDate, calendars, reset]);
 
+  // Handle quick recurrence selection
+  const handleQuickRecurrenceChange = (value: string) => {
+    if (value === 'custom') {
+      setShowCustomRecurrence(true);
+      // Initialize with weekly if currently none
+      if (recurrenceOptions.frequency === 'none') {
+        const dayIndex = startDate.getDay();
+        const dayMap = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+        setRecurrenceOptions({
+          frequency: 'weekly',
+          interval: 1,
+          endType: 'never',
+          byDay: [dayMap[dayIndex]],
+        });
+      }
+      return;
+    }
+
+    setShowCustomRecurrence(false);
+
+    if (value === 'none') {
+      setRecurrenceOptions({ frequency: 'none', interval: 1, endType: 'never' });
+      setValue('recurrence', 'none');
+    } else if (value === 'weekdays') {
+      setRecurrenceOptions({
+        frequency: 'weekly',
+        interval: 1,
+        endType: 'never',
+        byDay: ['MO', 'TU', 'WE', 'TH', 'FR'],
+      });
+      setValue('recurrence', 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR');
+    } else {
+      // Simple presets
+      const presetOptions: RecurrenceOptions = {
+        frequency: value as 'daily' | 'weekly' | 'monthly' | 'yearly',
+        interval: value === 'biweekly' ? 2 : 1,
+        endType: 'never',
+      };
+      if (value === 'biweekly') {
+        presetOptions.frequency = 'weekly';
+      }
+      setRecurrenceOptions(presetOptions);
+      setValue('recurrence', value);
+    }
+  };
+
+  // Update form value when recurrence options change
+  useEffect(() => {
+    if (showCustomRecurrence) {
+      const rrule = optionsToRRule(recurrenceOptions, startDate);
+      setValue('recurrence', rrule || 'none');
+    }
+  }, [recurrenceOptions, showCustomRecurrence, startDate, setValue]);
+
+  // Get display value for recurrence dropdown
+  const recurrenceDisplayValue = useMemo(() => {
+    if (recurrence === 'none' || !recurrence) return 'none';
+    if (showCustomRecurrence || recurrence.includes('FREQ=')) {
+      return 'custom';
+    }
+    // Map preset values
+    if (['daily', 'weekly', 'biweekly', 'monthly', 'yearly'].includes(recurrence)) {
+      return recurrence;
+    }
+    return 'custom';
+  }, [recurrence, showCustomRecurrence]);
+
   const handleFormSubmit = (data: EventFormData) => {
-    onSubmit(data);
+    // Convert recurrence to RRULE format if needed
+    const finalData = { ...data };
+    if (showCustomRecurrence) {
+      finalData.recurrence = optionsToRRule(recurrenceOptions, startDate) || 'none';
+    } else if (data.recurrence && !data.recurrence.includes('FREQ=') && data.recurrence !== 'none') {
+      // Convert preset to RRULE
+      const presetMap: Record<string, string> = {
+        'daily': 'FREQ=DAILY',
+        'weekly': 'FREQ=WEEKLY',
+        'biweekly': 'FREQ=WEEKLY;INTERVAL=2',
+        'monthly': 'FREQ=MONTHLY',
+        'yearly': 'FREQ=YEARLY',
+      };
+      finalData.recurrence = presetMap[data.recurrence] || data.recurrence;
+    }
+    onSubmit(finalData);
     reset();
   };
 
   const handleClose = () => {
     reset();
+    setShowCustomRecurrence(false);
     onOpenChange(false);
   };
 
+  // Determine if this is a recurring event being edited
+  const isRecurringEvent = isEditing && event?.recurrenceRule;
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEditing ? 'Edit Event' : 'New Event'}</DialogTitle>
         </DialogHeader>
@@ -249,24 +382,65 @@ export function EventForm({
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="recurrence">Repeat</Label>
-            <Select
-              value={recurrence}
-              onValueChange={(value) => setValue('recurrence', value)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Does not repeat" />
-              </SelectTrigger>
-              <SelectContent>
-                {recurrenceOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {/* Recurrence Section */}
+          <Collapsible open={showCustomRecurrence} onOpenChange={setShowCustomRecurrence}>
+            <div className="space-y-2">
+              <Label htmlFor="recurrence">Repeat</Label>
+              <div className="flex gap-2">
+                <Select
+                  value={recurrenceDisplayValue}
+                  onValueChange={handleQuickRecurrenceChange}
+                >
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder="Does not repeat" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {quickRecurrenceOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {recurrenceDisplayValue !== 'none' && (
+                  <CollapsibleTrigger asChild>
+                    <Button type="button" variant="outline" size="icon">
+                      {showCustomRecurrence ? (
+                        <ChevronUp className="h-4 w-4" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </CollapsibleTrigger>
+                )}
+              </div>
+
+              {/* Recurrence summary */}
+              {recurrenceOptions.frequency !== 'none' && !showCustomRecurrence && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Repeat className="h-4 w-4" />
+                  {getRecurrenceSummary(recurrenceOptions, startDate)}
+                </div>
+              )}
+            </div>
+
+            <CollapsibleContent className="pt-4">
+              <div className="border rounded-lg p-4 bg-muted/30">
+                <RecurrenceEditor
+                  value={recurrenceOptions}
+                  onChange={setRecurrenceOptions}
+                  startDate={startDate}
+                />
+              </div>
+              {/* Summary in custom mode */}
+              {recurrenceOptions.frequency !== 'none' && (
+                <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+                  <Repeat className="h-4 w-4" />
+                  {getRecurrenceSummary(recurrenceOptions, startDate)}
+                </div>
+              )}
+            </CollapsibleContent>
+          </Collapsible>
 
           <div className="space-y-2">
             <Label htmlFor="location">Location</Label>

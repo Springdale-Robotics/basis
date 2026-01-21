@@ -51,11 +51,35 @@ export interface UpdateEventRequest {
   allDay?: boolean;
   color?: string | null;
   recurrenceRule?: string | null;
+  // Scope for recurring events: 'single' | 'all' | 'following'
+  scope?: 'single' | 'all' | 'following';
+  // Original start time for identifying instance when editing single occurrence
+  originalStartTime?: string;
+}
+
+export interface DeleteEventRequest {
+  // Scope for recurring events: 'single' | 'all' | 'following'
+  scope?: 'single' | 'all' | 'following';
+  // Original start time for identifying instance when deleting single occurrence
+  originalStartTime?: string;
+}
+
+export interface CreateExceptionRequest {
+  originalStartTime: string;
+  title?: string;
+  description?: string;
+  location?: string;
+  startTime?: string;
+  endTime?: string;
+  allDay?: boolean;
+  color?: string | null;
+  cancelled?: boolean;
 }
 
 export interface GetEventsParams {
   start?: string;
   end?: string;
+  expandRecurring?: boolean;
 }
 
 export interface SearchEventsParams {
@@ -76,6 +100,50 @@ export interface AddAttendeeRequest {
 export interface AddReminderRequest {
   type?: ReminderType;
   minutesBefore: number;
+}
+
+export type PermissionLevel = 'view_busy' | 'view' | 'edit';
+
+export interface ShareCalendarRequest {
+  householdId: string;
+  permissionLevel: PermissionLevel;
+}
+
+export interface CalendarShare {
+  id: string;
+  householdId: string;
+  householdName: string;
+  permissionLevel: PermissionLevel;
+  createdAt?: string;
+}
+
+export interface ConnectedHousehold {
+  id: string;
+  name: string;
+}
+
+export interface SharedCalendar extends Calendar {
+  isShared: boolean;
+  sharedBy: {
+    householdId: string;
+    householdName: string;
+  };
+  permissionLevel: PermissionLevel;
+}
+
+export interface PublicLinkStatus {
+  enabled: boolean;
+  publicToken?: string;
+  feedUrl?: string;
+  webcalUrl?: string;
+  createdAt?: string;
+}
+
+export interface PublicLinkData {
+  publicToken: string;
+  feedUrl: string;
+  webcalUrl: string;
+  createdAt: string;
 }
 
 export const calendarsApi = {
@@ -116,8 +184,15 @@ export const calendarsApi = {
   updateEvent: (calendarId: string, eventId: string, data: UpdateEventRequest) =>
     apiPatch<{ event: CalendarEvent }>(`/calendars/${calendarId}/events/${eventId}`, data),
 
-  deleteEvent: (calendarId: string, eventId: string) =>
-    apiDelete<{ message: string }>(`/calendars/${calendarId}/events/${eventId}`),
+  deleteEvent: (calendarId: string, eventId: string, options?: DeleteEventRequest) =>
+    apiDelete<{ message: string }>(`/calendars/${calendarId}/events/${eventId}`, { data: options }),
+
+  // Exception endpoints for recurring events
+  createException: (calendarId: string, eventId: string, data: CreateExceptionRequest) =>
+    apiPost<{ exception: CalendarEvent }>(`/calendars/${calendarId}/events/${eventId}/exceptions`, data),
+
+  deleteInstance: (calendarId: string, eventId: string, originalStartTime: string) =>
+    apiDelete<{ message: string }>(`/calendars/${calendarId}/events/${eventId}/instances/${encodeURIComponent(originalStartTime)}`),
 
   // Search events
   searchEvents: (params: SearchEventsParams) =>
@@ -219,4 +294,33 @@ export const calendarsApi = {
 
   completeOutlookSync: (data: { outlookCalendarId: string; name: string; color?: string }) =>
     apiPost<{ calendar: Calendar; syncResult?: { created: number; updated: number; deleted: number }; syncError?: string }>('/calendars/sync/outlook/complete', data),
+
+  // Calendar Sharing
+  shareCalendar: (calendarId: string, data: ShareCalendarRequest) =>
+    apiPost<{ share: CalendarShare }>(`/calendars/${calendarId}/share`, data),
+
+  getCalendarShares: (calendarId: string) =>
+    apiGet<{ shares: CalendarShare[] }>(`/calendars/${calendarId}/shares`),
+
+  updateShare: (calendarId: string, shareId: string, permissionLevel: PermissionLevel) =>
+    apiPatch<{ share: CalendarShare }>(`/calendars/${calendarId}/shares/${shareId}`, { permissionLevel }),
+
+  removeShare: (calendarId: string, shareId: string) =>
+    apiDelete<{ message: string }>(`/calendars/${calendarId}/shares/${shareId}`),
+
+  getSharedWithMe: () =>
+    apiGet<{ calendars: SharedCalendar[] }>('/calendars/shared-with-me'),
+
+  getConnectedHouseholds: () =>
+    apiGet<{ households: ConnectedHousehold[] }>('/calendars/sharing/households'),
+
+  // Public ICS Links
+  getPublicLinkStatus: (calendarId: string) =>
+    apiGet<PublicLinkStatus>(`/calendars/${calendarId}/public-link`),
+
+  generatePublicLink: (calendarId: string) =>
+    apiPost<PublicLinkData>(`/calendars/${calendarId}/public-link`),
+
+  revokePublicLink: (calendarId: string) =>
+    apiDelete<{ message: string }>(`/calendars/${calendarId}/public-link`),
 };

@@ -42,6 +42,7 @@ export const SETTINGS_NAV = [
   { label: 'Notifications', href: '/settings/notifications' },
   { label: 'Household', href: '/settings/household' },
   { label: 'Members', href: '/settings/members' },
+  { label: 'Calendars', href: '/settings/calendars' },
   { label: 'Devices', href: '/settings/devices' },
   { label: 'Remote Access', href: '/settings/remote-access' },
   { label: 'Backup', href: '/settings/backup' },

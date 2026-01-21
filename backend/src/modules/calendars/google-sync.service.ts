@@ -95,6 +95,9 @@ export interface GoogleCalendarEvent {
   end: { dateTime?: string; date?: string; timeZone?: string };
   recurrence?: string[];
   status?: string;
+  // For exception instances
+  recurringEventId?: string;
+  originalStartTime?: { dateTime?: string; date?: string; timeZone?: string };
 }
 
 export async function fetchGoogleEvents(
@@ -131,7 +134,7 @@ export async function fetchGoogleEvents(
     });
 
     for (const event of response.data.items || []) {
-      if (event.status !== 'cancelled' && event.id) {
+      if (event.id) {
         events.push({
           id: event.id,
           summary: event.summary || undefined,
@@ -141,6 +144,8 @@ export async function fetchGoogleEvents(
           end: event.end as GoogleCalendarEvent['end'],
           recurrence: event.recurrence || undefined,
           status: event.status || undefined,
+          recurringEventId: event.recurringEventId || undefined,
+          originalStartTime: event.originalStartTime as GoogleCalendarEvent['originalStartTime'],
         });
       }
     }
@@ -261,9 +266,21 @@ export async function syncCalendarFromGoogle(
 
   const googleEventIds = new Set(googleEvents.map((e) => e.id));
 
-  // Process Google events
-  for (const googleEvent of googleEvents) {
+  // Separate master events and exception instances
+  const masterEvents = googleEvents.filter(e => !e.recurringEventId);
+  const exceptionEvents = googleEvents.filter(e => e.recurringEventId);
+
+  // Map external IDs to db IDs for linking exceptions to masters
+  const externalIdToDbId: Record<string, string> = {};
+
+  // First pass: Process master events
+  for (const googleEvent of masterEvents) {
     const existing = existingByExternalId.get(googleEvent.id);
+
+    // Skip cancelled master events (they have no start/end times)
+    if (googleEvent.status === 'cancelled' || !googleEvent.start) {
+      continue;
+    }
 
     const isAllDay = !!googleEvent.start.date;
     const startTime = isAllDay
@@ -284,6 +301,7 @@ export async function syncCalendarFromGoogle(
       endTime,
       allDay: isAllDay,
       recurrenceRule,
+      recurrenceStatus: recurrenceRule ? 'master' as const : null,
       externalId: googleEvent.id,
       updatedAt: new Date(),
     };
@@ -294,9 +312,81 @@ export async function syncCalendarFromGoogle(
         .update(calendarEvents)
         .set(eventData)
         .where(eq(calendarEvents.id, existing.id));
+      externalIdToDbId[googleEvent.id] = existing.id;
       updated++;
     } else {
       // Create new event
+      const [inserted] = await db.insert(calendarEvents).values({
+        calendarId,
+        ...eventData,
+      }).returning();
+      externalIdToDbId[googleEvent.id] = inserted.id;
+      created++;
+    }
+  }
+
+  // Second pass: Process exception instances
+  for (const googleEvent of exceptionEvents) {
+    const existing = existingByExternalId.get(googleEvent.id);
+
+    const isAllDay = !!googleEvent.start?.date;
+    const isCancelled = googleEvent.status === 'cancelled';
+
+    // Get original start time
+    let originalStartTime: Date | null = null;
+    if (googleEvent.originalStartTime) {
+      originalStartTime = googleEvent.originalStartTime.date
+        ? new Date(googleEvent.originalStartTime.date)
+        : googleEvent.originalStartTime.dateTime
+          ? new Date(googleEvent.originalStartTime.dateTime)
+          : null;
+    }
+
+    // Find master event ID
+    const masterDbId = googleEvent.recurringEventId
+      ? externalIdToDbId[googleEvent.recurringEventId]
+      : null;
+
+    // For cancelled instances, we might not have start/end
+    let startTime = originalStartTime;
+    let endTime = originalStartTime;
+
+    if (!isCancelled && googleEvent.start) {
+      startTime = isAllDay
+        ? new Date(googleEvent.start.date!)
+        : new Date(googleEvent.start.dateTime!);
+      endTime = isAllDay
+        ? new Date(googleEvent.end.date!)
+        : new Date(googleEvent.end.dateTime!);
+    }
+
+    if (!startTime || !endTime) {
+      continue;
+    }
+
+    const eventData = {
+      title: googleEvent.summary || 'Untitled Event',
+      description: googleEvent.description || null,
+      location: googleEvent.location || null,
+      startTime,
+      endTime,
+      allDay: isAllDay,
+      recurringEventId: masterDbId,
+      originalStartTime,
+      recurrenceStatus: isCancelled ? 'cancelled' as const : 'exception' as const,
+      externalId: googleEvent.id,
+      updatedAt: new Date(),
+    };
+
+    if (existing) {
+      // Update existing exception
+      await db
+        .update(calendarEvents)
+        .set(eventData)
+        .where(eq(calendarEvents.id, existing.id));
+      updated++;
+    } else {
+      // Create new exception
       await db.insert(calendarEvents).values({
         calendarId,
         ...eventData,

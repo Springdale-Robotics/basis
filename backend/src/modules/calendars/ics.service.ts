@@ -1,7 +1,7 @@
 import ICAL from 'ical.js';
 import { db } from '../../config/database.js';
 import { calendars, calendarEvents, type CalendarEvent } from '../../db/schema/index.js';
-import { eq } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { logger } from '../../lib/logger.js';
 
 export interface ParsedEvent {
@@ -12,7 +12,13 @@ export interface ParsedEvent {
   endTime: Date;
   allDay: boolean;
   recurrenceRule?: string;
+  recurrenceExDates?: string;  // JSON array of excluded ISO date strings
+  recurrenceRDates?: string;   // JSON array of additional ISO date strings
   externalId?: string;
+  // For exception instances
+  recurringEventId?: string;
+  originalStartTime?: Date;
+  recurrenceStatus?: 'master' | 'exception' | 'cancelled';
 }
 
 /**
@@ -20,6 +26,7 @@ export interface ParsedEvent {
  */
 export function parseIcsContent(icsContent: string): ParsedEvent[] {
   const events: ParsedEvent[] = [];
+  const uidToMasterIndex: Record<string, number> = {};
 
   try {
     const jcalData = ICAL.parse(icsContent);
@@ -30,11 +37,9 @@ export function parseIcsContent(icsContent: string): ParsedEvent[] {
     for (const vevent of vevents) {
       const event = new ICAL.Event(vevent);
 
-      // Skip cancelled events
+      // Check if this is a cancelled instance
       const status = vevent.getFirstPropertyValue('status');
-      if (status && status.toLowerCase() === 'cancelled') {
-        continue;
-      }
+      const isCancelled = status && status.toLowerCase() === 'cancelled';
 
       const startDate = event.startDate;
       const endDate = event.endDate;
@@ -54,8 +59,60 @@ export function parseIcsContent(icsContent: string): ParsedEvent[] {
         }
       }
 
+      // Get EXDATE (excluded dates)
+      let recurrenceExDates: string | undefined;
+      const exdateProps = vevent.getAllProperties('exdate');
+      if (exdateProps && exdateProps.length > 0) {
+        const exDates: string[] = [];
+        for (const exdateProp of exdateProps) {
+          const exdateValue = exdateProp.getFirstValue();
+          if (exdateValue) {
+            exDates.push(exdateValue.toJSDate().toISOString());
+          }
+        }
+        if (exDates.length > 0) {
+          recurrenceExDates = JSON.stringify(exDates);
+        }
+      }
+
+      // Get RDATE (additional dates)
+      let recurrenceRDates: string | undefined;
+      const rdateProps = vevent.getAllProperties('rdate');
+      if (rdateProps && rdateProps.length > 0) {
+        const rDates: string[] = [];
+        for (const rdateProp of rdateProps) {
+          const rdateValue = rdateProp.getFirstValue();
+          if (rdateValue) {
+            rDates.push(rdateValue.toJSDate().toISOString());
+          }
+        }
+        if (rDates.length > 0) {
+          recurrenceRDates = JSON.stringify(rDates);
+        }
+      }
+
       // Get UID for external ID tracking
       const uid = event.uid;
+
+      // Check if this is an exception instance (has RECURRENCE-ID)
+      const recurrenceIdProp = vevent.getFirstProperty('recurrence-id');
+      let originalStartTime: Date | undefined;
+      let recurringEventId: string | undefined;
+      let recurrenceStatus: 'master' | 'exception' | 'cancelled' | undefined;
+
+      if (recurrenceIdProp) {
+        const recurrenceIdValue = recurrenceIdProp.getFirstValue();
+        if (recurrenceIdValue) {
+          originalStartTime = recurrenceIdValue.toJSDate();
+          // The UID should match the master event's UID
+          recurringEventId = uid;
+          recurrenceStatus = isCancelled ? 'cancelled' : 'exception';
+        }
+      } else if (recurrenceRule) {
+        recurrenceStatus = 'master';
+        // Track master events by UID
+        uidToMasterIndex[uid] = events.length;
+      }
 
       events.push({
         title: event.summary || 'Untitled Event',
@@ -65,7 +122,12 @@ export function parseIcsContent(icsContent: string): ParsedEvent[] {
         endTime: endDate ? endDate.toJSDate() : startDate.toJSDate(),
         allDay: isAllDay,
         recurrenceRule,
+        recurrenceExDates,
+        recurrenceRDates,
         externalId: uid,
+        originalStartTime,
+        recurringEventId,
+        recurrenceStatus,
       });
     }
   } catch (error) {
@@ -124,8 +186,16 @@ export async function importIcsToCalendar(
     );
   }
 
+  // First pass: import master events and non-recurring events
+  const externalIdToDbId: Record<string, string> = {};
+
   for (const event of parsedEvents) {
     try {
+      // Skip exception instances in first pass
+      if (event.recurrenceStatus === 'exception' || event.recurrenceStatus === 'cancelled') {
+        continue;
+      }
+
       // Check for duplicate
       if (skipDuplicates && event.externalId && existingExternalIds.has(event.externalId)) {
         skipped++;
@@ -133,7 +203,7 @@ export async function importIcsToCalendar(
       }
 
       // Insert event
-      await db.insert(calendarEvents).values({
+      const [inserted] = await db.insert(calendarEvents).values({
         calendarId,
         createdById,
         title: event.title,
@@ -143,12 +213,62 @@ export async function importIcsToCalendar(
         endTime: event.endTime,
         allDay: event.allDay,
         recurrenceRule: event.recurrenceRule || null,
+        recurrenceExDates: event.recurrenceExDates || null,
+        recurrenceRDates: event.recurrenceRDates || null,
+        recurrenceStatus: event.recurrenceStatus || null,
         externalId: event.externalId,
-      });
+      }).returning();
+
+      if (event.externalId) {
+        externalIdToDbId[event.externalId] = inserted.id;
+      }
 
       imported++;
     } catch (error) {
       errors.push(`Failed to import event "${event.title}": ${(error as Error).message}`);
+    }
+  }
+
+  // Second pass: import exception instances
+  for (const event of parsedEvents) {
+    try {
+      if (event.recurrenceStatus !== 'exception' && event.recurrenceStatus !== 'cancelled') {
+        continue;
+      }
+
+      // Find the master event by external ID (UID)
+      const masterDbId = event.recurringEventId ? externalIdToDbId[event.recurringEventId] : null;
+      if (!masterDbId && event.recurringEventId) {
+        // Master event might already exist in the database
+        const existingMaster = await db.query.calendarEvents.findFirst({
+          where: eq(calendarEvents.externalId, event.recurringEventId),
+        });
+        if (existingMaster) {
+          externalIdToDbId[event.recurringEventId] = existingMaster.id;
+        }
+      }
+
+      const finalMasterId = event.recurringEventId ? externalIdToDbId[event.recurringEventId] : null;
+
+      // Insert exception event
+      await db.insert(calendarEvents).values({
+        calendarId,
+        createdById,
+        title: event.title,
+        description: event.description || null,
+        location: event.location || null,
+        startTime: event.startTime,
+        endTime: event.endTime,
+        allDay: event.allDay,
+        recurringEventId: finalMasterId,
+        originalStartTime: event.originalStartTime,
+        recurrenceStatus: event.recurrenceStatus,
+        externalId: event.externalId ? `${event.externalId}_${event.originalStartTime?.toISOString()}` : null,
+      });
+
+      imported++;
+    } catch (error) {
+      errors.push(`Failed to import exception "${event.title}": ${(error as Error).message}`);
     }
   }
 
@@ -215,6 +335,52 @@ export function generateIcsContent(
       }
     }
 
+    // EXDATE (excluded dates)
+    if (event.recurrenceExDates) {
+      try {
+        const exDates = JSON.parse(event.recurrenceExDates);
+        for (const exDateStr of exDates) {
+          const exDate = ICAL.Time.fromJSDate(new Date(exDateStr), event.allDay);
+          if (event.allDay) {
+            exDate.isDate = true;
+          }
+          vevent.addPropertyWithValue('exdate', exDate);
+        }
+      } catch {
+        // Skip invalid EXDATE
+      }
+    }
+
+    // RDATE (additional dates)
+    if (event.recurrenceRDates) {
+      try {
+        const rDates = JSON.parse(event.recurrenceRDates);
+        for (const rDateStr of rDates) {
+          const rDate = ICAL.Time.fromJSDate(new Date(rDateStr), event.allDay);
+          if (event.allDay) {
+            rDate.isDate = true;
+          }
+          vevent.addPropertyWithValue('rdate', rDate);
+        }
+      } catch {
+        // Skip invalid RDATE
+      }
+    }
+
+    // Exception instances have RECURRENCE-ID
+    if (event.originalStartTime && event.recurringEventId) {
+      const recurrenceId = ICAL.Time.fromJSDate(new Date(event.originalStartTime), event.allDay);
+      if (event.allDay) {
+        recurrenceId.isDate = true;
+      }
+      vevent.updatePropertyWithValue('recurrence-id', recurrenceId);
+
+      // Cancelled instances have STATUS:CANCELLED
+      if (event.recurrenceStatus === 'cancelled') {
+        vevent.updatePropertyWithValue('status', 'CANCELLED');
+      }
+    }
+
     // Timestamps
     const dtstamp = ICAL.Time.fromJSDate(new Date(), false);
     vevent.updatePropertyWithValue('dtstamp', dtstamp);
@@ -251,23 +417,32 @@ export async function exportCalendarToIcs(
     throw new Error('Calendar not found');
   }
 
-  // Get events
+  // Get all events including master events and exception instances
   const events = await db.query.calendarEvents.findMany({
     where: eq(calendarEvents.calendarId, calendarId),
     orderBy: (e, { asc }) => [asc(e.startTime)],
   });
 
-  // Filter by date range if specified
+  // Filter by date range if specified (only for non-exception events)
   let filteredEvents = events;
-  if (options.startDate) {
-    filteredEvents = filteredEvents.filter(
-      (e) => new Date(e.endTime) >= options.startDate!
-    );
-  }
-  if (options.endDate) {
-    filteredEvents = filteredEvents.filter(
-      (e) => new Date(e.startTime) <= options.endDate!
-    );
+  if (options.startDate || options.endDate) {
+    filteredEvents = events.filter((e) => {
+      // Always include exception instances if their master is included
+      if (e.recurrenceStatus === 'exception' || e.recurrenceStatus === 'cancelled') {
+        return true; // We'll filter these based on master inclusion later
+      }
+
+      const eventEnd = new Date(e.endTime);
+      const eventStart = new Date(e.startTime);
+
+      if (options.startDate && eventEnd < options.startDate) {
+        return false;
+      }
+      if (options.endDate && eventStart > options.endDate) {
+        return false;
+      }
+      return true;
+    });
   }
 
   const content = generateIcsContent(filteredEvents, calendar.name);

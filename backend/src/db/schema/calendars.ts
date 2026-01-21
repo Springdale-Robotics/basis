@@ -35,9 +35,13 @@ export const calendars = pgTable('calendars', {
   syncCalendarId: varchar('sync_calendar_id', { length: 255 }),
   lastSyncAt: timestamp('last_sync_at'),
   syncError: text('sync_error'),
+  publicToken: varchar('public_token', { length: 64 }),
+  publicTokenCreatedAt: timestamp('public_token_created_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
+
+export const recurrenceStatusEnum = pgEnum('recurrence_status', ['master', 'exception', 'cancelled']);
 
 export const calendarEvents = pgTable('calendar_events', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -48,11 +52,18 @@ export const calendarEvents = pgTable('calendar_events', {
   title: varchar('title', { length: 255 }).notNull(),
   description: text('description'),
   location: varchar('location', { length: 500 }),
-  startTime: timestamp('start_time').notNull(),
-  endTime: timestamp('end_time').notNull(),
+  startTime: timestamp('start_time', { withTimezone: true }).notNull(),
+  endTime: timestamp('end_time', { withTimezone: true }).notNull(),
   allDay: boolean('all_day').default(false).notNull(),
   color: varchar('color', { length: 7 }),
-  recurrenceRule: varchar('recurrence_rule', { length: 255 }),
+  // Recurrence fields (RFC 5545 compliant)
+  recurrenceRule: text('recurrence_rule'),  // Full RRULE string (changed from varchar(255) to text)
+  recurrenceExDates: text('recurrence_ex_dates'),  // JSON array of excluded ISO date strings
+  recurrenceRDates: text('recurrence_r_dates'),  // JSON array of additional ISO date strings
+  // Exception instance fields (for modified occurrences of recurring events)
+  recurringEventId: uuid('recurring_event_id').references((): any => calendarEvents.id, { onDelete: 'cascade' }),
+  originalStartTime: timestamp('original_start_time', { withTimezone: true }),  // Original occurrence time (unique identifier for exception)
+  recurrenceStatus: recurrenceStatusEnum('recurrence_status'),  // 'master' | 'exception' | 'cancelled'
   externalId: varchar('external_id', { length: 255 }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -118,3 +129,4 @@ export type EventReminder = typeof eventReminders.$inferSelect;
 export type NewEventReminder = typeof eventReminders.$inferInsert;
 export type RsvpStatus = 'pending' | 'accepted' | 'declined' | 'maybe';
 export type ReminderType = 'notification' | 'email' | 'push';
+export type RecurrenceStatus = 'master' | 'exception' | 'cancelled';

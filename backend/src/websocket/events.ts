@@ -64,10 +64,53 @@ export interface SyncEventPayload {
   fromHouseholdId: string;
 }
 
+export interface CalendarSyncEventPayload {
+  calendarId: string;
+  calendarName: string;
+  result?: {
+    created: number;
+    updated: number;
+    deleted: number;
+  };
+  error?: string;
+}
+
+export interface CalendarShareEventPayload {
+  calendarId: string;
+  calendarName: string;
+  sharedWithHouseholdId?: string;
+  sharedWithHouseholdName?: string;
+  fromHouseholdId?: string;
+  permissionLevel?: string;
+  householdId?: string;
+}
+
 // Calendar events
 export function emitCalendarEvent(householdId: string, payload: CalendarEventPayload): void {
   emitToHousehold(householdId, 'calendar:event', payload);
   emitToRoom(`calendar:${payload.calendarId}`, 'calendar:event', payload);
+}
+
+// Calendar sync events
+export function emitCalendarSyncStarted(householdId: string, payload: CalendarSyncEventPayload): void {
+  emitToHousehold(householdId, 'calendar:sync:started', payload);
+}
+
+export function emitCalendarSyncCompleted(householdId: string, payload: CalendarSyncEventPayload): void {
+  emitToHousehold(householdId, 'calendar:sync:completed', payload);
+}
+
+export function emitCalendarSyncFailed(householdId: string, payload: CalendarSyncEventPayload): void {
+  emitToHousehold(householdId, 'calendar:sync:failed', payload);
+}
+
+// Calendar sharing events
+export function emitCalendarShared(householdId: string, payload: CalendarShareEventPayload): void {
+  emitToHousehold(householdId, 'calendar:shared', payload);
+}
+
+export function emitCalendarUnshared(householdId: string, payload: CalendarShareEventPayload): void {
+  emitToHousehold(householdId, 'calendar:unshared', payload);
 }
 
 // Inventory events

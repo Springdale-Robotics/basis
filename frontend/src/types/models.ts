@@ -126,6 +126,8 @@ export interface Calendar {
   updatedAt: string;
 }
 
+export type RecurrenceStatus = 'master' | 'exception' | 'cancelled';
+
 export interface CalendarEvent {
   id: string;
   calendarId: string;
@@ -137,7 +139,14 @@ export interface CalendarEvent {
   endTime: string;
   allDay: boolean;
   color?: string;
+  // RFC 5545 Recurrence fields
   recurrenceRule?: string;
+  recurrenceExDates?: string;  // JSON array of excluded ISO date strings
+  recurrenceRDates?: string;   // JSON array of additional ISO date strings
+  // Exception instance fields (for modified occurrences of recurring events)
+  recurringEventId?: string;   // Links exception to master event
+  originalStartTime?: string;  // Original occurrence time (unique identifier)
+  recurrenceStatus?: RecurrenceStatus;  // 'master' | 'exception' | 'cancelled'
   externalId?: string;
   createdAt: string;
   updatedAt: string;
@@ -145,6 +154,9 @@ export interface CalendarEvent {
   creator?: UserSummary;
   attendees?: EventAttendee[];
   reminders?: EventReminder[];
+  // Virtual instance fields (populated during expansion)
+  isVirtualInstance?: boolean;
+  masterEvent?: CalendarEvent;
 }
 
 export interface UserSummary {

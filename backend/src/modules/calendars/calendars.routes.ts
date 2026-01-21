@@ -9,7 +9,7 @@ import {
   eventReminders,
   users,
 } from '../../db/schema/index.js';
-import { eq, and, gte, lte, or, inArray, ilike, sql } from 'drizzle-orm';
+import { eq, and, gte, lte, or, inArray, ilike, sql, isNull, isNotNull } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { hexColorSchema, calendarTypeSchema, iCalRRuleSchema } from '../../lib/validators.js';
@@ -21,6 +21,15 @@ import {
   exportCalendarToIcs,
   exportAllCalendarsToIcs,
 } from './ics.service.js';
+import {
+  expandRecurrence,
+  createVirtualInstance,
+  addExDate,
+  truncateRRule,
+  presetToRRule,
+  parseInstanceId,
+  isRecurringMaster,
+} from './recurrence.service.js';
 
 const createCalendarSchema = z.object({
   name: z.string().min(1).max(255),
@@ -64,6 +73,29 @@ const updateEventSchema = z.object({
   allDay: z.boolean().optional(),
   color: hexColorSchema.optional().nullable(),
   recurrenceRule: iCalRRuleSchema,
+  // Scope for editing recurring events: 'single' | 'all' | 'following'
+  scope: z.enum(['single', 'all', 'following']).optional(),
+  // Original start time for identifying the instance when editing a single occurrence
+  originalStartTime: z.coerce.date().optional(),
+});
+
+const deleteEventSchema = z.object({
+  // Scope for deleting recurring events: 'single' | 'all' | 'following'
+  scope: z.enum(['single', 'all', 'following']).optional(),
+  // Original start time for identifying the instance when deleting a single occurrence
+  originalStartTime: z.coerce.date().optional(),
+});
+
+const createExceptionSchema = z.object({
+  originalStartTime: z.coerce.date(),
+  title: z.string().min(1).max(255).optional(),
+  description: z.string().optional(),
+  location: z.string().max(500).optional(),
+  startTime: z.coerce.date().optional(),
+  endTime: z.coerce.date().optional(),
+  allDay: z.boolean().optional(),
+  color: hexColorSchema.optional().nullable(),
+  cancelled: z.boolean().optional(),
 });
 
 const rsvpStatusSchema = z.enum(['pending', 'accepted', 'declined', 'maybe']);
@@ -93,6 +125,7 @@ const searchEventsSchema = z.object({
 const dateRangeQuery = z.object({
   start: z.coerce.date().optional(),
   end: z.coerce.date().optional(),
+  expandRecurring: z.coerce.boolean().optional().default(true),
 });
 
 export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
@@ -230,28 +263,111 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
-  // Get events for a calendar
-  app.get<{ Params: { calendarId: string }; Querystring: { start?: string; end?: string } }>(
+  // Get events for a calendar (with recurrence expansion)
+  app.get<{ Params: { calendarId: string }; Querystring: { start?: string; end?: string; expandRecurring?: string } }>(
     '/:calendarId/events',
     { preHandler: [authMiddleware] },
     async (request) => {
-      const { start, end } = dateRangeQuery.parse(request.query);
+      const { start, end, expandRecurring } = dateRangeQuery.parse(request.query);
 
-      const conditions = [eq(calendarEvents.calendarId, request.params.calendarId)];
+      // Get all master events and non-recurring events
+      // For recurring events, include masters that may have instances in the range
+      const baseConditions = [
+        eq(calendarEvents.calendarId, request.params.calendarId),
+        // Exclude exception instances - they'll be handled during expansion
+        or(
+          isNull(calendarEvents.recurringEventId),
+          eq(calendarEvents.recurrenceStatus, 'master')
+        ),
+      ];
 
-      if (start) {
-        conditions.push(gte(calendarEvents.endTime, start));
-      }
-      if (end) {
-        conditions.push(lte(calendarEvents.startTime, end));
-      }
+      // Non-recurring events: filter by date range normally
+      // Recurring events: include if they could have instances in the range
+      const dateConditions = start && end ? or(
+        // Non-recurring events in the date range
+        and(
+          isNull(calendarEvents.recurrenceRule),
+          gte(calendarEvents.endTime, start),
+          lte(calendarEvents.startTime, end)
+        ),
+        // Recurring masters that started before the end of our range
+        and(
+          isNotNull(calendarEvents.recurrenceRule),
+          lte(calendarEvents.startTime, end)
+        )
+      ) : undefined;
 
       const events = await db.query.calendarEvents.findMany({
-        where: and(...conditions),
+        where: and(...baseConditions, dateConditions),
         orderBy: (e, { asc }) => [asc(e.startTime)],
       });
 
-      return { success: true, data: { events } };
+      // If not expanding recurring events, return as-is
+      if (!expandRecurring || !start || !end) {
+        return { success: true, data: { events } };
+      }
+
+      // Get all exception instances for recurring events in this calendar
+      const masterEventIds = events
+        .filter(e => e.recurrenceRule && isRecurringMaster(e))
+        .map(e => e.id);
+
+      let exceptions: typeof events = [];
+      if (masterEventIds.length > 0) {
+        exceptions = await db.query.calendarEvents.findMany({
+          where: and(
+            eq(calendarEvents.calendarId, request.params.calendarId),
+            inArray(calendarEvents.recurringEventId, masterEventIds)
+          ),
+        });
+      }
+
+      // Expand recurring events
+      const expandedEvents: any[] = [];
+
+      for (const event of events) {
+        if (event.recurrenceRule && isRecurringMaster(event)) {
+          // Get exceptions for this master event
+          const eventExceptions = exceptions.filter(ex => ex.recurringEventId === event.id);
+
+          // Expand recurrence
+          const instances = expandRecurrence(event, start, end, eventExceptions);
+
+          for (const instance of instances) {
+            if (instance.isCancelled) {
+              // Skip cancelled instances
+              continue;
+            }
+
+            if (instance.exceptionEvent) {
+              // Use the exception event data
+              expandedEvents.push({
+                ...instance.exceptionEvent,
+                isVirtualInstance: false,
+                masterId: event.id,
+                masterEvent: event,
+              });
+            } else {
+              // Create virtual instance with reference to master event
+              const virtualInstance = createVirtualInstance(event, instance.date);
+              expandedEvents.push({
+                ...virtualInstance,
+                masterEvent: event,
+              });
+            }
+          }
+        } else {
+          // Non-recurring event
+          expandedEvents.push(event);
+        }
+      }
+
+      // Sort by start time
+      expandedEvents.sort((a, b) =>
+        new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+      );
+
+      return { success: true, data: { events: expandedEvents } };
     }
   );
 
@@ -346,9 +462,13 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
     '/:calendarId/events/:id',
     { preHandler: [authMiddleware] },
     async (request) => {
+      // Check if this is a virtual instance ID (masterId_timestamp)
+      const instanceInfo = parseInstanceId(request.params.id);
+      const eventId = instanceInfo ? instanceInfo.masterId : request.params.id;
+
       const event = await db.query.calendarEvents.findFirst({
         where: and(
-          eq(calendarEvents.id, request.params.id),
+          eq(calendarEvents.id, eventId),
           eq(calendarEvents.calendarId, request.params.calendarId)
         ),
       });
@@ -357,16 +477,36 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.notFound('Event');
       }
 
+      // If this is a virtual instance, adjust the times
+      if (instanceInfo) {
+        const duration = new Date(event.endTime).getTime() - new Date(event.startTime).getTime();
+        const instanceDate = new Date(instanceInfo.timestamp);
+        return {
+          success: true,
+          data: {
+            event: {
+              ...event,
+              id: request.params.id, // Keep the virtual instance ID
+              startTime: instanceDate,
+              endTime: new Date(instanceDate.getTime() + duration),
+              isVirtualInstance: true,
+              masterId: eventId,
+            },
+          },
+        };
+      }
+
       return { success: true, data: { event } };
     }
   );
 
-  // Update event
+  // Update event (with recurring event scope support)
   app.patch<{ Params: { calendarId: string; id: string } }>(
     '/:calendarId/events/:id',
     { preHandler: [authMiddleware, requireMember()] },
     async (request) => {
       const input = updateEventSchema.parse(request.body);
+      const { scope, originalStartTime, ...updateData } = input;
 
       // Verify calendar exists and is not read-only
       const calendar = await db.query.calendars.findFirst({
@@ -384,12 +524,126 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.forbidden('Calendar is read-only');
       }
 
+      // Check if this is a virtual instance ID (masterId_timestamp)
+      const instanceInfo = parseInstanceId(request.params.id);
+
+      // Get the event (or master event if virtual instance)
+      const eventId = instanceInfo ? instanceInfo.masterId : request.params.id;
+      const event = await db.query.calendarEvents.findFirst({
+        where: and(
+          eq(calendarEvents.id, eventId),
+          eq(calendarEvents.calendarId, request.params.calendarId)
+        ),
+      });
+
+      if (!event) {
+        throw Errors.notFound('Event');
+      }
+
+      // Handle recurring event updates based on scope
+      if (event.recurrenceRule && isRecurringMaster(event)) {
+        const effectiveScope = scope || 'all';
+        const instanceDate = instanceInfo
+          ? new Date(instanceInfo.timestamp)
+          : originalStartTime || new Date(event.startTime);
+
+        if (effectiveScope === 'single') {
+          // Create an exception for this single instance
+          const [exception] = await db
+            .insert(calendarEvents)
+            .values({
+              calendarId: event.calendarId,
+              createdById: request.user!.id,
+              title: updateData.title || event.title,
+              description: updateData.description !== undefined ? updateData.description : event.description,
+              location: updateData.location !== undefined ? updateData.location : event.location,
+              startTime: updateData.startTime || instanceDate,
+              endTime: updateData.endTime || new Date(instanceDate.getTime() + (new Date(event.endTime).getTime() - new Date(event.startTime).getTime())),
+              allDay: updateData.allDay !== undefined ? updateData.allDay : event.allDay,
+              color: updateData.color !== undefined ? updateData.color : event.color,
+              recurringEventId: event.id,
+              originalStartTime: instanceDate,
+              recurrenceStatus: 'exception',
+            })
+            .returning();
+
+          // Emit WebSocket event
+          emitCalendarEvent(request.user!.householdId, {
+            eventId: exception.id,
+            calendarId: exception.calendarId,
+            action: 'created',
+            event: exception as Record<string, unknown>,
+          });
+
+          return { success: true, data: { event: exception } };
+        } else if (effectiveScope === 'following') {
+          // Truncate the original event's RRULE to end before this instance
+          const truncatedRule = truncateRRule(event.recurrenceRule, new Date(instanceDate.getTime() - 86400000));
+
+          // Update the original master event with truncated rule
+          await db
+            .update(calendarEvents)
+            .set({
+              recurrenceRule: truncatedRule,
+              updatedAt: new Date(),
+            })
+            .where(eq(calendarEvents.id, event.id));
+
+          // Create a new recurring event starting from this instance
+          const [newEvent] = await db
+            .insert(calendarEvents)
+            .values({
+              calendarId: event.calendarId,
+              createdById: request.user!.id,
+              title: updateData.title || event.title,
+              description: updateData.description !== undefined ? updateData.description : event.description,
+              location: updateData.location !== undefined ? updateData.location : event.location,
+              startTime: updateData.startTime || instanceDate,
+              endTime: updateData.endTime || new Date(instanceDate.getTime() + (new Date(event.endTime).getTime() - new Date(event.startTime).getTime())),
+              allDay: updateData.allDay !== undefined ? updateData.allDay : event.allDay,
+              color: updateData.color !== undefined ? updateData.color : event.color,
+              recurrenceRule: updateData.recurrenceRule || event.recurrenceRule,
+              recurrenceStatus: 'master',
+            })
+            .returning();
+
+          // Delete future exceptions from the original event that are after this date
+          await db
+            .delete(calendarEvents)
+            .where(
+              and(
+                eq(calendarEvents.recurringEventId, event.id),
+                gte(calendarEvents.originalStartTime, instanceDate)
+              )
+            );
+
+          // Emit WebSocket events
+          emitCalendarEvent(request.user!.householdId, {
+            eventId: event.id,
+            calendarId: event.calendarId,
+            action: 'updated',
+            event: { ...event, recurrenceRule: truncatedRule } as Record<string, unknown>,
+          });
+
+          emitCalendarEvent(request.user!.householdId, {
+            eventId: newEvent.id,
+            calendarId: newEvent.calendarId,
+            action: 'created',
+            event: newEvent as Record<string, unknown>,
+          });
+
+          return { success: true, data: { event: newEvent } };
+        }
+        // scope === 'all' falls through to regular update below
+      }
+
+      // Regular update (non-recurring or 'all' scope)
       const [updated] = await db
         .update(calendarEvents)
-        .set({ ...input, updatedAt: new Date() })
+        .set({ ...updateData, updatedAt: new Date() })
         .where(
           and(
-            eq(calendarEvents.id, request.params.id),
+            eq(calendarEvents.id, event.id),
             eq(calendarEvents.calendarId, request.params.calendarId)
           )
         )
@@ -411,9 +665,227 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
-  // Delete event
+  // Delete event (with recurring event scope support)
   app.delete<{ Params: { calendarId: string; id: string } }>(
     '/:calendarId/events/:id',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = deleteEventSchema.parse(request.body || {});
+      const { scope, originalStartTime } = input;
+
+      // Verify calendar exists and is not read-only
+      const calendar = await db.query.calendars.findFirst({
+        where: and(
+          eq(calendars.id, request.params.calendarId),
+          eq(calendars.householdId, request.user!.householdId)
+        ),
+      });
+
+      if (!calendar) {
+        throw Errors.notFound('Calendar');
+      }
+
+      if (calendar.isReadOnly) {
+        throw Errors.forbidden('Calendar is read-only');
+      }
+
+      // Check if this is a virtual instance ID (masterId_timestamp)
+      const instanceInfo = parseInstanceId(request.params.id);
+
+      // Get the event (or master event if virtual instance)
+      const eventId = instanceInfo ? instanceInfo.masterId : request.params.id;
+      const event = await db.query.calendarEvents.findFirst({
+        where: and(
+          eq(calendarEvents.id, eventId),
+          eq(calendarEvents.calendarId, request.params.calendarId)
+        ),
+      });
+
+      if (!event) {
+        throw Errors.notFound('Event');
+      }
+
+      // Handle recurring event deletions based on scope
+      if (event.recurrenceRule && isRecurringMaster(event)) {
+        const effectiveScope = scope || 'all';
+        const instanceDate = instanceInfo
+          ? new Date(instanceInfo.timestamp)
+          : originalStartTime || new Date(event.startTime);
+
+        if (effectiveScope === 'single') {
+          // Add EXDATE to exclude this single instance
+          const newExDates = addExDate(event.recurrenceExDates, instanceDate);
+
+          await db
+            .update(calendarEvents)
+            .set({
+              recurrenceExDates: newExDates,
+              updatedAt: new Date(),
+            })
+            .where(eq(calendarEvents.id, event.id));
+
+          // Also delete any exception for this instance
+          await db
+            .delete(calendarEvents)
+            .where(
+              and(
+                eq(calendarEvents.recurringEventId, event.id),
+                eq(calendarEvents.originalStartTime, instanceDate)
+              )
+            );
+
+          // Emit WebSocket event
+          emitCalendarEvent(request.user!.householdId, {
+            eventId: event.id,
+            calendarId: event.calendarId,
+            action: 'updated',
+            event: { ...event, recurrenceExDates: newExDates } as Record<string, unknown>,
+          });
+
+          return { success: true, data: { message: 'Instance deleted' } };
+        } else if (effectiveScope === 'following') {
+          // Truncate RRULE with UNTIL before this instance
+          const truncatedRule = truncateRRule(event.recurrenceRule, new Date(instanceDate.getTime() - 86400000));
+
+          // Update master event with truncated rule
+          await db
+            .update(calendarEvents)
+            .set({
+              recurrenceRule: truncatedRule,
+              updatedAt: new Date(),
+            })
+            .where(eq(calendarEvents.id, event.id));
+
+          // Delete all exceptions on or after this date
+          await db
+            .delete(calendarEvents)
+            .where(
+              and(
+                eq(calendarEvents.recurringEventId, event.id),
+                gte(calendarEvents.originalStartTime, instanceDate)
+              )
+            );
+
+          // Emit WebSocket event
+          emitCalendarEvent(request.user!.householdId, {
+            eventId: event.id,
+            calendarId: event.calendarId,
+            action: 'updated',
+            event: { ...event, recurrenceRule: truncatedRule } as Record<string, unknown>,
+          });
+
+          return { success: true, data: { message: 'This and following events deleted' } };
+        }
+        // scope === 'all' falls through to delete master event below
+      }
+
+      // Delete the event (and cascade to exceptions if it's a master)
+      await db
+        .delete(calendarEvents)
+        .where(
+          and(
+            eq(calendarEvents.id, event.id),
+            eq(calendarEvents.calendarId, request.params.calendarId)
+          )
+        );
+
+      // Emit WebSocket event
+      emitCalendarEvent(request.user!.householdId, {
+        eventId: event.id,
+        calendarId: request.params.calendarId,
+        action: 'deleted',
+      });
+
+      return { success: true, data: { message: 'Event deleted' } };
+    }
+  );
+
+  // Create exception for a recurring event instance
+  app.post<{ Params: { calendarId: string; id: string } }>(
+    '/:calendarId/events/:id/exceptions',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = createExceptionSchema.parse(request.body);
+
+      // Verify calendar exists and is not read-only
+      const calendar = await db.query.calendars.findFirst({
+        where: and(
+          eq(calendars.id, request.params.calendarId),
+          eq(calendars.householdId, request.user!.householdId)
+        ),
+      });
+
+      if (!calendar) {
+        throw Errors.notFound('Calendar');
+      }
+
+      if (calendar.isReadOnly) {
+        throw Errors.forbidden('Calendar is read-only');
+      }
+
+      // Get the master event
+      const masterEvent = await db.query.calendarEvents.findFirst({
+        where: and(
+          eq(calendarEvents.id, request.params.id),
+          eq(calendarEvents.calendarId, request.params.calendarId)
+        ),
+      });
+
+      if (!masterEvent) {
+        throw Errors.notFound('Event');
+      }
+
+      if (!masterEvent.recurrenceRule || !isRecurringMaster(masterEvent)) {
+        throw Errors.badRequest('Event is not a recurring master event');
+      }
+
+      // Check if exception already exists for this instance
+      const existingException = await db.query.calendarEvents.findFirst({
+        where: and(
+          eq(calendarEvents.recurringEventId, masterEvent.id),
+          eq(calendarEvents.originalStartTime, input.originalStartTime)
+        ),
+      });
+
+      if (existingException) {
+        throw Errors.conflict('Exception already exists for this instance');
+      }
+
+      // Create the exception
+      const duration = new Date(masterEvent.endTime).getTime() - new Date(masterEvent.startTime).getTime();
+      const [exception] = await db
+        .insert(calendarEvents)
+        .values({
+          calendarId: masterEvent.calendarId,
+          createdById: request.user!.id,
+          title: input.title || masterEvent.title,
+          description: input.description !== undefined ? input.description : masterEvent.description,
+          location: input.location !== undefined ? input.location : masterEvent.location,
+          startTime: input.startTime || input.originalStartTime,
+          endTime: input.endTime || new Date(input.originalStartTime.getTime() + duration),
+          allDay: input.allDay !== undefined ? input.allDay : masterEvent.allDay,
+          color: input.color !== undefined ? input.color : masterEvent.color,
+          recurringEventId: masterEvent.id,
+          originalStartTime: input.originalStartTime,
+          recurrenceStatus: input.cancelled ? 'cancelled' : 'exception',
+        })
+        .returning();
+
+      // Emit WebSocket event
+      emitCalendarEvent(request.user!.householdId, {
+        eventId: exception.id,
+        calendarId: exception.calendarId,
+        action: 'created',
+        event: exception as Record<string, unknown>,
+      });
+
+      return { success: true, data: { exception } };
+    }
+  );
+
+  // Delete a single instance of a recurring event (by original start time)
+  app.delete<{ Params: { calendarId: string; id: string; originalStartTime: string } }>(
+    '/:calendarId/events/:id/instances/:originalStartTime',
     { preHandler: [authMiddleware, requireMember()] },
     async (request) => {
       // Verify calendar exists and is not read-only
@@ -432,32 +904,63 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.forbidden('Calendar is read-only');
       }
 
+      // Get the master event
+      const masterEvent = await db.query.calendarEvents.findFirst({
+        where: and(
+          eq(calendarEvents.id, request.params.id),
+          eq(calendarEvents.calendarId, request.params.calendarId)
+        ),
+      });
+
+      if (!masterEvent) {
+        throw Errors.notFound('Event');
+      }
+
+      if (!masterEvent.recurrenceRule || !isRecurringMaster(masterEvent)) {
+        throw Errors.badRequest('Event is not a recurring master event');
+      }
+
+      const instanceDate = new Date(request.params.originalStartTime);
+
+      // Add EXDATE to exclude this instance
+      const newExDates = addExDate(masterEvent.recurrenceExDates, instanceDate);
+
+      await db
+        .update(calendarEvents)
+        .set({
+          recurrenceExDates: newExDates,
+          updatedAt: new Date(),
+        })
+        .where(eq(calendarEvents.id, masterEvent.id));
+
+      // Delete any existing exception for this instance
       await db
         .delete(calendarEvents)
         .where(
           and(
-            eq(calendarEvents.id, request.params.id),
-            eq(calendarEvents.calendarId, request.params.calendarId)
+            eq(calendarEvents.recurringEventId, masterEvent.id),
+            eq(calendarEvents.originalStartTime, instanceDate)
           )
         );
 
       // Emit WebSocket event
       emitCalendarEvent(request.user!.householdId, {
-        eventId: request.params.id,
-        calendarId: request.params.calendarId,
-        action: 'deleted',
+        eventId: masterEvent.id,
+        calendarId: masterEvent.calendarId,
+        action: 'updated',
+        event: { ...masterEvent, recurrenceExDates: newExDates } as Record<string, unknown>,
       });
 
-      return { success: true, data: { message: 'Event deleted' } };
+      return { success: true, data: { message: 'Instance cancelled' } };
     }
   );
 
-  // Get all events across calendars (aggregated view)
+  // Get all events across calendars (aggregated view with recurrence expansion)
   app.get(
     '/events',
     { preHandler: [authMiddleware] },
     async (request) => {
-      const { start, end } = dateRangeQuery.parse(request.query);
+      const { start, end, expandRecurring } = dateRangeQuery.parse(request.query);
 
       // Get all calendar IDs for household
       const householdCalendars = await db.query.calendars.findMany({
@@ -471,23 +974,101 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
         return { success: true, data: { events: [] } };
       }
 
-      const conditions = [
-        or(...calendarIds.map((id) => eq(calendarEvents.calendarId, id))),
+      // Build conditions excluding exception instances
+      // For recurring events, we need to include masters that may have instances in the range
+      // even if the master's start date is before the range
+      const baseConditions = [
+        inArray(calendarEvents.calendarId, calendarIds),
+        or(
+          isNull(calendarEvents.recurringEventId),
+          eq(calendarEvents.recurrenceStatus, 'master')
+        ),
       ];
 
-      if (start) {
-        conditions.push(gte(calendarEvents.endTime, new Date(start as any)));
-      }
-      if (end) {
-        conditions.push(lte(calendarEvents.startTime, new Date(end as any)));
-      }
+      // Non-recurring events: filter by date range normally
+      // Recurring events: include if they could have instances in the range
+      const dateConditions = start && end ? or(
+        // Non-recurring events in the date range
+        and(
+          isNull(calendarEvents.recurrenceRule),
+          gte(calendarEvents.endTime, new Date(start as any)),
+          lte(calendarEvents.startTime, new Date(end as any))
+        ),
+        // Recurring masters that started before the end of our range
+        // (we'll filter their instances during expansion)
+        and(
+          isNotNull(calendarEvents.recurrenceRule),
+          lte(calendarEvents.startTime, new Date(end as any))
+        )
+      ) : undefined;
 
       const events = await db.query.calendarEvents.findMany({
-        where: and(...conditions),
+        where: and(...baseConditions, dateConditions),
         orderBy: (e, { asc }) => [asc(e.startTime)],
       });
 
-      return { success: true, data: { events } };
+      // If not expanding recurring events, return as-is
+      if (!expandRecurring || !start || !end) {
+        return { success: true, data: { events } };
+      }
+
+      // Get all exception instances for recurring events
+      const masterEventIds = events
+        .filter(e => e.recurrenceRule && isRecurringMaster(e))
+        .map(e => e.id);
+
+      let exceptions: typeof events = [];
+      if (masterEventIds.length > 0) {
+        exceptions = await db.query.calendarEvents.findMany({
+          where: and(
+            inArray(calendarEvents.calendarId, calendarIds),
+            inArray(calendarEvents.recurringEventId, masterEventIds)
+          ),
+        });
+      }
+
+      // Expand recurring events
+      const expandedEvents: any[] = [];
+
+      for (const event of events) {
+        if (event.recurrenceRule && isRecurringMaster(event)) {
+          // Get exceptions for this master event
+          const eventExceptions = exceptions.filter(ex => ex.recurringEventId === event.id);
+
+          // Expand recurrence
+          const instances = expandRecurrence(event, start, end, eventExceptions);
+
+          for (const instance of instances) {
+            if (instance.isCancelled) {
+              continue;
+            }
+
+            if (instance.exceptionEvent) {
+              expandedEvents.push({
+                ...instance.exceptionEvent,
+                isVirtualInstance: false,
+                masterId: event.id,
+                masterEvent: event,
+              });
+            } else {
+              const virtualInstance = createVirtualInstance(event, instance.date);
+              expandedEvents.push({
+                ...virtualInstance,
+                masterEvent: event,
+              });
+            }
+          }
+        } else {
+          expandedEvents.push(event);
+        }
+      }
+
+      // Sort by start time
+      expandedEvents.sort((a, b) =>
+        new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+      );
+
+      return { success: true, data: { events: expandedEvents } };
     }
   );
 
@@ -833,9 +1414,13 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
     '/:calendarId/events/:id/details',
     { preHandler: [authMiddleware] },
     async (request) => {
+      // Check if this is a virtual instance ID (masterId_timestamp)
+      const instanceInfo = parseInstanceId(request.params.id);
+      const eventId = instanceInfo ? instanceInfo.masterId : request.params.id;
+
       const event = await db.query.calendarEvents.findFirst({
         where: and(
-          eq(calendarEvents.id, request.params.id),
+          eq(calendarEvents.id, eventId),
           eq(calendarEvents.calendarId, request.params.calendarId)
         ),
       });
@@ -844,15 +1429,15 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.notFound('Event');
       }
 
-      // Get attendees
+      // Get attendees (from master event)
       const attendees = await db.query.eventAttendees.findMany({
-        where: eq(eventAttendees.eventId, request.params.id),
+        where: eq(eventAttendees.eventId, eventId),
       });
 
-      // Get user's reminders
+      // Get user's reminders (from master event)
       const reminders = await db.query.eventReminders.findMany({
         where: and(
-          eq(eventReminders.eventId, request.params.id),
+          eq(eventReminders.eventId, eventId),
           eq(eventReminders.userId, request.user!.id)
         ),
       });
@@ -866,11 +1451,26 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
+      // If this is a virtual instance, adjust the times
+      let eventData = event;
+      if (instanceInfo) {
+        const duration = new Date(event.endTime).getTime() - new Date(event.startTime).getTime();
+        const instanceDate = new Date(instanceInfo.timestamp);
+        eventData = {
+          ...event,
+          id: request.params.id, // Keep the virtual instance ID
+          startTime: instanceDate,
+          endTime: new Date(instanceDate.getTime() + duration),
+          isVirtualInstance: true,
+          masterId: eventId,
+        } as typeof event;
+      }
+
       return {
         success: true,
         data: {
           event: {
-            ...event,
+            ...eventData,
             creator,
             attendees,
             reminders,

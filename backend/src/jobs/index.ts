@@ -78,6 +78,19 @@ export const calendarReminderQueue = new Queue('calendar-reminders', {
   },
 });
 
+export const calendarSyncQueue = new Queue('calendar-sync', {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 50,
+    removeOnFail: 100,
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 5000,
+    },
+  },
+});
+
 // Job type definitions
 export interface NotificationJobData {
   type: 'low_stock' | 'expiring_soon' | 'task_due' | 'sync_error' | 'custom';
@@ -115,6 +128,12 @@ export interface InventoryJobData {
 
 export interface CalendarReminderJobData {
   type: 'check_reminders';
+}
+
+export interface CalendarSyncJobData {
+  type: 'sync_all' | 'sync_single';
+  calendarId?: string;
+  householdId?: string;
 }
 
 // Initialize workers
@@ -229,7 +248,25 @@ export async function initializeWorkers(): Promise<void> {
     logger.error({ jobId: job?.id, error }, 'Calendar reminder job failed');
   });
 
-  workers = [notificationWorker, syncWorker, backupWorker, cleanupWorker, inventoryWorker, calendarReminderWorker];
+  // Calendar sync worker
+  const calendarSyncWorker = new Worker(
+    'calendar-sync',
+    async (job: Job<CalendarSyncJobData>) => {
+      const { processCalendarSyncJob } = await import('./calendar-sync.worker.js');
+      return processCalendarSyncJob(job);
+    },
+    { connection: redis, concurrency: 1 }
+  );
+
+  calendarSyncWorker.on('completed', (job) => {
+    logger.info({ jobId: job.id }, 'Calendar sync job completed');
+  });
+
+  calendarSyncWorker.on('failed', (job, error) => {
+    logger.error({ jobId: job?.id, error }, 'Calendar sync job failed');
+  });
+
+  workers = [notificationWorker, syncWorker, backupWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker];
   logger.info('Background workers initialized');
 }
 
@@ -275,6 +312,16 @@ export async function scheduleRecurringJobs(): Promise<void> {
     }
   );
 
+  // Sync external calendars every hour
+  await calendarSyncQueue.add(
+    'sync_all',
+    { type: 'sync_all' },
+    {
+      repeat: { pattern: '0 * * * *' }, // Every hour at minute 0
+      jobId: 'calendar:sync_all',
+    }
+  );
+
   logger.info('Recurring jobs scheduled');
 }
 
@@ -290,6 +337,7 @@ export async function shutdownWorkers(): Promise<void> {
   await cleanupQueue.close();
   await inventoryQueue.close();
   await calendarReminderQueue.close();
+  await calendarSyncQueue.close();
 
   logger.info('All workers shut down');
 }
@@ -317,5 +365,16 @@ export async function queueBackup(data: BackupJobData): Promise<void> {
 export async function queueInventoryCheck(householdId: string, type: InventoryJobData['type']): Promise<void> {
   await inventoryQueue.add(type, { type, householdId }, {
     jobId: `inventory:${type}:${householdId}`,
+  });
+}
+
+// Helper to add calendar sync job
+export async function queueCalendarSync(calendarId: string, householdId: string): Promise<void> {
+  await calendarSyncQueue.add('sync_single', {
+    type: 'sync_single',
+    calendarId,
+    householdId,
+  }, {
+    jobId: `calendar:sync:${calendarId}:${Date.now()}`,
   });
 }
