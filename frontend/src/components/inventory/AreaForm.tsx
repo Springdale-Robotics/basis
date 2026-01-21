@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2 } from 'lucide-react';
@@ -56,6 +57,17 @@ export function AreaForm({
   });
 
   const icon = watch('icon');
+
+  // Reset form when area changes or dialog opens
+  useEffect(() => {
+    if (open) {
+      reset(
+        area
+          ? { name: area.name, icon: area.icon || '📦' }
+          : { name: '', icon: '📦' }
+      );
+    }
+  }, [open, area, reset]);
 
   const handleFormSubmit = (data: StorageAreaFormData) => {
     onSubmit(data);

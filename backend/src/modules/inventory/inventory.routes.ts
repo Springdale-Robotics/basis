@@ -455,7 +455,12 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
       const [updated] = await db
         .update(inventoryStock)
-        .set({ ...input, updatedAt: new Date() })
+        .set({
+          ...input,
+          quantity: input.quantity?.toString(),
+          expiryDate: input.expiryDate?.toISOString().split('T')[0],
+          updatedAt: new Date(),
+        })
         .where(eq(inventoryStock.id, request.params.id))
         .returning();
 

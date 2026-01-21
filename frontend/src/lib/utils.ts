@@ -6,7 +6,19 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatDate(date: Date | string, options?: Intl.DateTimeFormatOptions): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
+  let d: Date;
+  if (typeof date === 'string') {
+    // Handle date-only strings (YYYY-MM-DD) as local dates, not UTC
+    // new Date("2026-01-30") treats it as UTC midnight, causing off-by-one errors
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      const [year, month, day] = date.split('-').map(Number);
+      d = new Date(year, month - 1, day);
+    } else {
+      d = new Date(date);
+    }
+  } else {
+    d = date;
+  }
   return d.toLocaleDateString(undefined, options);
 }
 

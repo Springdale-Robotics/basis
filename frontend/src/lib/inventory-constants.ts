@@ -19,6 +19,7 @@ export const categoryOptions = [
 ] as const;
 
 export const unitOptions = [
+  'count',
   'pieces',
   'lbs',
   'oz',

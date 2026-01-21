@@ -11,6 +11,7 @@ import {
   Edit,
   X,
   ShoppingCart,
+  Settings,
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -65,12 +66,28 @@ interface DeleteDialogState {
   isBulk: boolean;
 }
 
+function getDaysUntilExpiry(expiryDate: string): number {
+  // Parse as local date to avoid timezone issues
+  const [year, month, day] = expiryDate.split('T')[0].split('-').map(Number);
+  const expiry = new Date(year, month - 1, day);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffTime = expiry.getTime() - today.getTime();
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+}
+
+function getExpiryBadgeVariant(days: number): 'destructive' | 'secondary' | 'outline' {
+  if (days <= 0) return 'destructive';
+  if (days <= 3) return 'destructive';
+  return 'secondary';
+}
 
 export function InventoryPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [selectedArea, setSelectedArea] = useState<string | undefined>();
   const [areaFormOpen, setAreaFormOpen] = useState(false);
+  const [editingArea, setEditingArea] = useState<StorageArea | null>(null);
   const [itemFormOpen, setItemFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [sortOption, setSortOption] = useState<SortOption>('name-asc');
@@ -282,6 +299,25 @@ export function InventoryPage() {
     mutationFn: (data: StorageAreaFormData) => inventoryApi.createArea(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      setAreaFormOpen(false);
+    },
+  });
+
+  const updateAreaMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: StorageAreaFormData }) =>
+      inventoryApi.updateArea(id, { name: data.name, icon: data.icon }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      setEditingArea(null);
+      setAreaFormOpen(false);
+    },
+  });
+
+  const deleteAreaMutation = useMutation({
+    mutationFn: (id: string) => inventoryApi.deleteArea(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      setEditingArea(null);
       setAreaFormOpen(false);
     },
   });
@@ -926,10 +962,43 @@ export function InventoryPage() {
         description="Manage your household inventory"
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setAreaFormOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Area
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline">
+                  <Settings className="mr-2 h-4 w-4" />
+                  Areas
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem
+                  onClick={() => {
+                    setEditingArea(null);
+                    setAreaFormOpen(true);
+                  }}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add New Area
+                </DropdownMenuItem>
+                {areas?.areas && areas.areas.length > 0 && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>Edit Area</DropdownMenuLabel>
+                    {areas.areas.map((area) => (
+                      <DropdownMenuItem
+                        key={area.id}
+                        onClick={() => {
+                          setEditingArea(area);
+                          setAreaFormOpen(true);
+                        }}
+                      >
+                        <span className="mr-2">{area.icon || '📦'}</span>
+                        {area.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button onClick={() => setItemFormOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
               Add Item
@@ -1084,30 +1153,43 @@ export function InventoryPage() {
             />
           ) : (
             <div className="space-y-2">
-              {expiringItems.expiring.map((stockEntry) => (
-                <Card key={stockEntry.id}>
-                  <CardContent className="flex items-center justify-between p-4">
-                    <div>
-                      <p className="font-medium">{stockEntry.item?.name || 'Unknown'}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {stockEntry.expiryDate &&
-                          `Expires ${formatDate(stockEntry.expiryDate)}`}
-                        {stockEntry.area && (
-                          <span className="ml-2">
-                            • {stockEntry.area.icon} {stockEntry.area.name}
-                          </span>
+              {expiringItems.expiring.map((stockEntry) => {
+                const daysUntil = stockEntry.expiryDate ? getDaysUntilExpiry(stockEntry.expiryDate) : null;
+                const daysLabel = daysUntil === null ? '' :
+                  daysUntil < 0 ? `${Math.abs(daysUntil)}d ago` :
+                  daysUntil === 0 ? 'Today' :
+                  daysUntil === 1 ? '1 day' :
+                  `${daysUntil} days`;
+
+                return (
+                  <Card key={stockEntry.id}>
+                    <CardContent className="flex items-center justify-between p-4">
+                      <div>
+                        <p className="font-medium">{stockEntry.item?.name || 'Unknown'}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {stockEntry.expiryDate &&
+                            `Expires ${formatDate(stockEntry.expiryDate)}`}
+                          {stockEntry.area && (
+                            <span className="ml-2">
+                              • {stockEntry.area.icon} {stockEntry.area.name}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {daysUntil !== null && (
+                          <Badge variant={getExpiryBadgeVariant(daysUntil)}>
+                            {daysLabel}
+                          </Badge>
                         )}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="destructive">Expiring</Badge>
-                      <Badge variant="secondary" className="font-mono">
-                        {parseFloat(String(stockEntry.quantity)).toFixed(1)} {stockEntry.unit}
-                      </Badge>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                        <Badge variant="outline" className="font-mono">
+                          {parseFloat(String(stockEntry.quantity)).toFixed(1)} {stockEntry.unit}
+                        </Badge>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </TabsContent>
@@ -1211,9 +1293,20 @@ export function InventoryPage() {
 
       <AreaForm
         open={areaFormOpen}
-        onOpenChange={setAreaFormOpen}
-        onSubmit={(data) => createAreaMutation.mutate(data)}
-        isSubmitting={createAreaMutation.isPending}
+        onOpenChange={(open) => {
+          setAreaFormOpen(open);
+          if (!open) setEditingArea(null);
+        }}
+        area={editingArea}
+        onSubmit={(data) => {
+          if (editingArea) {
+            updateAreaMutation.mutate({ id: editingArea.id, data });
+          } else {
+            createAreaMutation.mutate(data);
+          }
+        }}
+        onDelete={editingArea ? () => deleteAreaMutation.mutate(editingArea.id) : undefined}
+        isSubmitting={createAreaMutation.isPending || updateAreaMutation.isPending || deleteAreaMutation.isPending}
       />
 
       <ItemForm
