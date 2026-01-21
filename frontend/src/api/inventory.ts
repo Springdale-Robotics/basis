@@ -27,6 +27,32 @@ export interface CreateItemRequest {
 
 export interface UpdateItemRequest extends Partial<CreateItemRequest> {}
 
+export interface QuickCreateItemRequest {
+  name: string;
+  defaultUnit?: string;
+  category?: string;
+  defaultAreaId?: string;
+}
+
+export interface BatchCreateItemsRequest {
+  items: QuickCreateItemRequest[];
+}
+
+export interface BatchDeleteItemsRequest {
+  itemIds: string[];
+  deleteType: 'stock_only' | 'catalog';
+}
+
+export interface BatchUpdateItemsRequest {
+  itemIds: string[];
+  updates: {
+    category?: string;
+    keepInStock?: boolean;
+    minStockQuantity?: number;
+    defaultAreaId?: string | null;
+  };
+}
+
 export interface GetItemsParams {
   search?: string;
   category?: string;
@@ -101,6 +127,18 @@ export const inventoryApi = {
 
   deleteItem: (id: string) =>
     apiDelete<{ message: string }>(`/inventory/items/${id}`),
+
+  quickCreateItem: (data: QuickCreateItemRequest) =>
+    apiPost<{ item: InventoryItem }>('/inventory/items/quick-create', data),
+
+  batchCreateItems: (data: BatchCreateItemsRequest) =>
+    apiPost<{ items: InventoryItem[] }>('/inventory/items/batch', data),
+
+  batchDeleteItems: (data: BatchDeleteItemsRequest) =>
+    apiPost<{ message: string }>('/inventory/items/batch-delete', data),
+
+  batchUpdateItems: (data: BatchUpdateItemsRequest) =>
+    apiPost<{ items: InventoryItem[] }>('/inventory/items/batch-update', data),
 
   // Stock
   getStock: () =>

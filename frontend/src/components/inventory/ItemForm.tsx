@@ -1,16 +1,11 @@
 import { useForm } from 'react-hook-form';
+import { useEffect, useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import {
   Dialog,
   DialogContent,
@@ -21,6 +16,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { inventoryItemSchema, type InventoryItemFormData } from '@/types/forms';
 import type { InventoryItem, StorageArea } from '@/types/models';
+import { categoryOptions, unitOptions } from '@/lib/inventory-constants';
 
 interface ItemFormProps {
   open: boolean;
@@ -32,46 +28,6 @@ interface ItemFormProps {
   onDelete?: () => void;
   isSubmitting?: boolean;
 }
-
-const categoryOptions = [
-  'Produce',
-  'Dairy',
-  'Meat',
-  'Seafood',
-  'Bakery',
-  'Frozen',
-  'Canned Goods',
-  'Dry Goods',
-  'Beverages',
-  'Snacks',
-  'Condiments',
-  'Spices',
-  'Cleaning',
-  'Personal Care',
-  'Other',
-];
-
-const unitOptions = [
-  'pieces',
-  'lbs',
-  'oz',
-  'kg',
-  'g',
-  'liters',
-  'ml',
-  'cups',
-  'tbsp',
-  'tsp',
-  'gallons',
-  'quarts',
-  'pints',
-  'boxes',
-  'bags',
-  'cans',
-  'bottles',
-  'jars',
-  'packs',
-];
 
 export function ItemForm({
   open,
@@ -85,6 +41,31 @@ export function ItemForm({
 }: ItemFormProps) {
   const isEditing = !!item;
 
+  const getDefaultValues = (item: InventoryItem | null | undefined): InventoryItemFormData => {
+    if (item) {
+      return {
+        name: item.name,
+        category: item.category || '',
+        unit: item.defaultUnit || item.unit || 'pieces',
+        icon: item.icon || '',
+        barcode: item.barcode || '',
+        keepInStock: item.keepInStock ?? false,
+        keepInStockThreshold: item.minStockLevel || item.keepInStockThreshold || 1,
+        defaultAreaId: item.defaultAreaId || defaultAreaId || '',
+      };
+    }
+    return {
+      name: '',
+      category: '',
+      unit: 'pieces',
+      icon: '',
+      barcode: '',
+      keepInStock: false,
+      keepInStockThreshold: 1,
+      defaultAreaId: defaultAreaId || areas[0]?.id || '',
+    };
+  };
+
   const {
     register,
     handleSubmit,
@@ -94,33 +75,41 @@ export function ItemForm({
     formState: { errors },
   } = useForm<InventoryItemFormData>({
     resolver: zodResolver(inventoryItemSchema),
-    defaultValues: item
-      ? {
-          name: item.name,
-          category: item.category || '',
-          unit: item.unit || 'pieces',
-          icon: item.icon || '',
-          barcode: item.barcode || '',
-          keepInStock: !!item.keepInStockThreshold,
-          keepInStockThreshold: item.keepInStockThreshold || 1,
-          defaultAreaId: item.defaultAreaId || defaultAreaId || '',
-        }
-      : {
-          name: '',
-          category: '',
-          unit: 'pieces',
-          icon: '',
-          barcode: '',
-          keepInStock: false,
-          keepInStockThreshold: 1,
-          defaultAreaId: defaultAreaId || areas[0]?.id || '',
-        },
+    defaultValues: getDefaultValues(item),
   });
+
+  // Reset form when item changes (for editing different items)
+  useEffect(() => {
+    if (open) {
+      reset(getDefaultValues(item));
+    }
+  }, [item, open, reset, defaultAreaId, areas]);
 
   const category = watch('category');
   const unit = watch('unit');
   const keepInStock = watch('keepInStock');
   const areaId = watch('defaultAreaId');
+
+  // Memoize combobox options
+  const categoryComboboxOptions: ComboboxOption[] = useMemo(
+    () => categoryOptions.map((cat) => ({ value: cat, label: cat })),
+    []
+  );
+
+  const unitComboboxOptions: ComboboxOption[] = useMemo(
+    () => unitOptions.map((u) => ({ value: u, label: u })),
+    []
+  );
+
+  const areaComboboxOptions: ComboboxOption[] = useMemo(
+    () =>
+      areas.map((area) => ({
+        value: area.id,
+        label: area.name,
+        icon: <span>{area.icon}</span>,
+      })),
+    [areas]
+  );
 
   const handleFormSubmit = (data: InventoryItemFormData) => {
     onSubmit(data);
@@ -155,63 +144,43 @@ export function ItemForm({
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="category">Category</Label>
-              <Select
+              <Label>Category</Label>
+              <Combobox
+                options={categoryComboboxOptions}
                 value={category}
                 onValueChange={(value) => setValue('category', value)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select category" />
-                </SelectTrigger>
-                <SelectContent>
-                  {categoryOptions.map((cat) => (
-                    <SelectItem key={cat} value={cat}>
-                      {cat}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                placeholder="Select category"
+                searchPlaceholder="Search categories..."
+                emptyText="No category found."
+                allowClear
+                clearLabel="No category"
+              />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="unit">Unit</Label>
-              <Select
+              <Label>Unit</Label>
+              <Combobox
+                options={unitComboboxOptions}
                 value={unit}
-                onValueChange={(value) => setValue('unit', value)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select unit" />
-                </SelectTrigger>
-                <SelectContent>
-                  {unitOptions.map((u) => (
-                    <SelectItem key={u} value={u}>
-                      {u}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onValueChange={(value) => setValue('unit', value || 'pieces')}
+                placeholder="Select unit"
+                searchPlaceholder="Search units..."
+                emptyText="No unit found."
+              />
             </div>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="defaultAreaId">Default Storage Area</Label>
-            <Select
+            <Label>Default Storage Area</Label>
+            <Combobox
+              options={areaComboboxOptions}
               value={areaId}
               onValueChange={(value) => setValue('defaultAreaId', value)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select storage area" />
-              </SelectTrigger>
-              <SelectContent>
-                {areas.map((area) => (
-                  <SelectItem key={area.id} value={area.id}>
-                    <div className="flex items-center gap-2">
-                      <span>{area.icon}</span>
-                      {area.name}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              placeholder="Select storage area"
+              searchPlaceholder="Search areas..."
+              emptyText="No area found."
+              allowClear
+              clearLabel="No default area"
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4">

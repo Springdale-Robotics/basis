@@ -41,6 +41,36 @@ const addToShoppingListSchema = z.object({
   targetAreaId: z.string().uuid().optional(),
 });
 
+const quickCreateItemSchema = z.object({
+  name: z.string().min(1).max(255),
+  defaultUnit: z.string().max(50).optional(),
+  category: z.string().max(100).optional(),
+});
+
+const batchCreateItemsSchema = z.object({
+  items: z.array(z.object({
+    name: z.string().min(1).max(255),
+    defaultUnit: z.string().max(50).optional(),
+    category: z.string().max(100).optional(),
+    defaultAreaId: z.string().uuid().optional(),
+  })).min(1).max(50),
+});
+
+const batchDeleteItemsSchema = z.object({
+  itemIds: z.array(z.string().uuid()).min(1).max(50),
+  deleteType: z.enum(['stock_only', 'catalog']).default('catalog'),
+});
+
+const batchUpdateItemsSchema = z.object({
+  itemIds: z.array(z.string().uuid()).min(1).max(50),
+  updates: z.object({
+    category: z.string().max(100).optional(),
+    keepInStock: z.boolean().optional(),
+    minStockQuantity: z.number().positive().optional(),
+    defaultAreaId: z.string().uuid().nullable().optional(),
+  }),
+});
+
 export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // ===== AREAS =====
 
@@ -236,6 +266,145 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         );
 
       return { success: true, data: { message: 'Item deleted' } };
+    }
+  );
+
+  // Quick create item - minimal fields, returns ID for immediate use
+  app.post(
+    '/items/quick-create',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = quickCreateItemSchema.parse(request.body);
+
+      // Generate internal ID
+      const internalId = `HM-${randomBytes(3).toString('hex').toUpperCase()}`;
+
+      const [item] = await db
+        .insert(inventoryItems)
+        .values({
+          householdId: request.user!.householdId,
+          name: input.name,
+          internalId,
+          defaultUnit: input.defaultUnit,
+          category: input.category,
+        })
+        .returning();
+
+      return { success: true, data: { item } };
+    }
+  );
+
+  // Batch create items - for import flows
+  app.post(
+    '/items/batch',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = batchCreateItemsSchema.parse(request.body);
+
+      const createdItems = [];
+
+      for (const itemData of input.items) {
+        const internalId = `HM-${randomBytes(3).toString('hex').toUpperCase()}`;
+
+        const [item] = await db
+          .insert(inventoryItems)
+          .values({
+            householdId: request.user!.householdId,
+            name: itemData.name,
+            internalId,
+            defaultUnit: itemData.defaultUnit,
+            category: itemData.category,
+            defaultAreaId: itemData.defaultAreaId,
+          })
+          .returning();
+
+        createdItems.push(item);
+      }
+
+      return { success: true, data: { items: createdItems } };
+    }
+  );
+
+  // Batch delete items - delete multiple items at once
+  app.post(
+    '/items/batch-delete',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = batchDeleteItemsSchema.parse(request.body);
+
+      if (input.deleteType === 'stock_only') {
+        // Only delete stock entries, keep items in catalog
+        for (const itemId of input.itemIds) {
+          // Verify item belongs to household
+          const item = await db.query.inventoryItems.findFirst({
+            where: and(
+              eq(inventoryItems.id, itemId),
+              eq(inventoryItems.householdId, request.user!.householdId)
+            ),
+          });
+          if (item) {
+            await db.delete(inventoryStock).where(eq(inventoryStock.itemId, itemId));
+          }
+        }
+      } else {
+        // Delete items from catalog (stock cascades)
+        for (const itemId of input.itemIds) {
+          await db
+            .delete(inventoryItems)
+            .where(
+              and(
+                eq(inventoryItems.id, itemId),
+                eq(inventoryItems.householdId, request.user!.householdId)
+              )
+            );
+        }
+      }
+
+      return { success: true, data: { message: `${input.itemIds.length} items processed` } };
+    }
+  );
+
+  // Batch update items - update multiple items at once
+  app.post(
+    '/items/batch-update',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = batchUpdateItemsSchema.parse(request.body);
+
+      const updatedItems = [];
+      for (const itemId of input.itemIds) {
+        const updateData: Record<string, unknown> = { updatedAt: new Date() };
+
+        if (input.updates.category !== undefined) {
+          updateData.category = input.updates.category;
+        }
+        if (input.updates.keepInStock !== undefined) {
+          updateData.keepInStock = input.updates.keepInStock;
+        }
+        if (input.updates.minStockQuantity !== undefined) {
+          updateData.minStockQuantity = input.updates.minStockQuantity.toString();
+        }
+        if (input.updates.defaultAreaId !== undefined) {
+          updateData.defaultAreaId = input.updates.defaultAreaId;
+        }
+
+        const [updated] = await db
+          .update(inventoryItems)
+          .set(updateData)
+          .where(
+            and(
+              eq(inventoryItems.id, itemId),
+              eq(inventoryItems.householdId, request.user!.householdId)
+            )
+          )
+          .returning();
+
+        if (updated) {
+          updatedItems.push(updated);
+        }
+      }
+
+      return { success: true, data: { items: updatedItems } };
     }
   );
 
