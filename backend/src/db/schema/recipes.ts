@@ -10,6 +10,7 @@ import {
   jsonb,
   pgEnum,
 } from 'drizzle-orm/pg-core';
+import { relations } from 'drizzle-orm';
 import { households } from './households';
 import { users } from './users';
 import { devices } from './devices';
@@ -76,9 +77,17 @@ export const mealPlans = pgTable('meal_plans', {
     .references(() => recipes.id, { onDelete: 'cascade' }),
   plannedDate: date('planned_date').notNull(),
   mealType: mealTypeEnum('meal_type').notNull(),
+  servingsMultiplier: decimal('servings_multiplier', { precision: 5, scale: 2 }).default('1'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
+
+export const mealPlansRelations = relations(mealPlans, ({ one }) => ({
+  recipe: one(recipes, {
+    fields: [mealPlans.recipeId],
+    references: [recipes.id],
+  }),
+}));
 
 export const activeCookingSessions = pgTable('active_cooking_sessions', {
   id: uuid('id').primaryKey().defaultRandom(),

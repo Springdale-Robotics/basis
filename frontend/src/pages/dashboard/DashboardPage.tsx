@@ -37,8 +37,8 @@ export function DashboardPage() {
     }),
   });
 
-  // Fetch today's meal plans
-  const todayDateString = todayStart.toISOString().split('T')[0];
+  // Fetch today's meal plans (format in local timezone)
+  const todayDateString = `${todayStart.getFullYear()}-${String(todayStart.getMonth() + 1).padStart(2, '0')}-${String(todayStart.getDate()).padStart(2, '0')}`;
   const { data: mealPlans, isLoading: mealsLoading } = useQuery({
     queryKey: ['meal-plans', todayDateString],
     queryFn: () => recipesApi.getMealPlans({ start: todayDateString, end: todayDateString }),
@@ -128,19 +128,29 @@ export function DashboardPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                {mealPlans.mealPlans.map((meal) => (
-                  <div key={meal.id} className="flex items-center justify-between">
-                    <div>
-                      <Badge variant="outline" className="text-xs capitalize">
-                        {meal.mealType}
-                      </Badge>
-                      <p className="text-sm font-medium">{meal.recipe?.title}</p>
-                    </div>
-                    <Button variant="ghost" size="sm" asChild>
-                      <Link to={`/recipes/${meal.recipeId}/cook`}>Cook</Link>
-                    </Button>
-                  </div>
-                ))}
+                {(['breakfast', 'lunch', 'dinner', 'snack'] as const)
+                  .map((mealType) => {
+                    const mealsOfType = mealPlans.mealPlans.filter((m) => m.mealType === mealType);
+                    if (mealsOfType.length === 0) return null;
+                    return (
+                      <div key={mealType} className="rounded-lg border bg-muted/30 p-2">
+                        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+                          {mealType}
+                        </div>
+                        <div className="space-y-1">
+                          {mealsOfType.map((meal) => (
+                            <div key={meal.id} className="flex items-center justify-between gap-2 rounded-md bg-background px-2 py-1.5">
+                              <span className="text-sm font-medium truncate">{meal.recipe?.title}</span>
+                              <Button variant="outline" size="sm" asChild className="shrink-0 h-6 px-2 text-xs">
+                                <Link to={`/recipes/${meal.recipeId}/cook`}>Cook</Link>
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })
+                  .filter(Boolean)}
               </div>
             )}
           </CardContent>

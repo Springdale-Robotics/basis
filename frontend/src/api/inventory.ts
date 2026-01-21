@@ -236,8 +236,8 @@ export const inventoryApi = {
     };
   },
 
-  checkShoppingListItem: (id: string) =>
-    apiPost<{ item: ShoppingListItem }>(`/inventory/shopping-list/${id}/check`, {}),
+  checkShoppingListItem: (id: string, options?: { acquiredQuantity?: number; keepRemainder?: boolean }) =>
+    apiPost<{ item: ShoppingListItem; remainderItem: ShoppingListItem | null }>(`/inventory/shopping-list/${id}/check`, options || {}),
 
   deleteShoppingListItem: (id: string) =>
     apiDelete<{ message: string }>(`/inventory/shopping-list/${id}`),

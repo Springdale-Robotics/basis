@@ -61,8 +61,9 @@ const updateRecipeSchema = createRecipeSchema.partial();
 
 const createMealPlanSchema = z.object({
   recipeId: z.string().uuid(),
-  plannedDate: z.coerce.date(),
+  plannedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD format'),
   mealType: mealTypeSchema,
+  servingsMultiplier: z.number().min(0.5).max(10).optional(),
 });
 
 export async function recipesRoutes(app: FastifyInstance): Promise<void> {
@@ -76,10 +77,18 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       const offset = (parseInt(page) - 1) * parseInt(limit);
       const conditions = [eq(recipes.householdId, request.user!.householdId)];
 
-      // Search in title and description
+      // Search in title, description, and tags (partial, case-insensitive)
       if (search) {
+        const searchPattern = `%${search}%`;
         conditions.push(
-          sql`to_tsvector('english', ${recipes.title} || ' ' || COALESCE(${recipes.description}, '')) @@ plainto_tsquery('english', ${search})`
+          sql`(
+            ${recipes.title} ILIKE ${searchPattern}
+            OR ${recipes.description} ILIKE ${searchPattern}
+            OR EXISTS (
+              SELECT 1 FROM jsonb_array_elements_text(${recipes.tags}) AS tag
+              WHERE tag ILIKE ${searchPattern}
+            )
+          )`
         );
       }
 
@@ -135,6 +144,119 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       }
 
       return { success: true, data: { recipe } };
+    }
+  );
+
+  // Get tag suggestions (predefined + used tags)
+  app.get(
+    '/tags/suggestions',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const { search } = request.query as { search?: string };
+
+      // Predefined common recipe tags
+      const predefinedTags = [
+        'breakfast',
+        'lunch',
+        'dinner',
+        'snack',
+        'dessert',
+        'appetizer',
+        'side dish',
+        'main course',
+        'vegetarian',
+        'vegan',
+        'gluten-free',
+        'dairy-free',
+        'low-carb',
+        'keto',
+        'paleo',
+        'healthy',
+        'quick',
+        'easy',
+        'comfort food',
+        'soup',
+        'salad',
+        'pasta',
+        'chicken',
+        'beef',
+        'pork',
+        'seafood',
+        'fish',
+        'asian',
+        'mexican',
+        'italian',
+        'american',
+        'mediterranean',
+        'indian',
+        'thai',
+        'japanese',
+        'chinese',
+        'french',
+        'greek',
+        'bbq',
+        'grilled',
+        'baked',
+        'fried',
+        'slow cooker',
+        'instant pot',
+        'one pot',
+        'meal prep',
+        'budget friendly',
+        'kid friendly',
+        'holiday',
+        'summer',
+        'winter',
+        'fall',
+        'spring',
+      ];
+
+      // Get all tags used in household recipes
+      const householdRecipes = await db.query.recipes.findMany({
+        where: eq(recipes.householdId, request.user!.householdId),
+        columns: { tags: true },
+      });
+
+      // Count tag usage
+      const tagCounts = new Map<string, number>();
+
+      // Initialize predefined tags with count 0
+      for (const tag of predefinedTags) {
+        tagCounts.set(tag.toLowerCase(), 0);
+      }
+
+      // Count actual usage
+      for (const recipe of householdRecipes) {
+        const recipeTags = recipe.tags as string[] | null;
+        if (recipeTags) {
+          for (const tag of recipeTags) {
+            const lowerTag = tag.toLowerCase();
+            tagCounts.set(lowerTag, (tagCounts.get(lowerTag) || 0) + 1);
+          }
+        }
+      }
+
+      // Convert to array and sort by count (most used first), then alphabetically
+      let suggestions = Array.from(tagCounts.entries())
+        .map(([tag, count]) => ({ tag, count }))
+        .sort((a, b) => {
+          if (b.count !== a.count) return b.count - a.count;
+          return a.tag.localeCompare(b.tag);
+        });
+
+      // Filter by search if provided
+      if (search) {
+        const searchLower = search.toLowerCase();
+        suggestions = suggestions.filter((s) => s.tag.includes(searchLower));
+      }
+
+      return {
+        success: true,
+        data: {
+          suggestions: suggestions.slice(0, 20),
+          predefinedTags,
+        }
+      };
     }
   );
 
@@ -700,9 +822,17 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
 
       const conditions = [eq(mealPlans.householdId, request.user!.householdId)];
 
-      // Filter by date range in memory for simplicity
+      // Filter by date range
+      if (start) {
+        conditions.push(gte(mealPlans.plannedDate, start.toISOString().split('T')[0]));
+      }
+      if (end) {
+        conditions.push(lte(mealPlans.plannedDate, end.toISOString().split('T')[0]));
+      }
+
       const plans = await db.query.mealPlans.findMany({
         where: and(...conditions),
+        with: { recipe: true },
         orderBy: (p, { asc }) => [asc(p.plannedDate)],
       });
 
@@ -716,13 +846,28 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
     async (request) => {
       const input = createMealPlanSchema.parse(request.body);
 
+      // Check for existing meal plan with same recipe, date, and meal type
+      const existing = await db.query.mealPlans.findFirst({
+        where: and(
+          eq(mealPlans.householdId, request.user!.householdId),
+          eq(mealPlans.recipeId, input.recipeId),
+          eq(mealPlans.plannedDate, input.plannedDate),
+          eq(mealPlans.mealType, input.mealType)
+        ),
+      });
+
+      if (existing) {
+        throw Errors.badRequest('This recipe is already planned for this meal');
+      }
+
       const [plan] = await db
         .insert(mealPlans)
         .values({
           householdId: request.user!.householdId,
           recipeId: input.recipeId,
-          plannedDate: input.plannedDate.toISOString().split('T')[0],
+          plannedDate: input.plannedDate,
           mealType: input.mealType,
+          servingsMultiplier: input.servingsMultiplier?.toString() ?? '1',
         })
         .returning();
 

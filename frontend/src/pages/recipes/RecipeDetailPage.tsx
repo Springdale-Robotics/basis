@@ -77,6 +77,7 @@ export function RecipeDetailPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['recipes', id] });
+      queryClient.invalidateQueries({ queryKey: ['tag-suggestions'] });
       setEditFormOpen(false);
     },
   });
@@ -85,6 +86,7 @@ export function RecipeDetailPage() {
     mutationFn: () => recipesApi.delete(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['recipes'] });
+      queryClient.invalidateQueries({ queryKey: ['tag-suggestions'] });
       navigate('/recipes');
     },
   });

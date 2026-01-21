@@ -665,6 +665,13 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     '/shopping-list/:id/check',
     { preHandler: [authMiddleware] },
     async (request) => {
+      const { acquiredQuantity, keepRemainder } = z
+        .object({
+          acquiredQuantity: z.number().min(0).optional(),
+          keepRemainder: z.boolean().optional(),
+        })
+        .parse(request.body || {});
+
       // First get the current state
       const current = await db.query.shoppingList.findFirst({
         where: and(
@@ -677,14 +684,54 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.notFound('Shopping list item');
       }
 
-      // Toggle the checked state
+      // If unchecking, just toggle
+      if (current.isChecked) {
+        const [updated] = await db
+          .update(shoppingList)
+          .set({ isChecked: false, updatedAt: new Date() })
+          .where(eq(shoppingList.id, request.params.id))
+          .returning();
+        return { success: true, data: { item: updated, remainderItem: null } };
+      }
+
+      // If checking with partial quantity
+      const originalQuantity = Number(current.quantity) || 0;
+      const acquired = acquiredQuantity !== undefined ? acquiredQuantity : originalQuantity;
+      let remainderItem = null;
+
+      // If we got less than needed and want to keep remainder
+      if (keepRemainder && acquired < originalQuantity && acquired > 0) {
+        const remainingQuantity = originalQuantity - acquired;
+        // Create new item with remaining quantity
+        const [newItem] = await db
+          .insert(shoppingList)
+          .values({
+            householdId: current.householdId,
+            itemId: current.itemId,
+            customName: current.customName,
+            quantity: remainingQuantity.toString(),
+            unit: current.unit,
+            isChecked: false,
+            addedBy: request.user!.id,
+            source: current.source,
+            targetAreaId: current.targetAreaId,
+          })
+          .returning();
+        remainderItem = newItem;
+      }
+
+      // Update the original item with acquired quantity and check it off
       const [updated] = await db
         .update(shoppingList)
-        .set({ isChecked: !current.isChecked, updatedAt: new Date() })
+        .set({
+          isChecked: true,
+          quantity: acquired.toString(),
+          updatedAt: new Date(),
+        })
         .where(eq(shoppingList.id, request.params.id))
         .returning();
 
-      return { success: true, data: { item: updated } };
+      return { success: true, data: { item: updated, remainderItem } };
     }
   );
 

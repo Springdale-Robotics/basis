@@ -56,6 +56,7 @@ export function RecipesPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['recipes'] });
+      queryClient.invalidateQueries({ queryKey: ['tag-suggestions'] });
       setFormOpen(false);
     },
   });

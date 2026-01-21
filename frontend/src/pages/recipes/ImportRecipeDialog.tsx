@@ -86,6 +86,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
     mutationFn: () => recipesApi.confirmImport(sessionId!, overrides),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['recipes'] });
+      queryClient.invalidateQueries({ queryKey: ['tag-suggestions'] });
       onSuccess?.(data.recipeId);
       handleClose();
     },

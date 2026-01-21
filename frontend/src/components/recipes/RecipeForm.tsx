@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Trash2, GripVertical, Loader2, Link2, Check, Search, Package } from 'lucide-react';
+import { Plus, Trash2, GripVertical, Loader2, Link2, Check, Search, Package, Tag, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,6 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { recipeSchema, type RecipeFormData } from '@/types/forms';
 import { inventoryApi } from '@/api/inventory';
+import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
 import type { Recipe, InventoryItem } from '@/types/models';
 
@@ -233,6 +234,172 @@ function IngredientNameInput({
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+interface TagInputProps {
+  tags: string[];
+  onAddTag: (tag: string) => void;
+  onRemoveTag: (tag: string) => void;
+}
+
+function TagInput({ tags, onAddTag, onRemoveTag }: TagInputProps) {
+  const [inputValue, setInputValue] = useState('');
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Handle wheel events explicitly for scroll to work in popover
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    const el = listRef.current;
+    if (!el) return;
+    e.stopPropagation();
+    el.scrollTop += e.deltaY;
+  };
+
+  // Fetch tag suggestions - always fetch when open, filter client-side for better UX
+  const { data: suggestionsData, isLoading } = useQuery({
+    queryKey: ['tag-suggestions'],
+    queryFn: () => recipesApi.getTagSuggestions(),
+    staleTime: 60000,
+    enabled: open,
+  });
+
+  const allSuggestions = suggestionsData?.suggestions || [];
+
+  // Filter out already selected tags and apply search filter
+  const availableSuggestions = allSuggestions.filter((s) => {
+    // Exclude already selected tags
+    if (tags.some((t) => t.toLowerCase() === s.tag.toLowerCase())) {
+      return false;
+    }
+    // Apply search filter if inputValue is not empty
+    if (inputValue) {
+      return s.tag.toLowerCase().includes(inputValue.toLowerCase());
+    }
+    return true;
+  });
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputValue(e.target.value);
+    if (!open) setOpen(true);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && inputValue.trim()) {
+      e.preventDefault();
+      onAddTag(inputValue.trim().toLowerCase());
+      setInputValue('');
+      setOpen(false);
+    }
+    if (e.key === 'Escape') {
+      setOpen(false);
+      inputRef.current?.blur();
+    }
+  };
+
+  const handleSelectSuggestion = (tag: string) => {
+    onAddTag(tag);
+    setInputValue('');
+    setOpen(false);
+    inputRef.current?.focus();
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2 min-h-[32px]">
+        {tags.map((tag) => (
+          <Badge key={tag} variant="secondary" className="gap-1 pr-1">
+            {tag}
+            <button
+              type="button"
+              onClick={() => onRemoveTag(tag)}
+              className="ml-1 rounded-full hover:bg-muted-foreground/20 p-0.5"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        ))}
+      </div>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <div className="relative">
+            <Tag className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <Input
+              ref={inputRef}
+              value={inputValue}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              placeholder="Type or select a tag..."
+              className="pl-9 cursor-pointer"
+            />
+          </div>
+        </PopoverTrigger>
+        <PopoverContent
+          className="w-[--radix-popover-trigger-width] p-0"
+          align="start"
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          onInteractOutside={(e) => {
+            if (inputRef.current?.contains(e.target as Node)) {
+              e.preventDefault();
+            }
+          }}
+        >
+          <div
+            ref={listRef}
+            className="max-h-[250px] overflow-y-auto overscroll-contain"
+            onWheel={handleWheel}
+          >
+            {isLoading ? (
+              <div className="p-3 text-center text-sm text-muted-foreground">
+                <p>Loading suggestions...</p>
+              </div>
+            ) : availableSuggestions.length === 0 && inputValue ? (
+              <div className="p-3 text-center text-sm text-muted-foreground">
+                <p>No matching tags. Press Enter to add "{inputValue}"</p>
+              </div>
+            ) : availableSuggestions.length === 0 ? (
+              <div className="p-3 text-center text-sm text-muted-foreground">
+                <p>No tags available</p>
+              </div>
+            ) : (
+              <div className="p-1">
+                {availableSuggestions.slice(0, 15).map((suggestion) => (
+                  <button
+                    key={suggestion.tag}
+                    type="button"
+                    onClick={() => handleSelectSuggestion(suggestion.tag)}
+                    className="relative flex w-full cursor-pointer select-none items-center justify-between rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+                  >
+                    <span>{suggestion.tag}</span>
+                    {suggestion.count > 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        {suggestion.count} recipe{suggestion.count !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+            {inputValue && !availableSuggestions.some((s) => s.tag.toLowerCase() === inputValue.toLowerCase()) && (
+              <>
+                <div className="h-px bg-border" />
+                <div className="p-1">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectSuggestion(inputValue.trim().toLowerCase())}
+                    className="relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add "{inputValue}" as new tag
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
   );
 }
 
@@ -449,32 +616,10 @@ export function RecipeForm({
 
               <div className="space-y-2">
                 <Label>Tags</Label>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {tags.map((tag) => (
-                    <span
-                      key={tag}
-                      className="inline-flex items-center gap-1 px-2 py-1 bg-secondary rounded-md text-sm"
-                    >
-                      {tag}
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveTag(tag)}
-                        className="text-muted-foreground hover:text-foreground"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                <Input
-                  placeholder="Add tag and press Enter"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleAddTag(e.currentTarget.value);
-                      e.currentTarget.value = '';
-                    }
-                  }}
+                <TagInput
+                  tags={tags}
+                  onAddTag={handleAddTag}
+                  onRemoveTag={handleRemoveTag}
                 />
               </div>
             </TabsContent>

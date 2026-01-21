@@ -3,14 +3,22 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Plus, ShoppingCart } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
 import { GenerateShoppingListDialog } from './GenerateShoppingListDialog';
+import { AddMealDialog } from './AddMealDialog';
+import type { MealPlan } from '@/types/models';
 
 const mealTypes = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
+type MealType = (typeof mealTypes)[number];
+
+// Format date in local timezone (YYYY-MM-DD)
+function formatLocalDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 export function MealPlanPage() {
   const [weekStart, setWeekStart] = useState(() => {
@@ -20,16 +28,22 @@ export function MealPlanPage() {
     return new Date(today.setDate(diff));
   });
   const [shoppingListDialogOpen, setShoppingListDialogOpen] = useState(false);
+  const [addMealDialogOpen, setAddMealDialogOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [selectedMealType, setSelectedMealType] = useState<MealType>('breakfast');
 
   const weekEnd = new Date(weekStart);
   weekEnd.setDate(weekEnd.getDate() + 6);
 
+  const weekStartStr = formatLocalDate(weekStart);
+  const weekEndStr = formatLocalDate(weekEnd);
+
   const { data: mealPlans, isLoading } = useQuery({
-    queryKey: ['meal-plans', weekStart.toISOString(), weekEnd.toISOString()],
+    queryKey: ['meal-plans', weekStartStr, weekEndStr],
     queryFn: () =>
       recipesApi.getMealPlans({
-        start: weekStart.toISOString(),
-        end: weekEnd.toISOString(),
+        start: weekStartStr,
+        end: weekEndStr,
       }),
   });
 
@@ -61,12 +75,17 @@ export function MealPlanPage() {
 
   const mealPlansList = mealPlans?.mealPlans || [];
 
-  const getMealsForDay = (date: Date, mealType: string) => {
+  const getMealsForDay = (date: Date, mealType: string): MealPlan[] => {
+    const dateStr = formatLocalDate(date);
     return mealPlansList.filter(
-      (meal) =>
-        new Date(meal.date).toDateString() === date.toDateString() &&
-        meal.mealType === mealType
+      (meal) => meal.plannedDate === dateStr && meal.mealType === mealType
     );
+  };
+
+  const handleCellClick = (date: Date, mealType: MealType) => {
+    setSelectedDate(date);
+    setSelectedMealType(mealType);
+    setAddMealDialogOpen(true);
   };
 
   const weekLabel = `${weekStart.toLocaleDateString(undefined, {
@@ -77,6 +96,11 @@ export function MealPlanPage() {
     day: 'numeric',
     year: 'numeric',
   })}`;
+
+  // Get existing meals for the selected date/mealType
+  const existingMeals = selectedDate
+    ? getMealsForDay(selectedDate, selectedMealType)
+    : [];
 
   return (
     <div>
@@ -119,10 +143,10 @@ export function MealPlanPage() {
             <div className="mb-2 grid grid-cols-8 gap-2">
               <div />
               {days.map((day) => {
-                const isToday = day.toDateString() === new Date().toDateString();
+                const isToday = formatLocalDate(day) === formatLocalDate(new Date());
                 return (
                   <div
-                    key={day.toISOString()}
+                    key={formatLocalDate(day)}
                     className={cn(
                       'text-center font-medium',
                       isToday && 'text-primary'
@@ -151,19 +175,27 @@ export function MealPlanPage() {
                   const meals = getMealsForDay(day, mealType);
                   return (
                     <Card
-                      key={`${day.toISOString()}-${mealType}`}
+                      key={`${formatLocalDate(day)}-${mealType}`}
                       className="min-h-20 cursor-pointer transition-colors hover:bg-muted/50"
+                      onClick={() => handleCellClick(day, mealType)}
                     >
                       <CardContent className="p-2">
                         {meals.length > 0 ? (
-                          meals.map((meal) => (
-                            <div
-                              key={meal.id}
-                              className="rounded bg-primary/10 p-1 text-xs"
-                            >
-                              {meal.recipe?.title}
-                            </div>
-                          ))
+                          <div className="space-y-1">
+                            {meals.map((meal) => (
+                              <div
+                                key={meal.id}
+                                className="rounded bg-primary/10 p-1 text-xs truncate"
+                              >
+                                {meal.recipe?.title}
+                                {meal.servingsMultiplier && Number(meal.servingsMultiplier) !== 1 && (
+                                  <span className="ml-1 text-muted-foreground">
+                                    ({meal.servingsMultiplier}x)
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
                         ) : (
                           <div className="flex h-full items-center justify-center">
                             <Plus className="h-4 w-4 text-muted-foreground" />
@@ -185,6 +217,16 @@ export function MealPlanPage() {
         startDate={weekStart}
         endDate={weekEnd}
       />
+
+      {selectedDate && (
+        <AddMealDialog
+          open={addMealDialogOpen}
+          onOpenChange={setAddMealDialogOpen}
+          date={selectedDate}
+          mealType={selectedMealType}
+          existingMeals={existingMeals}
+        />
+      )}
     </div>
   );
 }

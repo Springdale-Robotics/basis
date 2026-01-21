@@ -254,14 +254,13 @@ export interface RecipeTimer {
 export interface MealPlan {
   id: string;
   householdId: string;
-  date: string;
+  plannedDate: string;
   mealType: 'breakfast' | 'lunch' | 'dinner' | 'snack';
   recipeId: string;
   recipe?: Recipe;
-  servings: number;
-  notes?: string;
-  createdBy: string;
+  servingsMultiplier?: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface StorageArea {

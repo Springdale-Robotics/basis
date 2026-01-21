@@ -50,6 +50,7 @@ export interface CreateMealPlanRequest {
   recipeId: string;
   plannedDate: string;
   mealType: 'breakfast' | 'lunch' | 'dinner' | 'snack';
+  servingsMultiplier?: number;
 }
 
 export interface GetMealPlansParams {
@@ -171,6 +172,16 @@ export interface RecipeTag {
   count: number;
 }
 
+export interface TagSuggestion {
+  tag: string;
+  count: number;
+}
+
+export interface TagSuggestionsResponse {
+  suggestions: TagSuggestion[];
+  predefinedTags: string[];
+}
+
 export const recipesApi = {
   list: (params?: GetRecipesParams) =>
     apiGet<{ recipes: Recipe[] }>('/recipes', {
@@ -191,6 +202,11 @@ export const recipesApi = {
 
   getTags: () =>
     apiGet<{ tags: RecipeTag[] }>('/recipes/tags'),
+
+  getTagSuggestions: (search?: string) =>
+    apiGet<TagSuggestionsResponse>('/recipes/tags/suggestions', {
+      params: search ? { search } : undefined
+    }),
 
   // Cooking
   startCooking: (recipeId: string, servingsMultiplier?: number) =>

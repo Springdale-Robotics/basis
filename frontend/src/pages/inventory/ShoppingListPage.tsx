@@ -10,13 +10,17 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { PutAwayDialog } from '@/components/inventory/PutAwayDialog';
 import { AddToListDialog } from '@/components/inventory/AddToListDialog';
+import { CheckOffItemDialog } from '@/components/inventory/CheckOffItemDialog';
 import { inventoryApi } from '@/api/inventory';
 import { cn } from '@/lib/utils';
+import type { ShoppingListItem } from '@/types/models';
 
 export function ShoppingListPage() {
   const queryClient = useQueryClient();
   const [putAwayDialogOpen, setPutAwayDialogOpen] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [checkOffDialogOpen, setCheckOffDialogOpen] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<ShoppingListItem | null>(null);
 
   const { data: items, isLoading } = useQuery({
     queryKey: ['shopping-list'],
@@ -25,7 +29,7 @@ export function ShoppingListPage() {
 
   const { data: inventoryData } = useQuery({
     queryKey: ['inventory-items'],
-    queryFn: inventoryApi.getItems,
+    queryFn: () => inventoryApi.getItems(),
   });
 
   const { data: areasData } = useQuery({
@@ -33,10 +37,13 @@ export function ShoppingListPage() {
     queryFn: inventoryApi.getAreas,
   });
 
-  const toggleItemMutation = useMutation({
-    mutationFn: (id: string) => inventoryApi.checkShoppingListItem(id),
+  const checkItemMutation = useMutation({
+    mutationFn: ({ id, options }: { id: string; options?: { acquiredQuantity?: number; keepRemainder?: boolean } }) =>
+      inventoryApi.checkShoppingListItem(id, options),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['shopping-list'] });
+      setCheckOffDialogOpen(false);
+      setSelectedItem(null);
     },
   });
 
@@ -54,6 +61,33 @@ export function ShoppingListPage() {
     },
   });
 
+  const handleItemClick = (item: ShoppingListItem) => {
+    if (item.checked) {
+      // If already checked, just toggle it off
+      checkItemMutation.mutate({ id: item.id });
+    } else {
+      // If unchecked, show the check-off dialog
+      setSelectedItem(item);
+      setCheckOffDialogOpen(true);
+    }
+  };
+
+  const handleCheckOffConfirm = (acquiredQuantity: number, keepRemainder: boolean) => {
+    if (!selectedItem) return;
+
+    if (acquiredQuantity === 0) {
+      // Remove the item entirely
+      deleteItemMutation.mutate(selectedItem.id);
+      setCheckOffDialogOpen(false);
+      setSelectedItem(null);
+    } else {
+      checkItemMutation.mutate({
+        id: selectedItem.id,
+        options: { acquiredQuantity, keepRemainder },
+      });
+    }
+  };
+
   const handlePutAway = async (data: {
     shoppingListItemId: string;
     areaId: string;
@@ -70,7 +104,6 @@ export function ShoppingListPage() {
   };
 
   const handleSkipItem = (id: string) => {
-    // Just delete it from the shopping list
     deleteItemMutation.mutate(id);
   };
 
@@ -156,7 +189,7 @@ export function ShoppingListPage() {
                     <CardContent className="flex items-center gap-4 p-4">
                       <Checkbox
                         checked={item.checked}
-                        onCheckedChange={() => toggleItemMutation.mutate(item.id)}
+                        onCheckedChange={() => handleItemClick(item)}
                       />
                       <div className="flex-1">
                         <p
@@ -216,6 +249,15 @@ export function ShoppingListPage() {
         onOpenChange={setAddDialogOpen}
         inventoryItems={inventoryItems}
         areas={areas}
+      />
+
+      {/* Check Off Item Dialog */}
+      <CheckOffItemDialog
+        open={checkOffDialogOpen}
+        onOpenChange={setCheckOffDialogOpen}
+        item={selectedItem}
+        onConfirm={handleCheckOffConfirm}
+        isPending={checkItemMutation.isPending || deleteItemMutation.isPending}
       />
     </div>
   );
