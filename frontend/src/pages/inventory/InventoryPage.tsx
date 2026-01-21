@@ -357,6 +357,7 @@ export function InventoryPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       setEditingItem(null);
+      setItemFormOpen(false);
     },
   });
 

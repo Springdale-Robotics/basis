@@ -614,9 +614,23 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
       const list = await db.query.shoppingList.findMany({
         where: eq(shoppingList.householdId, request.user!.householdId),
         orderBy: (l, { asc }) => [asc(l.isChecked), asc(l.createdAt)],
+        with: {
+          item: {
+            columns: { id: true, name: true, category: true, defaultUnit: true },
+          },
+        },
       });
 
-      return { success: true, data: { shoppingList: list } };
+      // Transform to include item name from linked inventory item
+      const transformedList = list.map((entry) => ({
+        ...entry,
+        // Use customName if set, otherwise use linked inventory item name
+        customName: entry.customName || entry.item?.name || null,
+        // Use category from linked item if not set on shopping list entry
+        category: entry.category || entry.item?.category || null,
+      }));
+
+      return { success: true, data: { shoppingList: transformedList } };
     }
   );
 
@@ -651,15 +665,23 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     '/shopping-list/:id/check',
     { preHandler: [authMiddleware] },
     async (request) => {
+      // First get the current state
+      const current = await db.query.shoppingList.findFirst({
+        where: and(
+          eq(shoppingList.id, request.params.id),
+          eq(shoppingList.householdId, request.user!.householdId)
+        ),
+      });
+
+      if (!current) {
+        throw Errors.notFound('Shopping list item');
+      }
+
+      // Toggle the checked state
       const [updated] = await db
         .update(shoppingList)
-        .set({ isChecked: true, updatedAt: new Date() })
-        .where(
-          and(
-            eq(shoppingList.id, request.params.id),
-            eq(shoppingList.householdId, request.user!.householdId)
-          )
-        )
+        .set({ isChecked: !current.isChecked, updatedAt: new Date() })
+        .where(eq(shoppingList.id, request.params.id))
         .returning();
 
       return { success: true, data: { item: updated } };
@@ -712,10 +734,9 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
-      // Mark as checked
+      // Remove from shopping list
       await db
-        .update(shoppingList)
-        .set({ isChecked: true, updatedAt: new Date() })
+        .delete(shoppingList)
         .where(eq(shoppingList.id, request.params.id));
 
       return { success: true, data: { message: 'Moved to inventory' } };
@@ -753,6 +774,73 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         );
 
       return { success: true, data: { message: 'Checked items cleared' } };
+    }
+  );
+
+  // Batch put away - move all checked items to inventory
+  app.post(
+    '/shopping-list/put-away',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const { defaultAreaId } = z
+        .object({
+          defaultAreaId: z.string().uuid().optional(),
+        })
+        .parse(request.body);
+
+      // Get all checked items with itemId (can be added to inventory)
+      const checkedItems = await db.query.shoppingList.findMany({
+        where: and(
+          eq(shoppingList.householdId, request.user!.householdId),
+          eq(shoppingList.isChecked, true)
+        ),
+      });
+
+      let movedCount = 0;
+      let skippedCount = 0;
+
+      for (const item of checkedItems) {
+        // Skip custom items without itemId - they can't be added to inventory
+        if (!item.itemId) {
+          skippedCount++;
+          continue;
+        }
+
+        // Get the inventory item to find defaultAreaId if needed
+        const inventoryItem = await db.query.inventoryItems.findFirst({
+          where: eq(inventoryItems.id, item.itemId),
+        });
+
+        // Determine area: targetAreaId > item's defaultAreaId > provided defaultAreaId
+        const areaId = item.targetAreaId || inventoryItem?.defaultAreaId || defaultAreaId;
+
+        if (!areaId) {
+          skippedCount++;
+          continue;
+        }
+
+        // Add to inventory stock
+        await db.insert(inventoryStock).values({
+          itemId: item.itemId,
+          areaId,
+          quantity: item.quantity || '1',
+          unit: item.unit,
+        });
+
+        // Delete the shopping list item
+        await db.delete(shoppingList).where(eq(shoppingList.id, item.id));
+
+        movedCount++;
+      }
+
+      return {
+        success: true,
+        data: {
+          message: `Moved ${movedCount} items to inventory`,
+          movedCount,
+          skippedCount,
+        },
+      };
     }
   );
 }

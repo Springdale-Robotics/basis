@@ -1,33 +1,36 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, ShoppingBag, Check, Package } from 'lucide-react';
+import { Plus, Trash2, ShoppingBag, Package } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { PutAwayDialog } from '@/components/inventory/PutAwayDialog';
+import { AddToListDialog } from '@/components/inventory/AddToListDialog';
 import { inventoryApi } from '@/api/inventory';
 import { cn } from '@/lib/utils';
 
 export function ShoppingListPage() {
   const queryClient = useQueryClient();
-  const [newItem, setNewItem] = useState('');
+  const [putAwayDialogOpen, setPutAwayDialogOpen] = useState(false);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
 
   const { data: items, isLoading } = useQuery({
     queryKey: ['shopping-list'],
     queryFn: inventoryApi.getShoppingList,
   });
 
-  const addItemMutation = useMutation({
-    mutationFn: (name: string) =>
-      inventoryApi.addToShoppingList({ customName: name, quantity: 1, unit: 'item' }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['shopping-list'] });
-      setNewItem('');
-    },
+  const { data: inventoryData } = useQuery({
+    queryKey: ['inventory-items'],
+    queryFn: inventoryApi.getItems,
+  });
+
+  const { data: areasData } = useQuery({
+    queryKey: ['inventory-areas'],
+    queryFn: inventoryApi.getAreas,
   });
 
   const toggleItemMutation = useMutation({
@@ -51,11 +54,24 @@ export function ShoppingListPage() {
     },
   });
 
-  const handleAddItem = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (newItem.trim()) {
-      addItemMutation.mutate(newItem.trim());
-    }
+  const handlePutAway = async (data: {
+    shoppingListItemId: string;
+    areaId: string;
+    quantity: number;
+    expiryDate?: string;
+  }) => {
+    await inventoryApi.moveToInventory(data.shoppingListItemId, {
+      areaId: data.areaId,
+      quantity: data.quantity,
+      expiryDate: data.expiryDate,
+    });
+    queryClient.invalidateQueries({ queryKey: ['shopping-list'] });
+    queryClient.invalidateQueries({ queryKey: ['inventory'] });
+  };
+
+  const handleSkipItem = (id: string) => {
+    // Just delete it from the shopping list
+    deleteItemMutation.mutate(id);
   };
 
   const shoppingList = items?.shoppingList || [];
@@ -70,6 +86,10 @@ export function ShoppingListPage() {
     return acc;
   }, {} as Record<string, typeof shoppingList>);
 
+  const inventoryItems = inventoryData?.items || [];
+  const areas = areasData?.areas || [];
+  const checkedItems = shoppingList.filter((item) => item.checked);
+
   return (
     <div>
       <PageHeader
@@ -83,7 +103,7 @@ export function ShoppingListPage() {
                   <Trash2 className="mr-2 h-4 w-4" />
                   Clear Checked
                 </Button>
-                <Button>
+                <Button onClick={() => setPutAwayDialogOpen(true)}>
                   <Package className="mr-2 h-4 w-4" />
                   Put Away Groceries
                 </Button>
@@ -93,21 +113,17 @@ export function ShoppingListPage() {
         }
       />
 
-      {/* Quick add */}
+      {/* Add item button */}
       <Card className="mb-6">
         <CardContent className="p-4">
-          <form onSubmit={handleAddItem} className="flex gap-2">
-            <Input
-              placeholder="Add an item..."
-              value={newItem}
-              onChange={(e) => setNewItem(e.target.value)}
-              className="flex-1"
-            />
-            <Button type="submit" disabled={addItemMutation.isPending}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add
-            </Button>
-          </form>
+          <Button
+            variant="outline"
+            className="w-full justify-start text-muted-foreground"
+            onClick={() => setAddDialogOpen(true)}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Add item from catalog...
+          </Button>
         </CardContent>
       </Card>
 
@@ -182,6 +198,25 @@ export function ShoppingListPage() {
           ))}
         </div>
       )}
+
+      {/* Put Away Dialog */}
+      <PutAwayDialog
+        open={putAwayDialogOpen}
+        onOpenChange={setPutAwayDialogOpen}
+        checkedItems={checkedItems}
+        inventoryItems={inventoryItems}
+        areas={areas}
+        onPutAway={handlePutAway}
+        onSkip={handleSkipItem}
+      />
+
+      {/* Add to List Dialog */}
+      <AddToListDialog
+        open={addDialogOpen}
+        onOpenChange={setAddDialogOpen}
+        inventoryItems={inventoryItems}
+        areas={areas}
+      />
     </div>
   );
 }

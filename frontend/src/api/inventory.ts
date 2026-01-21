@@ -247,4 +247,10 @@ export const inventoryApi = {
 
   moveToInventory: (id: string, data: MoveToInventoryRequest) =>
     apiPost<{ message: string }>(`/inventory/shopping-list/${id}/to-inventory`, data),
+
+  putAwayGroceries: (defaultAreaId?: string) =>
+    apiPost<{ message: string; movedCount: number; skippedCount: number }>(
+      '/inventory/shopping-list/put-away',
+      { defaultAreaId }
+    ),
 };
