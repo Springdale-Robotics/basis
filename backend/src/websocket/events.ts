@@ -64,6 +64,19 @@ export interface SyncEventPayload {
   fromHouseholdId: string;
 }
 
+export interface CookingDeductionEventPayload {
+  recipeId: string;
+  recipeName: string;
+  sessionId?: string;
+  deductedItems: Array<{
+    itemId: string;
+    itemName: string;
+    quantity: number;
+    unit?: string;
+  }>;
+  warnings?: string[];
+}
+
 export interface CalendarSyncEventPayload {
   calendarId: string;
   calendarName: string;
@@ -128,6 +141,10 @@ export function emitLowStockAlert(householdId: string, payload: InventoryEventPa
 
 export function emitExpiringAlert(householdId: string, payload: InventoryEventPayload): void {
   emitToHousehold(householdId, 'inventory:expiring', payload);
+}
+
+export function emitCookingDeduction(householdId: string, payload: CookingDeductionEventPayload): void {
+  emitToHousehold(householdId, 'inventory:cooking_deduction', payload);
 }
 
 // Task events

@@ -295,16 +295,20 @@ export interface InventoryItem {
 
 export interface StockEntry {
   id: string;
-  inventoryItemId: string;
+  itemId?: string;
+  inventoryItemId?: string;
   areaId: string;
   quantity: number;
-  unit: string;
+  unit?: string;
   expiryDate?: string;
   expiresAt?: string;
   purchaseDate?: string;
   notes?: string;
   createdAt: string;
   updatedAt: string;
+  // Relations (populated when fetched with relations)
+  item?: InventoryItem;
+  area?: StorageArea;
 }
 
 export interface ShoppingListItem {

@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Grid, List, Search, Clock, Users } from 'lucide-react';
+import { Plus, Grid, List, Search, Clock, Users, Upload } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { RecipeForm } from '@/components/recipes/RecipeForm';
+import { ImportRecipeDialog } from './ImportRecipeDialog';
 import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
 import type { Recipe } from '@/types/models';
@@ -22,7 +23,9 @@ export function RecipesPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [search, setSearch] = useState('');
   const [formOpen, setFormOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const { data, isLoading } = useQuery({
     queryKey: ['recipes', search],
@@ -65,10 +68,16 @@ export function RecipesPage() {
         title="Recipes"
         description="Your recipe collection"
         actions={
-          <Button onClick={() => setFormOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Recipe
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload className="mr-2 h-4 w-4" />
+              Import
+            </Button>
+            <Button onClick={() => setFormOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Recipe
+            </Button>
+          </div>
         }
       />
 
@@ -133,6 +142,12 @@ export function RecipesPage() {
         onOpenChange={setFormOpen}
         onSubmit={(data) => createMutation.mutate(data)}
         isSubmitting={createMutation.isPending}
+      />
+
+      <ImportRecipeDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onSuccess={(recipeId) => navigate(`/recipes/${recipeId}`)}
       />
     </div>
   );

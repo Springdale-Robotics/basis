@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
+import { GenerateShoppingListDialog } from './GenerateShoppingListDialog';
 
 const mealTypes = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
 
@@ -18,6 +19,7 @@ export function MealPlanPage() {
     const diff = today.getDate() - day;
     return new Date(today.setDate(diff));
   });
+  const [shoppingListDialogOpen, setShoppingListDialogOpen] = useState(false);
 
   const weekEnd = new Date(weekStart);
   weekEnd.setDate(weekEnd.getDate() + 6);
@@ -82,7 +84,7 @@ export function MealPlanPage() {
         title="Meal Plan"
         description="Plan your meals for the week"
         actions={
-          <Button>
+          <Button onClick={() => setShoppingListDialogOpen(true)}>
             <ShoppingCart className="mr-2 h-4 w-4" />
             Generate Shopping List
           </Button>
@@ -176,6 +178,13 @@ export function MealPlanPage() {
           </div>
         </div>
       )}
+
+      <GenerateShoppingListDialog
+        open={shoppingListDialogOpen}
+        onOpenChange={setShoppingListDialogOpen}
+        startDate={weekStart}
+        endDate={weekEnd}
+      />
     </div>
   );
 }
