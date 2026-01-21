@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: homemanager-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=postgres://homemanager:${DB_PASSWORD:-changeme}@postgres:5432/homemanager
+      - REDIS_URL=redis://redis:6379
+      - SESSION_SECRET=${SESSION_SECRET:-change-this-to-a-secure-secret-at-least-32-chars}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      - STORAGE_PATH=/data/storage
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5173}
+      - AUTO_MIGRATE=${AUTO_MIGRATE:-true}
+    volumes:
+      - homemanager-storage:/data/storage
+      - homemanager-logs:/data/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - homemanager-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: homemanager-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=homemanager
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-changeme}
+      - POSTGRES_DB=homemanager
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - homemanager-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U homemanager"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: homemanager-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - homemanager-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  postgres-data:
+  redis-data:
+  homemanager-storage:
+  homemanager-logs:
+
+networks:
+  homemanager-network:
+    driver: bridge

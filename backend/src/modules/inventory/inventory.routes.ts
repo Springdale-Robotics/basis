@@ -1,0 +1,584 @@
+import { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { db } from '../../config/database.js';
+import { inventoryAreas, inventoryItems, inventoryStock, shoppingList } from '../../db/schema/index.js';
+import { eq, and, lt, sql, isNotNull } from 'drizzle-orm';
+import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
+import { Errors } from '../../lib/errors.js';
+import { randomBytes } from 'crypto';
+import { shoppingListSourceSchema } from '../../lib/validators.js';
+
+const createAreaSchema = z.object({
+  name: z.string().min(1).max(255),
+  icon: z.string().max(50).optional(),
+  sortOrder: z.number().int().default(0),
+});
+
+const createItemSchema = z.object({
+  name: z.string().min(1).max(255),
+  barcode: z.string().max(255).optional(),
+  defaultUnit: z.string().max(50).optional(),
+  defaultShelfLifeDays: z.number().int().positive().optional(),
+  category: z.string().max(100).optional(),
+  keepInStock: z.boolean().default(false),
+  minStockQuantity: z.number().positive().optional(),
+  defaultAreaId: z.string().uuid().optional(),
+});
+
+const addStockSchema = z.object({
+  itemId: z.string().uuid(),
+  areaId: z.string().uuid(),
+  quantity: z.number().positive(),
+  unit: z.string().max(50).optional(),
+  expiryDate: z.coerce.date().optional(),
+});
+
+const addToShoppingListSchema = z.object({
+  itemId: z.string().uuid().optional(),
+  customName: z.string().max(255).optional(),
+  quantity: z.number().positive().optional(),
+  unit: z.string().max(50).optional(),
+  targetAreaId: z.string().uuid().optional(),
+});
+
+export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
+  // ===== AREAS =====
+
+  app.get(
+    '/areas',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const areas = await db.query.inventoryAreas.findMany({
+        where: eq(inventoryAreas.householdId, request.user!.householdId),
+        orderBy: (a, { asc }) => [asc(a.sortOrder)],
+      });
+
+      return { success: true, data: { areas } };
+    }
+  );
+
+  app.post(
+    '/areas',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = createAreaSchema.parse(request.body);
+
+      const [area] = await db
+        .insert(inventoryAreas)
+        .values({
+          householdId: request.user!.householdId,
+          name: input.name,
+          icon: input.icon,
+          sortOrder: input.sortOrder,
+        })
+        .returning();
+
+      return { success: true, data: { area } };
+    }
+  );
+
+  app.patch<{ Params: { id: string } }>(
+    '/areas/:id',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = createAreaSchema.partial().parse(request.body);
+
+      const [updated] = await db
+        .update(inventoryAreas)
+        .set({ ...input, updatedAt: new Date() })
+        .where(
+          and(
+            eq(inventoryAreas.id, request.params.id),
+            eq(inventoryAreas.householdId, request.user!.householdId)
+          )
+        )
+        .returning();
+
+      if (!updated) throw Errors.notFound('Area');
+
+      return { success: true, data: { area: updated } };
+    }
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    '/areas/:id',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      await db
+        .delete(inventoryAreas)
+        .where(
+          and(
+            eq(inventoryAreas.id, request.params.id),
+            eq(inventoryAreas.householdId, request.user!.householdId)
+          )
+        );
+
+      return { success: true, data: { message: 'Area deleted' } };
+    }
+  );
+
+  app.post(
+    '/areas/reorder',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const { order } = z
+        .object({
+          order: z.array(z.object({ id: z.string().uuid(), sortOrder: z.number().int() })),
+        })
+        .parse(request.body);
+
+      for (const item of order) {
+        await db
+          .update(inventoryAreas)
+          .set({ sortOrder: item.sortOrder })
+          .where(eq(inventoryAreas.id, item.id));
+      }
+
+      return { success: true, data: { message: 'Areas reordered' } };
+    }
+  );
+
+  // ===== ITEMS =====
+
+  app.get(
+    '/items',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const items = await db.query.inventoryItems.findMany({
+        where: eq(inventoryItems.householdId, request.user!.householdId),
+        orderBy: (i, { asc }) => [asc(i.name)],
+      });
+
+      return { success: true, data: { items } };
+    }
+  );
+
+  app.post(
+    '/items',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = createItemSchema.parse(request.body);
+
+      // Generate internal ID if no barcode
+      const internalId = input.barcode ? null : `HM-${randomBytes(3).toString('hex').toUpperCase()}`;
+
+      const [item] = await db
+        .insert(inventoryItems)
+        .values({
+          householdId: request.user!.householdId,
+          name: input.name,
+          barcode: input.barcode,
+          internalId,
+          defaultUnit: input.defaultUnit,
+          defaultShelfLifeDays: input.defaultShelfLifeDays,
+          category: input.category,
+          keepInStock: input.keepInStock,
+          minStockQuantity: input.minStockQuantity?.toString(),
+          defaultAreaId: input.defaultAreaId,
+        })
+        .returning();
+
+      return { success: true, data: { item } };
+    }
+  );
+
+  app.get<{ Params: { id: string } }>(
+    '/items/:id',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const item = await db.query.inventoryItems.findFirst({
+        where: and(
+          eq(inventoryItems.id, request.params.id),
+          eq(inventoryItems.householdId, request.user!.householdId)
+        ),
+      });
+
+      if (!item) throw Errors.notFound('Item');
+
+      return { success: true, data: { item } };
+    }
+  );
+
+  app.patch<{ Params: { id: string } }>(
+    '/items/:id',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = createItemSchema.partial().parse(request.body);
+
+      const [updated] = await db
+        .update(inventoryItems)
+        .set({ ...input, updatedAt: new Date() })
+        .where(
+          and(
+            eq(inventoryItems.id, request.params.id),
+            eq(inventoryItems.householdId, request.user!.householdId)
+          )
+        )
+        .returning();
+
+      if (!updated) throw Errors.notFound('Item');
+
+      return { success: true, data: { item: updated } };
+    }
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    '/items/:id',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      await db
+        .delete(inventoryItems)
+        .where(
+          and(
+            eq(inventoryItems.id, request.params.id),
+            eq(inventoryItems.householdId, request.user!.householdId)
+          )
+        );
+
+      return { success: true, data: { message: 'Item deleted' } };
+    }
+  );
+
+  // ===== STOCK =====
+
+  app.get(
+    '/stock',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      // Get all stock with item and area info
+      const stock = await db.query.inventoryStock.findMany({
+        with: {
+          item: true,
+          area: true,
+        },
+      });
+
+      return { success: true, data: { stock } };
+    }
+  );
+
+  app.post(
+    '/stock',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = addStockSchema.parse(request.body);
+
+      const [stock] = await db
+        .insert(inventoryStock)
+        .values({
+          itemId: input.itemId,
+          areaId: input.areaId,
+          quantity: input.quantity.toString(),
+          unit: input.unit,
+          expiryDate: input.expiryDate?.toISOString().split('T')[0],
+        })
+        .returning();
+
+      return { success: true, data: { stock } };
+    }
+  );
+
+  app.patch<{ Params: { id: string } }>(
+    '/stock/:id',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = addStockSchema.partial().parse(request.body);
+
+      const [updated] = await db
+        .update(inventoryStock)
+        .set({ ...input, updatedAt: new Date() })
+        .where(eq(inventoryStock.id, request.params.id))
+        .returning();
+
+      if (!updated) throw Errors.notFound('Stock entry');
+
+      return { success: true, data: { stock: updated } };
+    }
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    '/stock/:id',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      await db.delete(inventoryStock).where(eq(inventoryStock.id, request.params.id));
+
+      return { success: true, data: { message: 'Stock entry deleted' } };
+    }
+  );
+
+  // Get expiring items
+  app.get(
+    '/expiring',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const { days = '7' } = request.query as any;
+      const futureDate = new Date();
+      futureDate.setDate(futureDate.getDate() + parseInt(days));
+
+      const expiring = await db.query.inventoryStock.findMany({
+        where: and(
+          isNotNull(inventoryStock.expiryDate),
+          lt(inventoryStock.expiryDate, futureDate.toISOString().split('T')[0])
+        ),
+        with: {
+          item: {
+            columns: { id: true, name: true, icon: true, householdId: true },
+          },
+          area: {
+            columns: { id: true, name: true, icon: true },
+          },
+        },
+        orderBy: (s, { asc }) => [asc(s.expiryDate)],
+      });
+
+      // Filter by household (item has householdId)
+      const filteredExpiring = expiring.filter(
+        (stock) => stock.item?.householdId === request.user!.householdId
+      );
+
+      return { success: true, data: { expiring: filteredExpiring } };
+    }
+  );
+
+  // Get low stock items
+  app.get(
+    '/low-stock',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      // Get items marked as keep-in-stock with current quantities
+      const items = await db.query.inventoryItems.findMany({
+        where: and(
+          eq(inventoryItems.householdId, request.user!.householdId),
+          eq(inventoryItems.keepInStock, true)
+        ),
+      });
+
+      const lowStock = [];
+      for (const item of items) {
+        const stock = await db.query.inventoryStock.findMany({
+          where: eq(inventoryStock.itemId, item.id),
+        });
+
+        const totalQuantity = stock.reduce(
+          (sum, s) => sum + parseFloat(s.quantity),
+          0
+        );
+
+        const minQuantity = item.minStockQuantity
+          ? parseFloat(item.minStockQuantity)
+          : 1;
+
+        if (totalQuantity < minQuantity) {
+          lowStock.push({
+            item,
+            currentQuantity: totalQuantity,
+            minQuantity,
+            status: totalQuantity === 0 ? 'out' : 'low',
+          });
+        }
+      }
+
+      return { success: true, data: { lowStock } };
+    }
+  );
+
+  // Keep in stock view
+  app.get(
+    '/keep-in-stock',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const items = await db.query.inventoryItems.findMany({
+        where: and(
+          eq(inventoryItems.householdId, request.user!.householdId),
+          eq(inventoryItems.keepInStock, true)
+        ),
+      });
+
+      const result = [];
+      for (const item of items) {
+        const stock = await db.query.inventoryStock.findMany({
+          where: eq(inventoryStock.itemId, item.id),
+        });
+
+        const totalQuantity = stock.reduce(
+          (sum, s) => sum + parseFloat(s.quantity),
+          0
+        );
+
+        const minQuantity = item.minStockQuantity
+          ? parseFloat(item.minStockQuantity)
+          : 1;
+
+        // Check if on shopping list
+        const onList = await db.query.shoppingList.findFirst({
+          where: and(
+            eq(shoppingList.itemId, item.id),
+            eq(shoppingList.isChecked, false)
+          ),
+        });
+
+        result.push({
+          item,
+          currentQuantity: totalQuantity,
+          minQuantity,
+          unit: item.defaultUnit,
+          status: totalQuantity === 0 ? 'out' : totalQuantity < minQuantity ? 'low' : 'ok',
+          onShoppingList: !!onList,
+        });
+      }
+
+      return { success: true, data: { items: result } };
+    }
+  );
+
+  // ===== SHOPPING LIST =====
+
+  app.get(
+    '/shopping-list',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const list = await db.query.shoppingList.findMany({
+        where: eq(shoppingList.householdId, request.user!.householdId),
+        orderBy: (l, { asc }) => [asc(l.isChecked), asc(l.createdAt)],
+      });
+
+      return { success: true, data: { shoppingList: list } };
+    }
+  );
+
+  app.post(
+    '/shopping-list',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const input = addToShoppingListSchema.parse(request.body);
+
+      if (!input.itemId && !input.customName) {
+        throw Errors.validation('Either itemId or customName is required');
+      }
+
+      const [item] = await db
+        .insert(shoppingList)
+        .values({
+          householdId: request.user!.householdId,
+          itemId: input.itemId,
+          customName: input.customName,
+          quantity: input.quantity?.toString(),
+          unit: input.unit,
+          addedBy: request.user!.id,
+          targetAreaId: input.targetAreaId,
+        })
+        .returning();
+
+      return { success: true, data: { item } };
+    }
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/shopping-list/:id/check',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const [updated] = await db
+        .update(shoppingList)
+        .set({ isChecked: true, updatedAt: new Date() })
+        .where(
+          and(
+            eq(shoppingList.id, request.params.id),
+            eq(shoppingList.householdId, request.user!.householdId)
+          )
+        )
+        .returning();
+
+      return { success: true, data: { item: updated } };
+    }
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/shopping-list/:id/to-inventory',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const { areaId, quantity, expiryDate, splits } = z
+        .object({
+          areaId: z.string().uuid().optional(),
+          quantity: z.number().positive().optional(),
+          expiryDate: z.coerce.date().optional(),
+          splits: z.array(z.object({
+            areaId: z.string().uuid(),
+            quantity: z.number().positive(),
+            expiryDate: z.coerce.date().optional(),
+          })).optional(),
+        })
+        .parse(request.body);
+
+      const item = await db.query.shoppingList.findFirst({
+        where: eq(shoppingList.id, request.params.id),
+      });
+
+      if (!item || !item.itemId) {
+        throw Errors.notFound('Shopping list item');
+      }
+
+      // Add to inventory
+      if (splits && splits.length > 0) {
+        for (const split of splits) {
+          await db.insert(inventoryStock).values({
+            itemId: item.itemId,
+            areaId: split.areaId,
+            quantity: split.quantity.toString(),
+            unit: item.unit,
+            expiryDate: split.expiryDate?.toISOString().split('T')[0],
+          });
+        }
+      } else if (areaId) {
+        await db.insert(inventoryStock).values({
+          itemId: item.itemId,
+          areaId,
+          quantity: (quantity || parseFloat(item.quantity || '1')).toString(),
+          unit: item.unit,
+          expiryDate: expiryDate?.toISOString().split('T')[0],
+        });
+      }
+
+      // Mark as checked
+      await db
+        .update(shoppingList)
+        .set({ isChecked: true, updatedAt: new Date() })
+        .where(eq(shoppingList.id, request.params.id));
+
+      return { success: true, data: { message: 'Moved to inventory' } };
+    }
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    '/shopping-list/:id',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      await db
+        .delete(shoppingList)
+        .where(
+          and(
+            eq(shoppingList.id, request.params.id),
+            eq(shoppingList.householdId, request.user!.householdId)
+          )
+        );
+
+      return { success: true, data: { message: 'Item removed' } };
+    }
+  );
+
+  app.delete(
+    '/shopping-list/checked',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      await db
+        .delete(shoppingList)
+        .where(
+          and(
+            eq(shoppingList.householdId, request.user!.householdId),
+            eq(shoppingList.isChecked, true)
+          )
+        );
+
+      return { success: true, data: { message: 'Checked items cleared' } };
+    }
+  );
+}

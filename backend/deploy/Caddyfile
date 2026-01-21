@@ -1,0 +1,47 @@
+# Caddyfile - Automatic HTTPS with Let's Encrypt
+# Replace your-domain.com with your actual domain
+
+your-domain.com {
+    # API routes
+    handle /api/* {
+        reverse_proxy localhost:3000
+    }
+
+    # WebSocket
+    handle /socket.io/* {
+        reverse_proxy localhost:3000
+    }
+
+    # Health check
+    handle /health {
+        reverse_proxy localhost:3000
+    }
+
+    # Frontend (if serving from same server)
+    handle {
+        root * /var/www/homemanager/frontend
+        try_files {path} /index.html
+        file_server
+
+        # Cache static assets
+        @static {
+            path *.js *.css *.png *.jpg *.jpeg *.gif *.ico *.svg *.woff *.woff2
+        }
+        header @static Cache-Control "public, max-age=31536000, immutable"
+    }
+
+    # Security headers
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        X-XSS-Protection "1; mode=block"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        -Server
+    }
+
+    # Logging
+    log {
+        output file /var/log/caddy/homemanager.log
+        format json
+    }
+}

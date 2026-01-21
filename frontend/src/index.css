@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Skylight Calendar inspired theme - warm, family-friendly */
+    --background: 50 100% 98%; /* Cream #FFFEF9 */
+    --foreground: 0 0% 27%; /* Dark gray #444444 */
+    --card: 0 0% 100%; /* White for cards */
+    --card-foreground: 0 0% 27%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 27%;
+    --primary: 9 91% 64%; /* Coral/Orange #f66951 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 35 100% 96%; /* Light warm beige */
+    --secondary-foreground: 0 0% 27%;
+    --muted: 35 30% 94%; /* Warm gray */
+    --muted-foreground: 0 0% 45%;
+    --accent: 9 91% 64%; /* Same coral for accent */
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 35 20% 88%;
+    --input: 35 20% 88%;
+    --ring: 9 91% 64%;
+    --radius: 0.75rem; /* More rounded for friendly feel */
+    --font-sans: 'Inter', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  .dark {
+    --background: 0 0% 9%; /* Very dark gray */
+    --foreground: 0 0% 95%;
+    --card: 0 0% 12%;
+    --card-foreground: 0 0% 95%;
+    --popover: 0 0% 12%;
+    --popover-foreground: 0 0% 95%;
+    --primary: 9 91% 64%; /* Keep coral in dark mode */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 18%;
+    --secondary-foreground: 0 0% 95%;
+    --muted: 0 0% 18%;
+    --muted-foreground: 0 0% 60%;
+    --accent: 9 91% 64%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 20%;
+    --input: 0 0% 20%;
+    --ring: 9 91% 64%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Skylight Calendar inspired styles */
+@layer components {
+  /* Cards with subtle shadows */
+  .card-skylight {
+    @apply rounded-xl bg-card shadow-sm hover:shadow-md transition-shadow duration-200;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  }
+
+  .card-skylight:hover {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  }
+
+  /* Family-friendly buttons */
+  .btn-skylight {
+    @apply rounded-full px-6 py-2 font-medium transition-all duration-200;
+  }
+
+  .btn-skylight-primary {
+    @apply btn-skylight bg-primary text-primary-foreground hover:opacity-90 active:scale-95;
+  }
+
+  .btn-skylight-secondary {
+    @apply btn-skylight bg-secondary text-secondary-foreground hover:bg-secondary/80 active:scale-95;
+  }
+}
+
+/* Custom scrollbar styles */
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.3);
+    border-radius: 4px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.5);
+  }
+}
