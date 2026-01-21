@@ -57,12 +57,23 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     });
 
     // Calendar events
+    socket.on('calendar:event', (data) => {
+      // Invalidate relevant queries when calendar events change
+      queryClient.invalidateQueries({ queryKey: ['events'] });
+      queryClient.invalidateQueries({ queryKey: ['eventDetails', data.calendarId, data.eventId] });
+      if (data.action === 'created' || data.action === 'deleted') {
+        queryClient.invalidateQueries({ queryKey: ['calendars'] });
+      }
+    });
+
     socket.on('calendar:update', (data) => {
       queryClient.invalidateQueries({ queryKey: ['calendars', data.calendarId] });
+      queryClient.invalidateQueries({ queryKey: ['calendars'] });
       queryClient.invalidateQueries({ queryKey: ['events'] });
     });
 
     socket.on('calendar:delete', (data) => {
+      queryClient.invalidateQueries({ queryKey: ['calendars'] });
       queryClient.invalidateQueries({ queryKey: ['events'] });
     });
 
@@ -119,13 +130,19 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     });
 
     // Notification events
-    socket.on('notification', (notification) => {
+    socket.on('notification', (notification: { id: string; type: string; title: string; body?: string; data?: Record<string, unknown> }) => {
+      const now = new Date().toISOString();
       addNotification({
-        ...notification,
+        id: notification.id,
+        type: notification.type as import('@/types/models').NotificationType,
+        title: notification.title,
+        body: notification.body,
+        data: notification.data,
         userId: '',
         householdId: household.id,
         read: false,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
+        updatedAt: now,
       });
       toast({
         title: notification.title,

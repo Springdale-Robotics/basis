@@ -1,4 +1,10 @@
 export interface ServerToClientEvents {
+  'calendar:event': (data: {
+    eventId: string;
+    calendarId: string;
+    action: 'created' | 'updated' | 'deleted';
+    event?: Record<string, unknown>;
+  }) => void;
   'calendar:update': (data: { calendarId: string; eventId?: string }) => void;
   'calendar:delete': (data: { calendarId: string; eventId: string }) => void;
 

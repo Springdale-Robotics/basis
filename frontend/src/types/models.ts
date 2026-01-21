@@ -110,14 +110,18 @@ export interface DeviceSettings {
 export interface Calendar {
   id: string;
   householdId: string;
+  ownerId?: string;
   name: string;
   color: string;
+  pattern?: string;
+  type: 'individual' | 'group' | 'synced';
   isDefault: boolean;
-  isReadOnly?: boolean;
-  syncType?: 'google' | 'outlook' | 'ical';
-  syncSource?: string;
-  syncUrl?: string;
-  createdBy: string;
+  isReadOnly: boolean;
+  isSynced: boolean;
+  syncProvider?: 'google' | 'outlook';
+  syncCalendarId?: string;
+  lastSyncAt?: string;
+  syncError?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -125,6 +129,7 @@ export interface Calendar {
 export interface CalendarEvent {
   id: string;
   calendarId: string;
+  createdById?: string;
   title: string;
   description?: string;
   location?: string;
@@ -132,12 +137,52 @@ export interface CalendarEvent {
   endTime: string;
   allDay: boolean;
   color?: string;
-  recurrence?: RecurrenceRule;
-  syncId?: string;
-  createdBy: string;
+  recurrenceRule?: string;
+  externalId?: string;
   createdAt: string;
   updatedAt: string;
+  // Enriched fields from details endpoint
+  creator?: UserSummary;
+  attendees?: EventAttendee[];
+  reminders?: EventReminder[];
 }
+
+export interface UserSummary {
+  id: string;
+  displayName: string;
+  email: string;
+  avatarUrl?: string;
+}
+
+export interface EventAttendee {
+  id: string;
+  eventId: string;
+  userId?: string;
+  email?: string;
+  displayName?: string;
+  rsvpStatus: RsvpStatus;
+  rsvpAt?: string;
+  isOrganizer: boolean;
+  notified: boolean;
+  createdAt: string;
+  updatedAt: string;
+  user?: UserSummary;
+}
+
+export type RsvpStatus = 'pending' | 'accepted' | 'declined' | 'maybe';
+
+export interface EventReminder {
+  id: string;
+  eventId: string;
+  userId?: string;
+  reminderType: ReminderType;
+  minutesBefore: number;
+  sent: boolean;
+  sentAt?: string;
+  createdAt: string;
+}
+
+export type ReminderType = 'notification' | 'email' | 'push';
 
 export interface RecurrenceRule {
   frequency: 'daily' | 'weekly' | 'monthly' | 'yearly';
@@ -376,15 +421,44 @@ export interface Album {
 
 export interface Notification {
   id: string;
-  userId: string;
+  userId?: string;
   householdId: string;
-  type: string;
+  type: NotificationType;
   title: string;
   body?: string;
-  data?: Record<string, unknown>;
+  data?: NotificationData;
   read: boolean;
+  readAt?: string;
   actionUrl?: string;
   createdAt: string;
+  updatedAt: string;
+}
+
+export type NotificationType =
+  | 'low_stock'
+  | 'expiring_soon'
+  | 'task_due'
+  | 'sync_error'
+  | 'backup_complete'
+  | 'connection_request'
+  | 'event_reminder'
+  | 'general';
+
+export interface NotificationData {
+  resourceType?: string;
+  resourceId?: string;
+  itemId?: string;
+  itemName?: string;
+  currentQuantity?: number;
+  minQuantity?: number;
+  unit?: string;
+  actions?: NotificationAction[];
+}
+
+export interface NotificationAction {
+  id: string;
+  label: string;
+  endpoint?: string;
 }
 
 export interface HouseholdConnection {

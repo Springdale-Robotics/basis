@@ -176,6 +176,12 @@ EOF
     (cd "$BACKEND_DIR" && $COMPOSE down 2>/dev/null || true)
     # Kill any running node processes for this project
     pkill -f "homemanager.*npm" 2>/dev/null || true
+    pkill -f "tsx watch" 2>/dev/null || true
+    pkill -f "vite.*homemanager" 2>/dev/null || true
+    # Kill processes on dev ports
+    lsof -ti:3000 | xargs kill -9 2>/dev/null || true
+    lsof -ti:5173 | xargs kill -9 2>/dev/null || true
+    lsof -ti:5174 | xargs kill -9 2>/dev/null || true
     echo -e "${GREEN}Stopped.${NC}"
     ;;
 

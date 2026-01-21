@@ -16,7 +16,7 @@ export interface RecipeInstructionInput {
 }
 
 export interface RecipeTimerInput {
-  id: string;
+  id?: string;
   name: string;
   durationSeconds: number;
   stepIndex?: number;

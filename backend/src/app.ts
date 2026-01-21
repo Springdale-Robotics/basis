@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import Fastify, { FastifyInstance } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import fastifyCors from '@fastify/cors';
@@ -19,6 +20,7 @@ import { householdsRoutes } from './modules/households/households.routes.js';
 import { usersRoutes } from './modules/users/users.routes.js';
 import { devicesRoutes } from './modules/devices/devices.routes.js';
 import { calendarsRoutes } from './modules/calendars/calendars.routes.js';
+import { syncRoutes } from './modules/calendars/sync.routes.js';
 import { recipesRoutes } from './modules/recipes/recipes.routes.js';
 import { inventoryRoutes } from './modules/inventory/inventory.routes.js';
 import { tasksRoutes } from './modules/tasks/tasks.routes.js';
@@ -35,7 +37,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: false, // We use our own logger
     requestIdHeader: 'x-request-id',
-    genReqId: () => crypto.randomUUID(),
+    genReqId: () => randomUUID(),
   });
 
   // Request ID middleware (run first)
@@ -133,6 +135,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(usersRoutes, { prefix: '/api/v1/users' });
   await app.register(devicesRoutes, { prefix: '/api/v1/devices' });
   await app.register(calendarsRoutes, { prefix: '/api/v1/calendars' });
+  await app.register(syncRoutes, { prefix: '/api/v1/calendars' });
   await app.register(recipesRoutes, { prefix: '/api/v1/recipes' });
   await app.register(inventoryRoutes, { prefix: '/api/v1/inventory' });
   await app.register(tasksRoutes, { prefix: '/api/v1/tasks' });

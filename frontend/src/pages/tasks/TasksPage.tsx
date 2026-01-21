@@ -12,7 +12,7 @@ import { EmptyState } from '@/components/shared/EmptyState';
 import { UserAvatar } from '@/components/shared/UserAvatar';
 import { TaskForm } from '@/components/tasks/TaskForm';
 import { tasksApi } from '@/api/tasks';
-import { usersApi } from '@/api/users';
+import { householdsApi } from '@/api/households';
 import { formatDate } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import type { Task } from '@/types/models';
@@ -32,8 +32,8 @@ export function TasksPage() {
   });
 
   const { data: usersData } = useQuery({
-    queryKey: ['users'],
-    queryFn: () => usersApi.list(),
+    queryKey: ['household-members'],
+    queryFn: () => householdsApi.getMembers(),
   });
 
   const completeMutation = useMutation({
@@ -65,7 +65,7 @@ export function TasksPage() {
   });
 
   const tasks = data?.tasks || [];
-  const users = usersData?.users || [];
+  const users = usersData?.members || [];
   const pendingTasks = tasks.filter((t: { status: string }) => t.status !== 'completed');
   const completedTasks = tasks.filter((t: { status: string }) => t.status === 'completed');
 

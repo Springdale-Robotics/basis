@@ -6,6 +6,7 @@ import {
   timestamp,
   boolean,
   pgEnum,
+  integer,
 } from 'drizzle-orm/pg-core';
 import { households } from './households';
 import { users } from './users';
@@ -13,6 +14,8 @@ import { devices } from './devices';
 
 export const syncProviderEnum = pgEnum('sync_provider', ['google', 'outlook']);
 export const calendarTypeEnum = pgEnum('calendar_type', ['individual', 'group', 'synced']);
+export const rsvpStatusEnum = pgEnum('rsvp_status', ['pending', 'accepted', 'declined', 'maybe']);
+export const reminderTypeEnum = pgEnum('reminder_type', ['notification', 'email', 'push']);
 
 export const calendars = pgTable('calendars', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -24,10 +27,14 @@ export const calendars = pgTable('calendars', {
   color: varchar('color', { length: 7 }).notNull().default('#3B82F6'),
   pattern: varchar('pattern', { length: 50 }).default('solid'),
   type: calendarTypeEnum('type').notNull().default('individual'),
+  isDefault: boolean('is_default').default(false).notNull(),
+  isReadOnly: boolean('is_read_only').default(false).notNull(),
   isSynced: boolean('is_synced').default(false).notNull(),
   syncProvider: syncProviderEnum('sync_provider'),
   syncCredentials: text('sync_credentials'),
   syncCalendarId: varchar('sync_calendar_id', { length: 255 }),
+  lastSyncAt: timestamp('last_sync_at'),
+  syncError: text('sync_error'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -37,15 +44,49 @@ export const calendarEvents = pgTable('calendar_events', {
   calendarId: uuid('calendar_id')
     .notNull()
     .references(() => calendars.id, { onDelete: 'cascade' }),
+  createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
   title: varchar('title', { length: 255 }).notNull(),
   description: text('description'),
+  location: varchar('location', { length: 500 }),
   startTime: timestamp('start_time').notNull(),
   endTime: timestamp('end_time').notNull(),
   allDay: boolean('all_day').default(false).notNull(),
+  color: varchar('color', { length: 7 }),
   recurrenceRule: varchar('recurrence_rule', { length: 255 }),
   externalId: varchar('external_id', { length: 255 }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// Event attendees for invitations and RSVP
+export const eventAttendees = pgTable('event_attendees', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  eventId: uuid('event_id')
+    .notNull()
+    .references(() => calendarEvents.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  email: varchar('email', { length: 255 }),
+  displayName: varchar('display_name', { length: 255 }),
+  rsvpStatus: rsvpStatusEnum('rsvp_status').notNull().default('pending'),
+  rsvpAt: timestamp('rsvp_at'),
+  isOrganizer: boolean('is_organizer').default(false).notNull(),
+  notified: boolean('notified').default(false).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// Event reminders for notifications
+export const eventReminders = pgTable('event_reminders', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  eventId: uuid('event_id')
+    .notNull()
+    .references(() => calendarEvents.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  reminderType: reminderTypeEnum('reminder_type').notNull().default('notification'),
+  minutesBefore: integer('minutes_before').notNull().default(15),
+  sent: boolean('sent').default(false).notNull(),
+  sentAt: timestamp('sent_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
 export const visibilityScopeTypeEnum = pgEnum('visibility_scope_type', [
@@ -71,3 +112,9 @@ export type CalendarEvent = typeof calendarEvents.$inferSelect;
 export type NewCalendarEvent = typeof calendarEvents.$inferInsert;
 export type CalendarVisibility = typeof calendarVisibility.$inferSelect;
 export type NewCalendarVisibility = typeof calendarVisibility.$inferInsert;
+export type EventAttendee = typeof eventAttendees.$inferSelect;
+export type NewEventAttendee = typeof eventAttendees.$inferInsert;
+export type EventReminder = typeof eventReminders.$inferSelect;
+export type NewEventReminder = typeof eventReminders.$inferInsert;
+export type RsvpStatus = 'pending' | 'accepted' | 'declined' | 'maybe';
+export type ReminderType = 'notification' | 'email' | 'push';

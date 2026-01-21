@@ -74,7 +74,7 @@ export function EventForm({
           allDay: event.allDay,
           calendarId: event.calendarId,
           location: event.location || '',
-          recurrence: typeof event.recurrence === 'string' ? event.recurrence : 'none',
+          recurrence: typeof event.recurrenceRule === 'string' ? event.recurrenceRule : 'none',
         }
       : {
           title: '',
@@ -134,7 +134,7 @@ export function EventForm({
           allDay: event.allDay,
           calendarId: event.calendarId,
           location: event.location || '',
-          recurrence: typeof event.recurrence === 'string' ? event.recurrence : 'none',
+          recurrence: typeof event.recurrenceRule === 'string' ? event.recurrenceRule : 'none',
         });
       } else {
         reset({

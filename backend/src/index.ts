@@ -85,13 +85,15 @@ async function main(): Promise<void> {
 
     // Handle uncaught exceptions
     process.on('uncaughtException', (error) => {
-      logger.fatal({ error }, 'Uncaught exception');
+      logger.fatal({ error, message: error?.message, stack: error?.stack }, 'Uncaught exception');
       shutdown('uncaughtException');
     });
 
     // Handle unhandled promise rejections
     process.on('unhandledRejection', (reason) => {
-      logger.fatal({ reason }, 'Unhandled promise rejection');
+      const message = reason instanceof Error ? reason.message : String(reason);
+      const stack = reason instanceof Error ? reason.stack : undefined;
+      logger.fatal({ reason, message, stack }, 'Unhandled promise rejection');
       shutdown('unhandledRejection');
     });
   } catch (error) {

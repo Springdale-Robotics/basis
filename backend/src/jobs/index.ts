@@ -65,6 +65,19 @@ export const inventoryQueue = new Queue('inventory', {
   },
 });
 
+export const calendarReminderQueue = new Queue('calendar-reminders', {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 50,
+    removeOnFail: 100,
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 1000,
+    },
+  },
+});
+
 // Job type definitions
 export interface NotificationJobData {
   type: 'low_stock' | 'expiring_soon' | 'task_due' | 'sync_error' | 'custom';
@@ -98,6 +111,10 @@ export interface CleanupJobData {
 export interface InventoryJobData {
   type: 'check_low_stock' | 'check_expiring' | 'update_quantities';
   householdId: string;
+}
+
+export interface CalendarReminderJobData {
+  type: 'check_reminders';
 }
 
 // Initialize workers
@@ -194,7 +211,25 @@ export async function initializeWorkers(): Promise<void> {
     logger.error({ jobId: job?.id, type: job?.data.type, error }, 'Inventory job failed');
   });
 
-  workers = [notificationWorker, syncWorker, backupWorker, cleanupWorker, inventoryWorker];
+  // Calendar reminder worker
+  const calendarReminderWorker = new Worker(
+    'calendar-reminders',
+    async (job: Job<CalendarReminderJobData>) => {
+      const { processCalendarReminderJob } = await import('./calendar-reminder.worker.js');
+      return processCalendarReminderJob(job);
+    },
+    { connection: redis, concurrency: 1 }
+  );
+
+  calendarReminderWorker.on('completed', (job) => {
+    logger.debug({ jobId: job.id }, 'Calendar reminder job completed');
+  });
+
+  calendarReminderWorker.on('failed', (job, error) => {
+    logger.error({ jobId: job?.id, error }, 'Calendar reminder job failed');
+  });
+
+  workers = [notificationWorker, syncWorker, backupWorker, cleanupWorker, inventoryWorker, calendarReminderWorker];
   logger.info('Background workers initialized');
 }
 
@@ -230,6 +265,16 @@ export async function scheduleRecurringJobs(): Promise<void> {
     }
   );
 
+  // Check calendar reminders every minute
+  await calendarReminderQueue.add(
+    'check_reminders',
+    { type: 'check_reminders' },
+    {
+      repeat: { pattern: '* * * * *' }, // Every minute
+      jobId: 'calendar:check_reminders',
+    }
+  );
+
   logger.info('Recurring jobs scheduled');
 }
 
@@ -244,6 +289,7 @@ export async function shutdownWorkers(): Promise<void> {
   await backupQueue.close();
   await cleanupQueue.close();
   await inventoryQueue.close();
+  await calendarReminderQueue.close();
 
   logger.info('All workers shut down');
 }

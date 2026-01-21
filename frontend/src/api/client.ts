@@ -7,7 +7,29 @@ interface RequestOptions extends RequestInit {
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
-  const data = await response.json();
+  const text = await response.text();
+
+  // Handle empty responses
+  if (!text) {
+    if (response.ok) {
+      // For successful empty responses (like 204 No Content), return empty object
+      return {} as T;
+    }
+    throw new ApiError({
+      success: false,
+      error: { code: 'EMPTY_RESPONSE', message: 'Server returned an empty response' },
+    }, response.status);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new ApiError({
+      success: false,
+      error: { code: 'INVALID_JSON', message: 'Server returned invalid JSON' },
+    }, response.status);
+  }
 
   if (!response.ok) {
     throw new ApiError(data as ApiErrorResponse, response.status);
@@ -125,10 +147,6 @@ export async function apiDelete<T>(path: string, options?: RequestOptions): Prom
   const response = await fetch(url, {
     method: 'DELETE',
     credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...fetchOptions?.headers,
-    },
     ...fetchOptions,
   });
 

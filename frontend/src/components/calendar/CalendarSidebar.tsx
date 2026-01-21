@@ -21,8 +21,8 @@ export function CalendarSidebar({
   onCreateCalendar,
   onEditCalendar,
 }: CalendarSidebarProps) {
-  const myCalendars = calendars.filter((cal) => !cal.syncSource);
-  const syncedCalendars = calendars.filter((cal) => cal.syncSource);
+  const myCalendars = calendars.filter((cal) => !cal.syncProvider);
+  const syncedCalendars = calendars.filter((cal) => cal.syncProvider);
 
   return (
     <div className="w-64 border-r flex flex-col h-full">
@@ -114,9 +114,9 @@ function CalendarItem({
         <span className={cn('text-sm truncate', !isVisible && 'text-muted-foreground')}>
           {calendar.name}
         </span>
-        {isSynced && (
+        {isSynced && calendar.syncProvider && (
           <span className="text-xs text-muted-foreground shrink-0">
-            ({calendar.syncSource})
+            ({calendar.syncProvider})
           </span>
         )}
       </div>
