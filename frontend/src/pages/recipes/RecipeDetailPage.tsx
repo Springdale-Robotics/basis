@@ -16,14 +16,17 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { RecipeForm } from '@/components/recipes/RecipeForm';
 import { recipesApi } from '@/api/recipes';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import type { RecipeFormData } from '@/types/forms';
 
 export function RecipeDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [editFormOpen, setEditFormOpen] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['recipes', id],
@@ -31,7 +34,52 @@ export function RecipeDetailPage() {
     enabled: !!id,
   });
 
-  const recipe = data?.recipe;
+  // Merge ingredients from separate API response into recipe object
+  // Memoize to prevent useEffect in RecipeForm from resetting on every render
+  const recipe = useMemo(() => {
+    if (!data?.recipe) return undefined;
+    return {
+      ...data.recipe,
+      ingredients: (data.ingredients || []).map((ing) => ({
+        id: (ing as any).id || crypto.randomUUID(),
+        name: ing.name,
+        amount: Number(ing.quantity) || 0,
+        unit: ing.unit || '',
+        notes: ing.notes,
+        optional: false,
+        inventoryItemId: ing.inventoryItemId,
+      })),
+    };
+  }, [data]);
+
+  const updateMutation = useMutation({
+    mutationFn: (formData: RecipeFormData) => {
+      const prepTime = formData.prepTime || formData.prepTimeMinutes;
+      const cookTime = formData.cookTime || formData.cookTimeMinutes;
+      return recipesApi.update(id!, {
+        title: formData.title,
+        description: formData.description || undefined,
+        servings: formData.servings || undefined,
+        prepTimeMinutes: prepTime && prepTime > 0 ? prepTime : undefined,
+        cookTimeMinutes: cookTime && cookTime > 0 ? cookTime : undefined,
+        ingredients: formData.ingredients
+          .filter((ing) => ing.name)
+          .map((ing) => ({
+            name: ing.name,
+            quantity: ing.amount || undefined,
+            unit: ing.unit || undefined,
+            notes: ing.notes || undefined,
+            inventoryItemId: ing.inventoryItemId || undefined,
+          })),
+        instructions: formData.instructions.filter((inst) => inst.text),
+        tags: formData.tags,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recipes', id] });
+      setEditFormOpen(false);
+    },
+  });
 
   const deleteMutation = useMutation({
     mutationFn: () => recipesApi.delete(id!),
@@ -69,11 +117,9 @@ export function RecipeDetailPage() {
         title={recipe.title}
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" asChild>
-              <Link to={`/recipes/${id}/edit`}>
-                <Edit className="mr-2 h-4 w-4" />
-                Edit
-              </Link>
+            <Button variant="outline" onClick={() => setEditFormOpen(true)}>
+              <Edit className="mr-2 h-4 w-4" />
+              Edit
             </Button>
             <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
               <Trash2 className="mr-2 h-4 w-4" />
@@ -129,7 +175,7 @@ export function RecipeDetailPage() {
           </div>
 
           {/* Tags */}
-          {recipe.tags.length > 0 && (
+          {recipe.tags && recipe.tags.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {recipe.tags.map((tag) => (
                 <Badge key={tag} variant="secondary">
@@ -146,7 +192,7 @@ export function RecipeDetailPage() {
             </CardHeader>
             <CardContent>
               <ol className="space-y-4">
-                {recipe.instructions.map((instruction, i) => (
+                {(recipe.instructions ?? []).map((instruction, i) => (
                   <li key={i} className="flex gap-4">
                     <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-sm text-primary-foreground">
                       {instruction.step}
@@ -168,7 +214,7 @@ export function RecipeDetailPage() {
             </CardHeader>
             <CardContent>
               <ul className="space-y-2">
-                {recipe.ingredients.map((ingredient) => (
+                {(recipe.ingredients ?? []).map((ingredient) => (
                   <li key={ingredient.id} className="flex items-center gap-2">
                     <span className="font-medium">
                       {ingredient.amount} {ingredient.unit}
@@ -186,7 +232,7 @@ export function RecipeDetailPage() {
           </Card>
 
           {/* Timers */}
-          {recipe.timers.length > 0 && (
+          {recipe.timers && recipe.timers.length > 0 && (
             <Card>
               <CardHeader>
                 <CardTitle>Timers</CardTitle>
@@ -226,6 +272,14 @@ export function RecipeDetailPage() {
         confirmText="Delete"
         variant="destructive"
         onConfirm={() => deleteMutation.mutate()}
+      />
+
+      <RecipeForm
+        open={editFormOpen}
+        onOpenChange={setEditFormOpen}
+        recipe={recipe}
+        onSubmit={(formData) => updateMutation.mutate(formData)}
+        isSubmitting={updateMutation.isPending}
       />
     </div>
   );

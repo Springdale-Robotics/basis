@@ -30,7 +30,27 @@ export function RecipesPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: RecipeFormData) => recipesApi.create(data),
+    mutationFn: (formData: RecipeFormData) => {
+      const prepTime = formData.prepTime || formData.prepTimeMinutes;
+      const cookTime = formData.cookTime || formData.cookTimeMinutes;
+      return recipesApi.create({
+        title: formData.title,
+        description: formData.description || undefined,
+        servings: formData.servings || undefined,
+        prepTimeMinutes: prepTime && prepTime > 0 ? prepTime : undefined,
+        cookTimeMinutes: cookTime && cookTime > 0 ? cookTime : undefined,
+        ingredients: formData.ingredients
+          .filter((ing) => ing.name)
+          .map((ing) => ({
+            name: ing.name,
+            quantity: ing.amount || undefined,
+            unit: ing.unit || undefined,
+            notes: ing.notes || undefined,
+          })),
+        instructions: formData.instructions.filter((inst) => inst.text),
+        tags: formData.tags,
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['recipes'] });
       setFormOpen(false);

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Plus, Trash2, GripVertical, Loader2 } from 'lucide-react';
@@ -59,29 +59,17 @@ export function RecipeForm({
     formState: { errors },
   } = useForm<RecipeFormData>({
     resolver: zodResolver(recipeSchema),
-    defaultValues: recipe
-      ? {
-          title: recipe.title,
-          description: recipe.description || '',
-          prepTime: recipe.prepTime || 0,
-          cookTime: recipe.cookTime || 0,
-          servings: recipe.servings || 4,
-          difficulty: recipe.difficulty || 'medium',
-          ingredients: recipe.ingredients || [],
-          instructions: recipe.instructions || [],
-          tags: recipe.tags || [],
-        }
-      : {
-          title: '',
-          description: '',
-          prepTime: 0,
-          cookTime: 0,
-          servings: 4,
-          difficulty: 'medium',
-          ingredients: [{ name: '', amount: 1, unit: '' }],
-          instructions: [{ step: 1, text: '' }],
-          tags: [],
-        },
+    defaultValues: {
+      title: '',
+      description: '',
+      prepTime: 0,
+      cookTime: 0,
+      servings: 4,
+      difficulty: 'medium',
+      ingredients: [{ name: '', amount: 1, unit: '' }],
+      instructions: [{ step: 1, text: '' }],
+      tags: [],
+    },
   });
 
   const {
@@ -105,9 +93,53 @@ export function RecipeForm({
   const difficulty = watch('difficulty');
   const tags = watch('tags');
 
+  // Reset form when dialog opens or recipe changes
+  useEffect(() => {
+    if (open) {
+      reset(
+        recipe
+          ? {
+              title: recipe.title,
+              description: recipe.description || '',
+              prepTime: recipe.prepTime || recipe.prepTimeMinutes || 0,
+              cookTime: recipe.cookTime || recipe.cookTimeMinutes || 0,
+              servings: recipe.servings || 4,
+              difficulty: recipe.difficulty || 'medium',
+              ingredients: (recipe.ingredients || []).map((ing) => ({
+                name: ing.name || '',
+                amount: typeof ing.amount === 'number' ? ing.amount : 0,
+                unit: ing.unit || '',
+                notes: ing.notes ?? undefined,
+                optional: ing.optional ?? undefined,
+                inventoryItemId: ing.inventoryItemId ?? undefined,
+              })),
+              instructions: (recipe.instructions || []).map((inst, idx) => ({
+                step: inst.step ?? idx + 1,
+                text: inst.text || '',
+              })),
+              tags: recipe.tags || [],
+            }
+          : {
+              title: '',
+              description: '',
+              prepTime: 0,
+              cookTime: 0,
+              servings: 4,
+              difficulty: 'medium',
+              ingredients: [{ name: '', amount: 1, unit: '' }],
+              instructions: [{ step: 1, text: '' }],
+              tags: [],
+            }
+      );
+    }
+  }, [open, recipe, reset]);
+
   const handleFormSubmit = (data: RecipeFormData) => {
     onSubmit(data);
-    reset();
+  };
+
+  const handleFormError = (errors: any) => {
+    console.error('Form validation errors:', errors);
   };
 
   const handleClose = () => {
@@ -134,7 +166,7 @@ export function RecipeForm({
         <DialogHeader>
           <DialogTitle>{isEditing ? 'Edit Recipe' : 'New Recipe'}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit(handleFormSubmit)}>
+        <form onSubmit={handleSubmit(handleFormSubmit, handleFormError)}>
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="mb-4">
               <TabsTrigger value="details">Details</TabsTrigger>
@@ -142,7 +174,7 @@ export function RecipeForm({
               <TabsTrigger value="instructions">Instructions</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="details" className="space-y-4">
+            <TabsContent value="details" className="space-y-4 min-h-[340px]">
               <div className="space-y-2">
                 <Label htmlFor="title">Title</Label>
                 <Input
@@ -249,7 +281,7 @@ export function RecipeForm({
               </div>
             </TabsContent>
 
-            <TabsContent value="ingredients" className="space-y-4">
+            <TabsContent value="ingredients" className="space-y-4 min-h-[340px]">
               {ingredientFields.map((field, index) => (
                 <div key={field.id} className="flex gap-2 items-start">
                   <GripVertical className="h-4 w-4 mt-3 text-muted-foreground cursor-grab" />
@@ -298,7 +330,7 @@ export function RecipeForm({
               </Button>
             </TabsContent>
 
-            <TabsContent value="instructions" className="space-y-4">
+            <TabsContent value="instructions" className="space-y-4 min-h-[340px]">
               {instructionFields.map((field, index) => (
                 <div key={field.id} className="flex gap-2 items-start">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary text-primary-foreground text-sm font-medium shrink-0">

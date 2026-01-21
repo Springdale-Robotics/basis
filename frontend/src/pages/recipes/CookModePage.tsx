@@ -68,8 +68,26 @@ export function CookModePage() {
     return <div>Recipe not found</div>;
   }
 
-  const currentInstruction = recipe.instructions[currentStep];
-  const progress = ((currentStep + 1) / totalSteps) * 100;
+  const instructions = recipe.instructions ?? [];
+  const ingredients = recipe.ingredients ?? [];
+  const currentInstruction = instructions[currentStep];
+  const effectiveTotalSteps = instructions.length || 1;
+  const progress = ((currentStep + 1) / effectiveTotalSteps) * 100;
+
+  if (instructions.length === 0) {
+    return (
+      <div className="p-8 text-center">
+        <h2 className="text-xl font-semibold mb-2">No Instructions</h2>
+        <p className="text-muted-foreground mb-4">This recipe doesn't have any cooking instructions yet.</p>
+        <Button asChild>
+          <Link to={`/recipes/${id}`}>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Recipe
+          </Link>
+        </Button>
+      </div>
+    );
+  }
 
   const handleFinish = () => {
     end();
@@ -104,7 +122,7 @@ export function CookModePage() {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-lg">
-                    Step {currentStep + 1} of {totalSteps}
+                    Step {currentStep + 1} of {effectiveTotalSteps}
                   </CardTitle>
                   <Badge variant="secondary">
                     {Math.round(progress)}% complete
@@ -112,7 +130,7 @@ export function CookModePage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <p className="text-xl leading-relaxed">{currentInstruction.text}</p>
+                <p className="text-xl leading-relaxed">{currentInstruction?.text || 'No instruction text'}</p>
 
                 {/* Navigation */}
                 <div className="mt-8 flex items-center justify-between">
@@ -125,7 +143,7 @@ export function CookModePage() {
                     Previous
                   </Button>
                   <div className="flex gap-1">
-                    {recipe.instructions.map((_, i) => (
+                    {instructions.map((_, i) => (
                       <button
                         key={i}
                         onClick={() => goToStep(i)}
@@ -141,9 +159,9 @@ export function CookModePage() {
                     ))}
                   </div>
                   <Button
-                    onClick={currentStep === totalSteps - 1 ? handleFinish : next}
+                    onClick={currentStep === effectiveTotalSteps - 1 ? handleFinish : next}
                   >
-                    {currentStep === totalSteps - 1 ? (
+                    {currentStep === effectiveTotalSteps - 1 ? (
                       <>
                         <Check className="mr-2 h-4 w-4" />
                         Finish
@@ -166,7 +184,7 @@ export function CookModePage() {
               </CardHeader>
               <CardContent>
                 <ul className="grid grid-cols-2 gap-2 text-sm">
-                  {recipe.ingredients.map((ingredient) => (
+                  {ingredients.map((ingredient) => (
                     <li key={ingredient.id} className="flex items-center gap-2">
                       <span className="font-medium">
                         {ingredient.amount} {ingredient.unit}
