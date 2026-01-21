@@ -241,7 +241,7 @@ export function InventoryPage() {
         const area = entry.areaId ? areaLookup[entry.areaId] : null;
         return { entry, item, area };
       })
-      .filter((e) => e.item !== null);
+      .filter((e): e is { entry: StockEntry; item: InventoryItem; area: StorageArea | null } => e.item != null);
 
     // Sort based on current sort option
     switch (sortOption) {
