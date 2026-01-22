@@ -1,8 +1,8 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../../config/database.js';
-import { inventoryAreas, inventoryItems, inventoryStock, shoppingList } from '../../db/schema/index.js';
-import { eq, and, lt, sql, isNotNull } from 'drizzle-orm';
+import { inventoryAreas, inventoryItems, inventoryStock, shoppingList, leftovers } from '../../db/schema/index.js';
+import { eq, and, lt, lte, sql, isNotNull, isNull } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { randomBytes } from 'crypto';
@@ -77,6 +77,21 @@ const batchUpdateItemsSchema = z.object({
     defaultAreaId: z.string().uuid().nullable().optional(),
   }),
 });
+
+const createLeftoverSchema = z.object({
+  name: z.string().min(1).max(255),
+  description: z.string().optional(),
+  source: z.enum(['recipe', 'restaurant', 'homemade', 'other']).default('homemade'),
+  sourceRecipeId: z.string().uuid().optional(),
+  restaurantName: z.string().max(255).optional(),
+  areaId: z.string().uuid().optional(),
+  portions: z.number().positive().default(1),
+  quantityNotes: z.string().max(255).optional(),
+  preparedAt: z.coerce.date().optional(),
+  expiryDate: z.coerce.date(),
+});
+
+const updateLeftoverSchema = createLeftoverSchema.partial();
 
 export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // ===== AREAS =====
@@ -177,12 +192,29 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   // ===== ITEMS =====
 
-  app.get(
+  app.get<{ Querystring: { search?: string; category?: string; areaId?: string } }>(
     '/items',
     { preHandler: [authMiddleware] },
     async (request) => {
+      const { search, category, areaId } = request.query;
+
+      // Build where conditions
+      const conditions = [eq(inventoryItems.householdId, request.user!.householdId)];
+
+      if (search) {
+        conditions.push(sql`${inventoryItems.name} ILIKE ${'%' + search + '%'}`);
+      }
+
+      if (category) {
+        conditions.push(eq(inventoryItems.category, category));
+      }
+
+      if (areaId) {
+        conditions.push(eq(inventoryItems.defaultAreaId, areaId));
+      }
+
       const items = await db.query.inventoryItems.findMany({
-        where: eq(inventoryItems.householdId, request.user!.householdId),
+        where: and(...conditions),
         orderBy: (i, { asc }) => [asc(i.name)],
       });
 
@@ -952,6 +984,188 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           skippedCount,
         },
       };
+    }
+  );
+
+  // ===== LEFTOVERS =====
+
+  // Get all active leftovers (not finished)
+  app.get(
+    '/leftovers',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const leftoversList = await db.query.leftovers.findMany({
+        where: and(
+          eq(leftovers.householdId, request.user!.householdId),
+          isNull(leftovers.finishedAt)
+        ),
+        with: {
+          area: true,
+          sourceRecipe: {
+            columns: { id: true, title: true },
+          },
+        },
+        orderBy: (l, { asc }) => [asc(l.expiryDate)],
+      });
+
+      return { success: true, data: { leftovers: leftoversList } };
+    }
+  );
+
+  // Get leftovers expiring soon
+  app.get(
+    '/leftovers/expiring',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const { days = '3' } = request.query as { days?: string };
+      const futureDate = new Date();
+      futureDate.setDate(futureDate.getDate() + parseInt(days));
+
+      const expiringLeftovers = await db.query.leftovers.findMany({
+        where: and(
+          eq(leftovers.householdId, request.user!.householdId),
+          isNull(leftovers.finishedAt),
+          lte(leftovers.expiryDate, futureDate.toISOString().split('T')[0])
+        ),
+        with: {
+          area: true,
+          sourceRecipe: {
+            columns: { id: true, title: true },
+          },
+        },
+        orderBy: (l, { asc }) => [asc(l.expiryDate)],
+      });
+
+      return { success: true, data: { leftovers: expiringLeftovers } };
+    }
+  );
+
+  // Get single leftover
+  app.get<{ Params: { id: string } }>(
+    '/leftovers/:id',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const leftover = await db.query.leftovers.findFirst({
+        where: and(
+          eq(leftovers.id, request.params.id),
+          eq(leftovers.householdId, request.user!.householdId)
+        ),
+        with: {
+          area: true,
+          sourceRecipe: {
+            columns: { id: true, title: true },
+          },
+        },
+      });
+
+      if (!leftover) throw Errors.notFound('Leftover');
+
+      return { success: true, data: { leftover } };
+    }
+  );
+
+  // Create leftover
+  app.post(
+    '/leftovers',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = createLeftoverSchema.parse(request.body);
+
+      const [leftover] = await db
+        .insert(leftovers)
+        .values({
+          householdId: request.user!.householdId,
+          name: input.name,
+          description: input.description,
+          source: input.source,
+          sourceRecipeId: input.sourceRecipeId,
+          restaurantName: input.restaurantName,
+          areaId: input.areaId,
+          portions: input.portions.toString(),
+          quantityNotes: input.quantityNotes,
+          preparedAt: input.preparedAt || new Date(),
+          expiryDate: input.expiryDate.toISOString().split('T')[0],
+          createdBy: request.user!.id,
+        })
+        .returning();
+
+      return { success: true, data: { leftover } };
+    }
+  );
+
+  // Update leftover
+  app.patch<{ Params: { id: string } }>(
+    '/leftovers/:id',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = updateLeftoverSchema.parse(request.body);
+
+      const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      if (input.name !== undefined) updateData.name = input.name;
+      if (input.description !== undefined) updateData.description = input.description;
+      if (input.source !== undefined) updateData.source = input.source;
+      if (input.sourceRecipeId !== undefined) updateData.sourceRecipeId = input.sourceRecipeId;
+      if (input.restaurantName !== undefined) updateData.restaurantName = input.restaurantName;
+      if (input.areaId !== undefined) updateData.areaId = input.areaId;
+      if (input.portions !== undefined) updateData.portions = input.portions.toString();
+      if (input.quantityNotes !== undefined) updateData.quantityNotes = input.quantityNotes;
+      if (input.preparedAt !== undefined) updateData.preparedAt = input.preparedAt;
+      if (input.expiryDate !== undefined) updateData.expiryDate = input.expiryDate.toISOString().split('T')[0];
+
+      const [updated] = await db
+        .update(leftovers)
+        .set(updateData)
+        .where(
+          and(
+            eq(leftovers.id, request.params.id),
+            eq(leftovers.householdId, request.user!.householdId)
+          )
+        )
+        .returning();
+
+      if (!updated) throw Errors.notFound('Leftover');
+
+      return { success: true, data: { leftover: updated } };
+    }
+  );
+
+  // Delete leftover
+  app.delete<{ Params: { id: string } }>(
+    '/leftovers/:id',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      await db
+        .delete(leftovers)
+        .where(
+          and(
+            eq(leftovers.id, request.params.id),
+            eq(leftovers.householdId, request.user!.householdId)
+          )
+        );
+
+      return { success: true, data: { message: 'Leftover deleted' } };
+    }
+  );
+
+  // Mark leftover as finished/consumed
+  app.post<{ Params: { id: string } }>(
+    '/leftovers/:id/finish',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const [updated] = await db
+        .update(leftovers)
+        .set({ finishedAt: new Date(), updatedAt: new Date() })
+        .where(
+          and(
+            eq(leftovers.id, request.params.id),
+            eq(leftovers.householdId, request.user!.householdId)
+          )
+        )
+        .returning();
+
+      if (!updated) throw Errors.notFound('Leftover');
+
+      return { success: true, data: { leftover: updated } };
     }
   );
 }

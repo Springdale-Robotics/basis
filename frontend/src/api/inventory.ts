@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiPatch, apiDelete } from './client';
-import type { StorageArea, InventoryItem, StockEntry, ShoppingListItem } from '@/types/models';
+import type { StorageArea, InventoryItem, StockEntry, ShoppingListItem, Leftover, LeftoverSource } from '@/types/models';
 
 export interface CreateAreaRequest {
   name: string;
@@ -102,6 +102,22 @@ export interface MoveToInventoryRequest {
   expiryDate?: string;
   quantity?: number;
 }
+
+// Leftovers
+export interface CreateLeftoverRequest {
+  name: string;
+  description?: string;
+  source?: LeftoverSource;
+  sourceRecipeId?: string;
+  restaurantName?: string;
+  areaId?: string;
+  portions?: number;
+  quantityNotes?: string;
+  preparedAt?: string;
+  expiryDate: string;
+}
+
+export interface UpdateLeftoverRequest extends Partial<CreateLeftoverRequest> {}
 
 export const inventoryApi = {
   // Storage Areas
@@ -274,4 +290,28 @@ export const inventoryApi = {
       '/inventory/shopping-list/put-away',
       { defaultAreaId }
     ),
+
+  // Leftovers
+  getLeftovers: () =>
+    apiGet<{ leftovers: Leftover[] }>('/inventory/leftovers'),
+
+  getLeftover: (id: string) =>
+    apiGet<{ leftover: Leftover }>(`/inventory/leftovers/${id}`),
+
+  createLeftover: (data: CreateLeftoverRequest) =>
+    apiPost<{ leftover: Leftover }>('/inventory/leftovers', data),
+
+  updateLeftover: (id: string, data: UpdateLeftoverRequest) =>
+    apiPatch<{ leftover: Leftover }>(`/inventory/leftovers/${id}`, data),
+
+  deleteLeftover: (id: string) =>
+    apiDelete<{ message: string }>(`/inventory/leftovers/${id}`),
+
+  finishLeftover: (id: string) =>
+    apiPost<{ leftover: Leftover }>(`/inventory/leftovers/${id}/finish`),
+
+  getExpiringLeftovers: (days = 3) =>
+    apiGet<{ leftovers: Leftover[] }>('/inventory/leftovers/expiring', {
+      params: { days }
+    }),
 };

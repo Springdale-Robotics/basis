@@ -134,6 +134,21 @@ export const addStockFormSchema = z.object({
 });
 export type AddStockFormData = z.infer<typeof addStockFormSchema>;
 
+export const leftoverFormSchema = z.object({
+  name: z.string().min(1, 'Name is required').max(255),
+  description: z.string().optional(),
+  source: z.enum(['recipe', 'restaurant', 'homemade', 'other']),
+  sourceRecipeId: z.string().optional(),
+  restaurantName: z.string().max(255).optional(),
+  areaId: z.string().optional(),
+  portions: z.number().min(0.1).default(1),
+  quantityNotes: z.string().max(255).optional(),
+  preparedAt: z.string().optional(),
+  expiryDate: z.string().min(1, 'Expiry date is required'),
+});
+export const leftoverSchema = leftoverFormSchema;
+export type LeftoverFormData = z.infer<typeof leftoverFormSchema>;
+
 // Task forms
 export const taskFormSchema = z.object({
   title: z.string().min(1, 'Title is required').max(255),

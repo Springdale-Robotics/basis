@@ -93,7 +93,7 @@ export const calendarSyncQueue = new Queue('calendar-sync', {
 
 // Job type definitions
 export interface NotificationJobData {
-  type: 'low_stock' | 'expiring_soon' | 'task_due' | 'sync_error' | 'custom';
+  type: 'low_stock' | 'expiring_soon' | 'leftover_expiring' | 'task_due' | 'sync_error' | 'custom';
   householdId: string;
   userId?: string;
   title: string;
@@ -117,12 +117,12 @@ export interface BackupJobData {
 }
 
 export interface CleanupJobData {
-  type: 'expired_sessions' | 'old_notifications' | 'old_audit_logs' | 'orphaned_files';
+  type: 'expired_sessions' | 'old_notifications' | 'old_audit_logs' | 'orphaned_files' | 'old_leftovers';
   householdId?: string;
 }
 
 export interface InventoryJobData {
-  type: 'check_low_stock' | 'check_expiring' | 'update_quantities';
+  type: 'check_low_stock' | 'check_expiring' | 'check_leftovers_expiring' | 'update_quantities';
   householdId: string;
 }
 
@@ -299,6 +299,16 @@ export async function scheduleRecurringJobs(): Promise<void> {
     {
       repeat: { pattern: '0 4 1 * *' }, // 1st of every month at 4 AM
       jobId: 'cleanup:old_audit_logs',
+    }
+  );
+
+  // Clean up old finished leftovers weekly
+  await cleanupQueue.add(
+    'old_leftovers',
+    { type: 'old_leftovers' },
+    {
+      repeat: { pattern: '0 5 * * 0' }, // Every Sunday at 5 AM
+      jobId: 'cleanup:old_leftovers',
     }
   );
 

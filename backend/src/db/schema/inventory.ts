@@ -14,6 +14,7 @@ import {
 import { relations } from 'drizzle-orm';
 import { households } from './households';
 import { users } from './users';
+import { recipes } from './recipes';
 
 export const inventoryAreas = pgTable('inventory_areas', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -75,6 +76,13 @@ export const shoppingListSourceEnum = pgEnum('shopping_list_source', [
   'low_stock',
 ]);
 
+export const leftoverSourceEnum = pgEnum('leftover_source', [
+  'recipe',
+  'restaurant',
+  'homemade',
+  'other',
+]);
+
 export const shoppingList = pgTable('shopping_list', {
   id: uuid('id').primaryKey().defaultRandom(),
   householdId: uuid('household_id')
@@ -92,6 +100,31 @@ export const shoppingList = pgTable('shopping_list', {
   targetAreaId: uuid('target_area_id').references(() => inventoryAreas.id, {
     onDelete: 'set null',
   }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const leftovers = pgTable('leftovers', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  householdId: uuid('household_id')
+    .notNull()
+    .references(() => households.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  source: leftoverSourceEnum('source').notNull().default('homemade'),
+  sourceRecipeId: uuid('source_recipe_id').references(() => recipes.id, {
+    onDelete: 'set null',
+  }),
+  restaurantName: varchar('restaurant_name', { length: 255 }),
+  areaId: uuid('area_id').references(() => inventoryAreas.id, { onDelete: 'set null' }),
+  portions: decimal('portions', { precision: 10, scale: 2 }).default('1'),
+  quantityNotes: varchar('quantity_notes', { length: 255 }),
+  preparedAt: timestamp('prepared_at').defaultNow().notNull(),
+  expiryDate: date('expiry_date').notNull(),
+  finishedAt: timestamp('finished_at'),
+  createdBy: uuid('created_by')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -149,6 +182,25 @@ export const shoppingListRelations = relations(shoppingList, ({ one }) => ({
   }),
 }));
 
+export const leftoversRelations = relations(leftovers, ({ one }) => ({
+  household: one(households, {
+    fields: [leftovers.householdId],
+    references: [households.id],
+  }),
+  sourceRecipe: one(recipes, {
+    fields: [leftovers.sourceRecipeId],
+    references: [recipes.id],
+  }),
+  area: one(inventoryAreas, {
+    fields: [leftovers.areaId],
+    references: [inventoryAreas.id],
+  }),
+  createdByUser: one(users, {
+    fields: [leftovers.createdBy],
+    references: [users.id],
+  }),
+}));
+
 export type InventoryArea = typeof inventoryAreas.$inferSelect;
 export type NewInventoryArea = typeof inventoryAreas.$inferInsert;
 export type InventoryItem = typeof inventoryItems.$inferSelect;
@@ -157,3 +209,6 @@ export type InventoryStock = typeof inventoryStock.$inferSelect;
 export type NewInventoryStock = typeof inventoryStock.$inferInsert;
 export type ShoppingListItem = typeof shoppingList.$inferSelect;
 export type NewShoppingListItem = typeof shoppingList.$inferInsert;
+export type Leftover = typeof leftovers.$inferSelect;
+export type NewLeftover = typeof leftovers.$inferInsert;
+export type LeftoverSource = 'recipe' | 'restaurant' | 'homemade' | 'other';

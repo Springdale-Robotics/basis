@@ -333,6 +333,30 @@ export interface ShoppingListItem {
   updatedAt: string;
 }
 
+export type LeftoverSource = 'recipe' | 'restaurant' | 'homemade' | 'other';
+
+export interface Leftover {
+  id: string;
+  householdId: string;
+  name: string;
+  description?: string;
+  source: LeftoverSource;
+  sourceRecipeId?: string;
+  restaurantName?: string;
+  areaId?: string;
+  portions: number | string;
+  quantityNotes?: string;
+  preparedAt: string;
+  expiryDate: string;
+  finishedAt?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  // Joined relations
+  area?: StorageArea;
+  sourceRecipe?: { id: string; title: string };
+}
+
 export interface Task {
   id: string;
   householdId: string;
@@ -460,6 +484,7 @@ export interface Notification {
 export type NotificationType =
   | 'low_stock'
   | 'expiring_soon'
+  | 'leftover_expiring'
   | 'task_due'
   | 'sync_error'
   | 'backup_complete'

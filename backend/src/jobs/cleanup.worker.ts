@@ -1,6 +1,6 @@
 import { Job } from 'bullmq';
 import { db } from '../config/database.js';
-import { sessions, notifications, auditLogs, files } from '../db/schema/index.js';
+import { sessions, notifications, auditLogs, files, leftovers } from '../db/schema/index.js';
 import { lt, and, isNotNull } from 'drizzle-orm';
 import { redis } from '../config/redis.js';
 import { logger } from '../lib/logger.js';
@@ -27,6 +27,9 @@ export async function processCleanupJob(job: Job<CleanupJobData>): Promise<void>
         break;
       case 'orphaned_files':
         await cleanupOrphanedFiles(householdId);
+        break;
+      case 'old_leftovers':
+        await cleanupOldLeftovers();
         break;
     }
 
@@ -98,6 +101,24 @@ async function cleanupOldAuditLogs(): Promise<void> {
     .returning({ id: auditLogs.id });
 
   logger.info({ count: result.length }, 'Cleaned up old audit logs');
+}
+
+async function cleanupOldLeftovers(): Promise<void> {
+  // Keep finished leftovers for 30 days, then delete them
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 30);
+
+  const result = await db
+    .delete(leftovers)
+    .where(
+      and(
+        isNotNull(leftovers.finishedAt),
+        lt(leftovers.finishedAt, cutoff)
+      )
+    )
+    .returning({ id: leftovers.id });
+
+  logger.info({ count: result.length }, 'Cleaned up old finished leftovers');
 }
 
 async function cleanupOrphanedFiles(householdId?: string): Promise<void> {

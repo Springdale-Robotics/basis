@@ -13,6 +13,7 @@ import { users } from './users';
 export const notificationTypeEnum = pgEnum('notification_type', [
   'low_stock',
   'expiring_soon',
+  'leftover_expiring',
   'task_due',
   'sync_error',
   'backup_complete',
@@ -44,6 +45,11 @@ export interface NotificationData {
   minQuantity?: number;
   unit?: string;
   actions?: NotificationAction[];
+  // Leftover-specific data
+  leftoverId?: string;
+  leftoverName?: string;
+  daysUntilExpiry?: number;
+  preparedAt?: string;
 }
 
 export interface NotificationAction {

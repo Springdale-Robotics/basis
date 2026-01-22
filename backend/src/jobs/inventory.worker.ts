@@ -1,7 +1,7 @@
 import { Job } from 'bullmq';
 import { db } from '../config/database.js';
-import { inventoryItems, households } from '../db/schema/index.js';
-import { eq, and, lt, lte, isNotNull } from 'drizzle-orm';
+import { inventoryItems, households, leftovers } from '../db/schema/index.js';
+import { eq, and, lt, lte, isNotNull, isNull } from 'drizzle-orm';
 import { queueNotification } from './index.js';
 import { emitLowStockAlert, emitExpiringAlert } from '../websocket/events.js';
 import { logger } from '../lib/logger.js';
@@ -20,6 +20,9 @@ export async function processInventoryJob(job: Job<InventoryJobData>): Promise<v
         break;
       case 'check_expiring':
         await checkExpiringItems(householdId);
+        break;
+      case 'check_leftovers_expiring':
+        await checkLeftoversExpiring(householdId);
         break;
       case 'update_quantities':
         await updateQuantities(householdId);
@@ -141,6 +144,67 @@ async function checkExpiringItems(householdId: string): Promise<void> {
   }
 }
 
+async function checkLeftoversExpiring(householdId: string): Promise<void> {
+  const now = new Date();
+  const warningThreshold = new Date();
+  warningThreshold.setDate(warningThreshold.getDate() + 3); // 3 days warning for leftovers
+
+  // Find active leftovers expiring within 3 days
+  const expiringLeftovers = await db.query.leftovers.findMany({
+    where: and(
+      eq(leftovers.householdId, householdId),
+      isNull(leftovers.finishedAt),
+      lte(leftovers.expiryDate, warningThreshold.toISOString().split('T')[0])
+    ),
+  });
+
+  logger.info(
+    { householdId, expiringCount: expiringLeftovers.length },
+    'Expiring leftovers check completed'
+  );
+
+  for (const leftover of expiringLeftovers) {
+    // Parse the expiry date as local date
+    const [year, month, day] = leftover.expiryDate.split('-').map(Number);
+    const expiryDate = new Date(year, month - 1, day);
+    const daysUntilExpiry = Math.ceil(
+      (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
+    );
+
+    // Calculate age
+    const preparedDate = new Date(leftover.preparedAt);
+    const ageInDays = Math.floor(
+      (now.getTime() - preparedDate.getTime()) / (1000 * 60 * 60 * 24)
+    );
+
+    const isExpired = daysUntilExpiry <= 0;
+
+    // Build the message
+    let message: string;
+    if (isExpired) {
+      message = `Leftover "${leftover.name}" (${ageInDays} days old) has expired!`;
+    } else if (daysUntilExpiry === 1) {
+      message = `Leftover "${leftover.name}" (${ageInDays} days old) expires tomorrow!`;
+    } else {
+      message = `Leftover "${leftover.name}" (${ageInDays} days old) expires in ${daysUntilExpiry} days`;
+    }
+
+    // Queue notification
+    await queueNotification({
+      type: 'leftover_expiring',
+      householdId,
+      title: isExpired ? 'Leftover Expired' : 'Leftover Expiring Soon',
+      message,
+      data: {
+        leftoverId: leftover.id,
+        leftoverName: leftover.name,
+        daysUntilExpiry,
+        preparedAt: leftover.preparedAt.toISOString(),
+      },
+    });
+  }
+}
+
 async function updateQuantities(householdId: string): Promise<void> {
   // This could be used for auto-consumption tracking or other quantity updates
   // For now, just log that it was called
@@ -173,6 +237,16 @@ export async function scheduleInventoryChecksForAllHouseholds(): Promise<void> {
       {
         repeat: { pattern: '0 9 * * *' }, // Daily at 9 AM
         jobId: `inventory:expiring:${household.id}`,
+      }
+    );
+
+    // Schedule leftovers expiring check daily at 9 AM (alongside regular expiring check)
+    await inventoryQueue.add(
+      'check_leftovers_expiring',
+      { type: 'check_leftovers_expiring', householdId: household.id },
+      {
+        repeat: { pattern: '0 9 * * *' }, // Daily at 9 AM
+        jobId: `inventory:leftovers_expiring:${household.id}`,
       }
     );
   }

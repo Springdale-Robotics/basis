@@ -12,6 +12,7 @@ import {
   X,
   ShoppingCart,
   Settings,
+  Soup,
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -26,12 +27,14 @@ import { AreaForm } from '@/components/inventory/AreaForm';
 import { ItemForm } from '@/components/inventory/ItemForm';
 import { BulkAddDialog } from '@/components/inventory/BulkAddDialog';
 import { ManageStockDialog } from '@/components/inventory/ManageStockDialog';
+import { LeftoverCard } from '@/components/inventory/LeftoverCard';
+import { LeftoverForm } from '@/components/inventory/LeftoverForm';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { inventoryApi } from '@/api/inventory';
 import { formatDate, cn } from '@/lib/utils';
 import { categoryOptions, calculateTotalStock } from '@/lib/inventory-constants';
-import type { StorageAreaFormData, InventoryItemFormData } from '@/types/forms';
-import type { InventoryItem, StockEntry, StorageArea } from '@/types/models';
+import type { StorageAreaFormData, InventoryItemFormData, LeftoverFormData } from '@/types/forms';
+import type { InventoryItem, StockEntry, StorageArea, Leftover } from '@/types/models';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -103,6 +106,8 @@ export function InventoryPage() {
   const [selectedCategory, setSelectedCategory] = useState<string | undefined>();
   const [bulkAddDialogOpen, setBulkAddDialogOpen] = useState(false);
   const [manageStockItem, setManageStockItem] = useState<InventoryItem | null>(null);
+  const [leftoverFormOpen, setLeftoverFormOpen] = useState(false);
+  const [editingLeftover, setEditingLeftover] = useState<Leftover | null>(null);
 
   const { data: areas, isLoading: areasLoading } = useQuery({
     queryKey: ['inventory', 'areas'],
@@ -110,11 +115,10 @@ export function InventoryPage() {
   });
 
   const { data: items, isLoading: itemsLoading } = useQuery({
-    queryKey: ['inventory', 'items', search, selectedArea, selectedCategory],
+    queryKey: ['inventory', 'items', search, selectedCategory],
     queryFn: () =>
       inventoryApi.getItems({
         search: search || undefined,
-        areaId: selectedArea,
         category: selectedCategory,
       }),
   });
@@ -127,6 +131,16 @@ export function InventoryPage() {
   const { data: keepInStockItems } = useQuery({
     queryKey: ['inventory', 'keep-in-stock'],
     queryFn: inventoryApi.getKeepInStockItems,
+  });
+
+  const { data: leftoversData, isLoading: leftoversLoading } = useQuery({
+    queryKey: ['inventory', 'leftovers'],
+    queryFn: inventoryApi.getLeftovers,
+  });
+
+  const { data: expiringLeftoversData } = useQuery({
+    queryKey: ['inventory', 'leftovers', 'expiring'],
+    queryFn: () => inventoryApi.getExpiringLeftovers(3),
   });
 
   // Create item lookup for unit conversions
@@ -278,7 +292,10 @@ export function InventoryPage() {
     const entries = stock.stock
       .filter((entry) => {
         const quantity = parseFloat(String(entry.quantity));
-        return quantity > 0;
+        if (quantity <= 0) return false;
+        // Filter by selected area if set (filter by where stock is actually stored)
+        if (selectedArea && entry.areaId !== selectedArea) return false;
+        return true;
       })
       .map((entry) => {
         const itemId = entry.itemId || entry.inventoryItemId;
@@ -305,13 +322,17 @@ export function InventoryPage() {
       default:
         return entries;
     }
-  }, [stock, items, areaLookup, sortOption]);
+  }, [stock, items, areaLookup, sortOption, selectedArea]);
 
-  // Get all catalog items (sorted)
+  // Get all catalog items (sorted and filtered by area)
   const catalogItems = useMemo(() => {
-    const itemList = items?.items || [];
+    let itemList = items?.items || [];
+    // Filter by selected area if set (filter by item's default area)
+    if (selectedArea) {
+      itemList = itemList.filter((item) => item.defaultAreaId === selectedArea);
+    }
     return sortItems(itemList);
-  }, [items, sortItems]);
+  }, [items, sortItems, selectedArea]);
 
   const { data: expiringItems } = useQuery({
     queryKey: ['inventory', 'expiring'],
@@ -457,6 +478,50 @@ export function InventoryPage() {
     mutationFn: (id: string) => inventoryApi.deleteStock(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    },
+  });
+
+  // Leftover mutations
+  const createLeftoverMutation = useMutation({
+    mutationFn: (data: LeftoverFormData) =>
+      inventoryApi.createLeftover({
+        ...data,
+        portions: data.portions,
+        areaId: data.areaId || undefined,
+        sourceRecipeId: data.sourceRecipeId || undefined,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'leftovers'] });
+      setLeftoverFormOpen(false);
+    },
+  });
+
+  const updateLeftoverMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: LeftoverFormData }) =>
+      inventoryApi.updateLeftover(id, {
+        ...data,
+        portions: data.portions,
+        areaId: data.areaId || undefined,
+        sourceRecipeId: data.sourceRecipeId || undefined,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'leftovers'] });
+      setEditingLeftover(null);
+      setLeftoverFormOpen(false);
+    },
+  });
+
+  const deleteLeftoverMutation = useMutation({
+    mutationFn: (id: string) => inventoryApi.deleteLeftover(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'leftovers'] });
+    },
+  });
+
+  const finishLeftoverMutation = useMutation({
+    mutationFn: (id: string) => inventoryApi.finishLeftover(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'leftovers'] });
     },
   });
 
@@ -1039,7 +1104,7 @@ export function InventoryPage() {
       />
 
       {/* Alerts */}
-      <div className="mb-6 grid gap-4 md:grid-cols-2">
+      <div className="mb-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {expiringItems?.expiring && expiringItems.expiring.length > 0 && (
           <Card className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950">
             <CardContent className="flex items-center gap-3 p-4">
@@ -1050,6 +1115,21 @@ export function InventoryPage() {
                 </p>
                 <p className="text-sm text-amber-700 dark:text-amber-300">
                   Check your inventory
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+        {expiringLeftoversData?.leftovers && expiringLeftoversData.leftovers.length > 0 && (
+          <Card className="border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-950">
+            <CardContent className="flex items-center gap-3 p-4">
+              <Soup className="h-5 w-5 text-orange-600" />
+              <div>
+                <p className="font-medium text-orange-900 dark:text-orange-100">
+                  {expiringLeftoversData.leftovers.length} leftover{expiringLeftoversData.leftovers.length !== 1 ? 's' : ''} expiring soon
+                </p>
+                <p className="text-sm text-orange-700 dark:text-orange-300">
+                  Finish them before they go bad
                 </p>
               </div>
             </CardContent>
@@ -1079,6 +1159,14 @@ export function InventoryPage() {
             {inStockEntries.length > 0 && (
               <Badge className="ml-2" variant="secondary">
                 {inStockEntries.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="leftovers">
+            Leftovers
+            {leftoversData?.leftovers && leftoversData.leftovers.length > 0 && (
+              <Badge className="ml-2" variant="secondary">
+                {leftoversData.leftovers.length}
               </Badge>
             )}
           </TabsTrigger>
@@ -1143,6 +1231,50 @@ export function InventoryPage() {
               {inStockEntries.map(({ entry, item, area }) =>
                 item && renderStockEntryCard(entry, item, area)
               )}
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="leftovers">
+          <div className="mb-4 flex justify-end">
+            <Button onClick={() => setLeftoverFormOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Leftover
+            </Button>
+          </div>
+
+          {leftoversLoading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-20" />
+              ))}
+            </div>
+          ) : !leftoversData?.leftovers?.length ? (
+            <EmptyState
+              icon={<Soup className="h-12 w-12" />}
+              title="No leftovers to track"
+              description="Add leftovers from recipes, restaurants, or homemade dishes to track their freshness"
+              action={
+                <Button onClick={() => setLeftoverFormOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Leftover
+                </Button>
+              }
+            />
+          ) : (
+            <div className="space-y-2">
+              {leftoversData.leftovers.map((leftover) => (
+                <LeftoverCard
+                  key={leftover.id}
+                  leftover={leftover}
+                  onFinish={() => finishLeftoverMutation.mutate(leftover.id)}
+                  onEdit={() => {
+                    setEditingLeftover(leftover);
+                    setLeftoverFormOpen(true);
+                  }}
+                  onDelete={() => deleteLeftoverMutation.mutate(leftover.id)}
+                />
+              ))}
             </div>
           )}
         </TabsContent>
@@ -1418,6 +1550,26 @@ export function InventoryPage() {
         onUpdateStock={(id, data) => updateStockMutation.mutate({ id, data })}
         onDeleteStock={(id) => deleteStockMutation.mutate(id)}
         isSubmitting={addStockMutation.isPending || updateStockMutation.isPending || deleteStockMutation.isPending}
+      />
+
+      {/* Leftover Form */}
+      <LeftoverForm
+        open={leftoverFormOpen}
+        onOpenChange={(open) => {
+          setLeftoverFormOpen(open);
+          if (!open) setEditingLeftover(null);
+        }}
+        leftover={editingLeftover}
+        areas={areas?.areas || []}
+        onSubmit={(data) => {
+          if (editingLeftover) {
+            updateLeftoverMutation.mutate({ id: editingLeftover.id, data });
+          } else {
+            createLeftoverMutation.mutate(data);
+          }
+        }}
+        onDelete={editingLeftover ? () => deleteLeftoverMutation.mutate(editingLeftover.id) : undefined}
+        isSubmitting={createLeftoverMutation.isPending || updateLeftoverMutation.isPending}
       />
     </div>
   );
