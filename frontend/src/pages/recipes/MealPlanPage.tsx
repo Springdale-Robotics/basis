@@ -3,8 +3,6 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Plus, ShoppingCart } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
@@ -103,7 +101,7 @@ export function MealPlanPage() {
     : [];
 
   return (
-    <div>
+    <div className="flex flex-col h-full">
       <PageHeader
         title="Meal Plan"
         description="Plan your meals for the week"
@@ -116,46 +114,51 @@ export function MealPlanPage() {
       />
 
       {/* Navigation */}
-      <div className="mb-6 flex items-center gap-2">
-        <Button variant="outline" size="icon" onClick={navigatePrev}>
+      <div className="mb-4 flex items-center gap-2">
+        <Button variant="outline" size="sm" onClick={navigatePrev}>
           <ChevronLeft className="h-4 w-4" />
         </Button>
-        <Button variant="outline" size="icon" onClick={navigateNext}>
+        <Button variant="outline" size="sm" onClick={navigateNext}>
           <ChevronRight className="h-4 w-4" />
         </Button>
-        <Button variant="outline" onClick={goToCurrentWeek}>
+        <Button variant="outline" size="sm" onClick={goToCurrentWeek}>
           Today
         </Button>
-        <span className="ml-2 font-semibold">{weekLabel}</span>
+        <span className="ml-2 text-sm font-semibold">{weekLabel}</span>
       </div>
 
       {/* Meal plan grid */}
       {isLoading ? (
-        <div className="grid grid-cols-7 gap-2">
-          {Array.from({ length: 28 }).map((_, i) => (
-            <Skeleton key={i} className="h-24" />
+        <div className="grid grid-cols-8 gap-px bg-border flex-1">
+          {Array.from({ length: 40 }).map((_, i) => (
+            <Skeleton key={i} className="h-16" />
           ))}
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <div className="min-w-[900px]">
-            {/* Header */}
-            <div className="mb-2 grid grid-cols-8 gap-2">
-              <div />
-              {days.map((day) => {
+        <div className="overflow-x-auto flex-1">
+          <div className="min-w-[800px] h-full flex flex-col border rounded-md overflow-hidden">
+            {/* Header row */}
+            <div className="grid grid-cols-8 bg-muted/50 border-b">
+              <div className="p-2 text-xs font-medium text-muted-foreground border-r" />
+              {days.map((day, i) => {
                 const isToday = formatLocalDate(day) === formatLocalDate(new Date());
                 return (
                   <div
                     key={formatLocalDate(day)}
                     className={cn(
-                      'text-center font-medium',
-                      isToday && 'text-primary'
+                      'p-2 text-center border-r last:border-r-0',
+                      isToday && 'bg-primary/10'
                     )}
                   >
                     <div className="text-xs text-muted-foreground">
                       {day.toLocaleDateString(undefined, { weekday: 'short' })}
                     </div>
-                    <div className={cn(isToday && 'rounded-full bg-primary text-primary-foreground inline-flex h-6 w-6 items-center justify-center')}>
+                    <div
+                      className={cn(
+                        'text-sm font-medium',
+                        isToday && 'text-primary'
+                      )}
+                    >
                       {day.getDate()}
                     </div>
                   </div>
@@ -164,45 +167,56 @@ export function MealPlanPage() {
             </div>
 
             {/* Meal rows */}
-            {mealTypes.map((mealType) => (
-              <div key={mealType} className="mb-2 grid grid-cols-8 gap-2">
-                <div className="flex items-center">
-                  <Badge variant="outline" className="capitalize">
+            {mealTypes.map((mealType, rowIndex) => (
+              <div
+                key={mealType}
+                className={cn(
+                  'grid grid-cols-8 flex-1',
+                  rowIndex < mealTypes.length - 1 && 'border-b'
+                )}
+              >
+                {/* Meal type label */}
+                <div className="p-2 flex items-center border-r bg-muted/30">
+                  <span className="text-xs font-medium text-muted-foreground capitalize">
                     {mealType}
-                  </Badge>
+                  </span>
                 </div>
-                {days.map((day) => {
+
+                {/* Day cells */}
+                {days.map((day, dayIndex) => {
                   const meals = getMealsForDay(day, mealType);
+                  const isToday = formatLocalDate(day) === formatLocalDate(new Date());
                   return (
-                    <Card
+                    <div
                       key={`${formatLocalDate(day)}-${mealType}`}
-                      className="min-h-20 cursor-pointer transition-colors hover:bg-muted/50"
+                      className={cn(
+                        'p-1 cursor-pointer transition-colors hover:bg-muted/50 border-r last:border-r-0 min-h-[60px]',
+                        isToday && 'bg-primary/5'
+                      )}
                       onClick={() => handleCellClick(day, mealType)}
                     >
-                      <CardContent className="p-2">
-                        {meals.length > 0 ? (
-                          <div className="space-y-1">
-                            {meals.map((meal) => (
-                              <div
-                                key={meal.id}
-                                className="rounded bg-primary/10 p-1 text-xs truncate"
-                              >
-                                {meal.recipe?.title}
-                                {meal.servingsMultiplier && Number(meal.servingsMultiplier) !== 1 && (
-                                  <span className="ml-1 text-muted-foreground">
-                                    ({meal.servingsMultiplier}x)
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="flex h-full items-center justify-center">
-                            <Plus className="h-4 w-4 text-muted-foreground" />
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
+                      {meals.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {meals.map((meal) => (
+                            <div
+                              key={meal.id}
+                              className="rounded-sm bg-primary/15 px-1.5 py-0.5 text-xs truncate"
+                            >
+                              {meal.recipe?.title}
+                              {meal.servingsMultiplier && Number(meal.servingsMultiplier) !== 1 && (
+                                <span className="ml-1 opacity-60">
+                                  {meal.servingsMultiplier}x
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex h-full items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                          <Plus className="h-3 w-3 text-muted-foreground" />
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
               </div>

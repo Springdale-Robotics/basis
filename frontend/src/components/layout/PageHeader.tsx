@@ -5,6 +5,7 @@ interface PageHeaderProps {
   title: string;
   description?: string;
   actions?: ReactNode;
+  prefix?: ReactNode;
   className?: string;
 }
 
@@ -12,6 +13,7 @@ export function PageHeader({
   title,
   description,
   actions,
+  prefix,
   className,
 }: PageHeaderProps) {
   return (
@@ -21,13 +23,16 @@ export function PageHeader({
         className
       )}
     >
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
-          {title}
-        </h1>
-        {description && (
-          <p className="text-muted-foreground">{description}</p>
-        )}
+      <div className="flex items-center gap-3">
+        {prefix}
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight md:text-3xl">
+            {title}
+          </h1>
+          {description && (
+            <p className="text-muted-foreground">{description}</p>
+          )}
+        </div>
       </div>
       {actions && (
         <div className="flex items-center gap-2">{actions}</div>

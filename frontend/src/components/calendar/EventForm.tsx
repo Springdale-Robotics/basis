@@ -272,6 +272,19 @@ export function EventForm({
   const handleFormSubmit = (data: EventFormData) => {
     // Convert recurrence to RRULE format if needed
     const finalData = { ...data };
+
+    // For all-day events, add noon time to avoid timezone boundary issues
+    // (Date-only strings like '2024-01-15' are interpreted as UTC midnight,
+    // which shifts to the previous day for negative UTC offsets)
+    if (data.allDay) {
+      if (!data.startTime.includes('T')) {
+        finalData.startTime = `${data.startTime}T12:00`;
+      }
+      if (!data.endTime.includes('T')) {
+        finalData.endTime = `${data.endTime}T12:00`;
+      }
+    }
+
     if (showCustomRecurrence) {
       finalData.recurrence = optionsToRRule(recurrenceOptions, startDate) || 'none';
     } else if (data.recurrence && !data.recurrence.includes('FREQ=') && data.recurrence !== 'none') {

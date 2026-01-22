@@ -1,8 +1,8 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { useTheme } from '@/hooks/useTheme';
+import { COLOR_PRESETS, COLOR_PALETTES, type ColorPreset, type ColorPalette } from '@/lib/theme-presets';
 import { cn } from '@/lib/utils';
 import { Sun, Moon, Monitor } from 'lucide-react';
 
@@ -12,23 +12,29 @@ const themes = [
   { id: 'system', label: 'System', icon: Monitor },
 ] as const;
 
-const colorPresets = [
-  { name: 'Default', value: '222.2 47.4% 11.2%' },
-  { name: 'Blue', value: '221.2 83.2% 53.3%' },
-  { name: 'Green', value: '142.1 76.2% 36.3%' },
-  { name: 'Purple', value: '262.1 83.3% 57.8%' },
-  { name: 'Rose', value: '346.8 77.2% 49.8%' },
-  { name: 'Orange', value: '24.6 95% 53.1%' },
-];
+const colorPresetEntries = Object.entries(COLOR_PRESETS) as [ColorPreset, typeof COLOR_PRESETS[ColorPreset]][];
+const colorPaletteEntries = Object.entries(COLOR_PALETTES) as [ColorPalette, typeof COLOR_PALETTES[ColorPalette]][];
 
 export function ThemeSettingsPage() {
-  const { theme, setTheme } = useTheme();
+  const {
+    theme,
+    colorPreset,
+    colorPalette,
+    fontSize,
+    borderRadius,
+    setTheme,
+    setColorPreset,
+    setColorPalette,
+    setFontSize,
+    setBorderRadius,
+    resetToDefaults,
+  } = useTheme();
 
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader>
-          <CardTitle>Appearance</CardTitle>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-medium">Appearance</CardTitle>
           <CardDescription>Choose how Home Manager looks to you</CardDescription>
         </CardHeader>
         <CardContent>
@@ -53,22 +59,28 @@ export function ThemeSettingsPage() {
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Primary Color</CardTitle>
-          <CardDescription>Choose your accent color</CardDescription>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-medium">Primary Color</CardTitle>
+          <CardDescription>Choose your accent color for buttons and highlights</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-3">
-            {colorPresets.map((preset) => (
+            {colorPresetEntries.map(([id, preset]) => (
               <button
-                key={preset.name}
+                key={id}
                 className="group relative"
                 title={preset.name}
+                onClick={() => setColorPreset(id)}
               >
                 <div
-                  className="h-10 w-10 rounded-full border-2 border-border transition-transform hover:scale-110"
+                  className={cn(
+                    'h-10 w-10 rounded-full border-2 transition-transform hover:scale-110',
+                    colorPreset === id
+                      ? 'border-foreground ring-2 ring-foreground ring-offset-2 ring-offset-background'
+                      : 'border-border'
+                  )}
                   style={{
-                    backgroundColor: `hsl(${preset.value})`,
+                    backgroundColor: `hsl(${preset.primary})`,
                   }}
                 />
                 <span className="sr-only">{preset.name}</span>
@@ -79,8 +91,42 @@ export function ThemeSettingsPage() {
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Font Size</CardTitle>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-medium">Color Palette</CardTitle>
+          <CardDescription>Choose colors for calendars and categories</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {colorPaletteEntries.map(([id, palette]) => (
+              <button
+                key={id}
+                onClick={() => setColorPalette(id)}
+                className={cn(
+                  'flex w-full items-center gap-3 rounded-lg border p-3 transition-colors text-left',
+                  colorPalette === id
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:bg-muted'
+                )}
+              >
+                <div className="flex gap-1">
+                  {palette.colors.slice(0, 8).map((color, i) => (
+                    <div
+                      key={i}
+                      className="h-6 w-6 rounded-full"
+                      style={{ backgroundColor: color.value }}
+                    />
+                  ))}
+                </div>
+                <span className="text-sm font-medium">{palette.name}</span>
+              </button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-medium">Font Size</CardTitle>
           <CardDescription>Adjust the base font size</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -88,16 +134,22 @@ export function ThemeSettingsPage() {
             <span className="text-sm">Small</span>
             <span className="text-sm">Large</span>
           </div>
-          <Slider defaultValue={[16]} min={14} max={20} step={1} />
+          <Slider
+            value={[fontSize]}
+            onValueChange={(v) => setFontSize(v[0])}
+            min={12}
+            max={18}
+            step={1}
+          />
           <p className="text-sm text-muted-foreground">
-            Current: 16px
+            Current: {fontSize}px
           </p>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Border Radius</CardTitle>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-medium">Border Radius</CardTitle>
           <CardDescription>Adjust the roundness of elements</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -105,19 +157,27 @@ export function ThemeSettingsPage() {
             <span className="text-sm">Square</span>
             <span className="text-sm">Round</span>
           </div>
-          <Slider defaultValue={[0.5]} min={0} max={1} step={0.125} />
+          <Slider
+            value={[borderRadius]}
+            onValueChange={(v) => setBorderRadius(v[0])}
+            min={0}
+            max={1}
+            step={0.125}
+          />
           <div className="flex gap-4 pt-2">
-            <div className="h-12 w-12 rounded bg-primary" style={{ borderRadius: '0rem' }} />
-            <div className="h-12 w-12 rounded bg-primary" style={{ borderRadius: '0.25rem' }} />
-            <div className="h-12 w-12 rounded bg-primary" style={{ borderRadius: '0.5rem' }} />
-            <div className="h-12 w-12 rounded bg-primary" style={{ borderRadius: '0.75rem' }} />
-            <div className="h-12 w-12 rounded bg-primary" style={{ borderRadius: '1rem' }} />
+            <div className="h-12 w-12 bg-primary" style={{ borderRadius: '0rem' }} />
+            <div className="h-12 w-12 bg-primary" style={{ borderRadius: '0.25rem' }} />
+            <div className="h-12 w-12 bg-primary" style={{ borderRadius: '0.5rem' }} />
+            <div className="h-12 w-12 bg-primary" style={{ borderRadius: '0.75rem' }} />
+            <div className="h-12 w-12 bg-primary" style={{ borderRadius: '1rem' }} />
           </div>
         </CardContent>
       </Card>
 
       <div className="flex justify-end">
-        <Button variant="outline">Reset to Defaults</Button>
+        <Button variant="outline" onClick={resetToDefaults}>
+          Reset to Defaults
+        </Button>
       </div>
     </div>
   );

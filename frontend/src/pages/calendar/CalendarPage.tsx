@@ -557,20 +557,22 @@ export function CalendarPage() {
       <div className="flex-1 min-w-0">
         <PageHeader
           title="Calendar"
+          prefix={
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="rounded-full"
+            >
+              {sidebarOpen ? (
+                <PanelLeftClose className="h-4 w-4" />
+              ) : (
+                <PanelLeft className="h-4 w-4" />
+              )}
+            </Button>
+          }
           actions={
             <div className="flex gap-2">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="rounded-full"
-              >
-                {sidebarOpen ? (
-                  <PanelLeftClose className="h-4 w-4" />
-                ) : (
-                  <PanelLeft className="h-4 w-4" />
-                )}
-              </Button>
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -830,18 +832,18 @@ function MonthView({
       </div>
 
       {/* Calendar grid - Skylight rounded cells */}
-      <div className="grid grid-cols-7 gap-2">
+      <div className="grid grid-cols-7 gap-1">
         {days.map(({ day, isCurrentMonth }, i) => {
           const dayEvents = getEventsForDay(day);
           return (
             <div
               key={i}
               className={cn(
-                'min-h-28 rounded-2xl p-2 transition-all duration-200 cursor-pointer',
+                'min-h-28 rounded-xl p-2 transition-all duration-200 cursor-pointer border',
                 isCurrentMonth
-                  ? 'bg-white hover:bg-secondary/20'
-                  : 'bg-secondary/30',
-                isToday(day) && 'ring-2 ring-primary ring-offset-2'
+                  ? 'bg-card hover:bg-accent border-border'
+                  : 'bg-muted/50 border-transparent text-muted-foreground',
+                isToday(day) && 'ring-2 ring-primary ring-offset-2 ring-offset-background'
               )}
               onDoubleClick={() => {
                 if (day !== null && isCurrentMonth) {
@@ -869,10 +871,11 @@ function MonthView({
                       return (
                         <div
                           key={event.id}
-                          className="truncate rounded-lg px-2 py-1 text-xs font-medium cursor-pointer transition-all duration-200 hover:scale-[1.02] hover:shadow-sm"
+                          className="truncate rounded-md px-2 py-1 text-xs font-semibold cursor-pointer transition-all duration-200 hover:scale-[1.02] hover:shadow-md border"
                           style={{
-                            backgroundColor: `${color}25`,
+                            backgroundColor: `${color}35`,
                             color: color,
+                            borderColor: `${color}50`,
                           }}
                           onClick={(e) => {
                             e.stopPropagation();
@@ -966,22 +969,22 @@ function WeekView({
   const getTimeSlotBg = (hour: number) => {
     if (hour < 6 || hour >= 21) {
       // Night (before 6 AM or after 9 PM) - subtle gray
-      return 'bg-secondary/20';
+      return 'bg-muted/50';
     }
-    return 'bg-white';
+    return 'bg-card';
   };
 
   return (
-    <div className="overflow-auto rounded-2xl bg-white border border-secondary/30">
+    <div className="overflow-auto rounded-xl bg-card border border-border">
       {/* Day headers - Skylight style */}
-      <div className="grid grid-cols-8 gap-px bg-secondary/50 sticky top-0 z-10">
-        <div className="bg-white p-3" /> {/* Empty corner */}
+      <div className="grid grid-cols-8 gap-px bg-border sticky top-0 z-10">
+        <div className="bg-card p-3" /> {/* Empty corner */}
         {days.map((date, i) => (
           <div
             key={i}
             className={cn(
-              'bg-white p-3 text-center transition-colors',
-              isToday(date) && 'bg-primary/5'
+              'bg-card p-3 text-center transition-colors',
+              isToday(date) && 'bg-primary/10'
             )}
           >
             <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
@@ -1003,8 +1006,8 @@ function WeekView({
 
       {/* All-day events row */}
       {hasAnyAllDayEvents && (
-        <div className="grid grid-cols-8 gap-px bg-secondary/50 border-b border-secondary">
-          <div className="bg-white p-2 text-xs font-medium text-muted-foreground text-right pr-3">
+        <div className="grid grid-cols-8 gap-px bg-border border-b border-border">
+          <div className="bg-card p-2 text-xs font-medium text-muted-foreground text-right pr-3">
             All day
           </div>
           {days.map((date, dayIndex) => {
@@ -1013,8 +1016,8 @@ function WeekView({
               <div
                 key={dayIndex}
                 className={cn(
-                  'bg-white min-h-10 p-1',
-                  isToday(date) && 'bg-primary/5'
+                  'bg-card min-h-10 p-1',
+                  isToday(date) && 'bg-primary/10'
                 )}
               >
                 {allDayEvents.map((event) => {
@@ -1022,10 +1025,11 @@ function WeekView({
                   return (
                     <div
                       key={event.id}
-                      className="rounded-lg px-2 py-1 text-xs font-medium cursor-pointer transition-all duration-200 hover:scale-[1.02] truncate mb-1"
+                      className="rounded-md px-2 py-1 text-xs font-semibold cursor-pointer transition-all duration-200 hover:scale-[1.02] truncate mb-1 border"
                       style={{
-                        backgroundColor: `${color}25`,
+                        backgroundColor: `${color}35`,
                         color: color,
+                        borderColor: `${color}50`,
                       }}
                       onClick={() => onEventClick(event)}
                     >
@@ -1040,7 +1044,7 @@ function WeekView({
       )}
 
       {/* Time grid */}
-      <div className="grid grid-cols-8 gap-px bg-secondary/50">
+      <div className="grid grid-cols-8 gap-px bg-border">
         {hours.map((hour) => (
           <React.Fragment key={hour}>
             {/* Time label */}
@@ -1057,8 +1061,8 @@ function WeekView({
                 <div
                   key={dayIndex}
                   className={cn(
-                    'min-h-14 border-t border-secondary/50 relative cursor-pointer hover:bg-secondary/20',
-                    isToday(date) ? 'bg-primary/5' : getTimeSlotBg(hour)
+                    'min-h-14 border-t border-border relative cursor-pointer hover:bg-accent',
+                    isToday(date) ? 'bg-primary/10' : getTimeSlotBg(hour)
                   )}
                   onDoubleClick={(e) => {
                     // Calculate minutes based on click position within the cell
@@ -1074,10 +1078,11 @@ function WeekView({
                     return (
                       <div
                         key={event.id}
-                        className="absolute inset-x-1 top-1 rounded-lg px-2 py-1 text-xs font-medium cursor-pointer transition-all duration-200 hover:scale-[1.02] hover:shadow-sm truncate"
+                        className="absolute inset-x-1 top-1 rounded-md px-2 py-1 text-xs font-semibold cursor-pointer transition-all duration-200 hover:scale-[1.02] hover:shadow-md truncate border"
                         style={{
-                          backgroundColor: `${color}25`,
+                          backgroundColor: `${color}35`,
                           color: color,
+                          borderColor: `${color}50`,
                         }}
                         onClick={() => onEventClick(event)}
                       >
@@ -1152,20 +1157,20 @@ function DayView({
   const getTimeSlotBg = (hour: number) => {
     if (hour < 6 || hour >= 21) {
       // Night (before 6 AM or after 9 PM) - subtle gray
-      return 'bg-secondary/20';
+      return 'bg-muted/50';
     }
-    return 'bg-white';
+    return 'bg-card';
   };
 
   return (
-    <div className="overflow-auto rounded-2xl bg-white border border-secondary/30">
+    <div className="overflow-auto rounded-xl bg-card border border-border">
       {/* Day header - matches Week view style */}
-      <div className="flex border-b border-secondary/50">
-        <div className="w-24 p-3" /> {/* Empty corner to match time column */}
+      <div className="flex border-b border-border">
+        <div className="w-24 p-3 bg-card" /> {/* Empty corner to match time column */}
         <div
           className={cn(
-            'flex-1 p-3 text-center transition-colors',
-            isToday && 'bg-primary/5'
+            'flex-1 p-3 text-center transition-colors bg-card',
+            isToday && 'bg-primary/10'
           )}
         >
           <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
@@ -1186,7 +1191,7 @@ function DayView({
 
       {/* All-day events */}
       {allDayEvents.length > 0 && (
-        <div className="border-b border-secondary/50 p-3 bg-secondary/20">
+        <div className="border-b border-border p-3 bg-muted/30">
           <div className="flex">
             <div className="w-24 p-2 text-sm font-medium text-muted-foreground text-right pr-4">
               All day
@@ -1197,10 +1202,11 @@ function DayView({
                 return (
                   <div
                     key={event.id}
-                    className="rounded-xl px-4 py-2 text-sm font-medium cursor-pointer transition-all duration-200 hover:scale-[1.01] hover:shadow-sm"
+                    className="rounded-lg px-4 py-2 text-sm font-semibold cursor-pointer transition-all duration-200 hover:scale-[1.01] hover:shadow-md border"
                     style={{
-                      backgroundColor: `${color}25`,
+                      backgroundColor: `${color}35`,
                       color: color,
+                      borderColor: `${color}50`,
                     }}
                     onClick={() => onEventClick(event)}
                   >
@@ -1214,16 +1220,16 @@ function DayView({
       )}
 
       {/* Time slots */}
-      <div className="divide-y divide-secondary/50">
+      <div className="divide-y divide-border">
         {hours.map((hour) => {
           const hourEvents = getEventsForHour(hour);
           return (
             <div key={hour} className={cn('flex min-h-14', getTimeSlotBg(hour))}>
-              <div className="w-24 p-3 text-sm font-medium text-muted-foreground text-right pr-4 border-r border-secondary/50">
+              <div className="w-24 p-3 text-sm font-medium text-muted-foreground text-right pr-4 border-r border-border">
                 {formatHour(hour)}
               </div>
               <div
-                className="flex-1 p-2 relative cursor-pointer hover:bg-secondary/20"
+                className="flex-1 p-2 relative cursor-pointer hover:bg-accent"
                 onDoubleClick={(e) => {
                   // Calculate minutes based on click position within the cell
                   const rect = e.currentTarget.getBoundingClientRect();
@@ -1238,10 +1244,11 @@ function DayView({
                   return (
                     <div
                       key={event.id}
-                      className="rounded-xl px-4 py-2 text-sm cursor-pointer transition-all duration-200 hover:scale-[1.01] hover:shadow-sm mb-2"
+                      className="rounded-lg px-4 py-2 text-sm cursor-pointer transition-all duration-200 hover:scale-[1.01] hover:shadow-md mb-2 border"
                       style={{
-                        backgroundColor: `${color}25`,
+                        backgroundColor: `${color}35`,
                         color: color,
+                        borderColor: `${color}50`,
                       }}
                       onClick={() => onEventClick(event)}
                     >

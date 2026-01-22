@@ -45,6 +45,8 @@ import {
 import { calendarsApi, type PermissionLevel } from '@/api/calendars';
 import type { Calendar } from '@/types/models';
 import { toast } from '@/hooks/useToast';
+import { useTheme } from '@/hooks/useTheme';
+import { COLOR_PALETTES } from '@/lib/theme-presets';
 
 interface CalendarFormData {
   name: string;
@@ -61,17 +63,6 @@ interface CalendarFormProps {
   isSubmitting?: boolean;
   isDeleting?: boolean;
 }
-
-const colorOptions = [
-  { value: '#f66951', label: 'Coral' },
-  { value: '#4A90D9', label: 'Blue' },
-  { value: '#50C878', label: 'Green' },
-  { value: '#FFD700', label: 'Yellow' },
-  { value: '#9B59B6', label: 'Purple' },
-  { value: '#E91E63', label: 'Pink' },
-  { value: '#00BCD4', label: 'Teal' },
-  { value: '#FF9800', label: 'Orange' },
-];
 
 const permissionLabels: Record<PermissionLevel, string> = {
   view_busy: 'Busy/Free Only',
@@ -90,6 +81,8 @@ export function CalendarForm({
 }: CalendarFormProps) {
   const isEditing = !!calendar;
   const navigate = useNavigate();
+  const { colorPalette } = useTheme();
+  const colorOptions = COLOR_PALETTES[colorPalette].colors;
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('general');
   const [copiedField, setCopiedField] = useState<'feed' | 'webcal' | null>(null);
@@ -113,7 +106,7 @@ export function CalendarForm({
         }
       : {
           name: '',
-          color: '#f66951',
+          color: colorOptions[0].value,
           type: 'group',
         },
   });
@@ -205,12 +198,12 @@ export function CalendarForm({
       } else {
         reset({
           name: '',
-          color: '#f66951',
+          color: colorOptions[0].value,
           type: 'group',
         });
       }
     }
-  }, [open, calendar, reset]);
+  }, [open, calendar, reset, colorOptions]);
 
   const handleFormSubmit = (data: CalendarFormData) => {
     onSubmit(data);
