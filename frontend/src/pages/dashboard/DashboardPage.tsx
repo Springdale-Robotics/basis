@@ -1,10 +1,9 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   Calendar,
   ChefHat,
   AlertTriangle,
-  Square,
   Bell,
   Plus,
   ChevronRight,
@@ -14,6 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Checkbox } from '@/components/ui/checkbox';
 import { calendarsApi } from '@/api/calendars';
 import { recipesApi } from '@/api/recipes';
 import { inventoryApi } from '@/api/inventory';
@@ -23,6 +23,7 @@ import { formatDate, formatTime } from '@/lib/utils';
 
 export function DashboardPage() {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
 
   // Fetch today's events
   const todayStart = new Date();
@@ -54,6 +55,14 @@ export function DashboardPage() {
   const { data: tasksData, isLoading: tasksLoading } = useQuery({
     queryKey: ['tasks', 'pending'],
     queryFn: () => tasksApi.list({ status: 'pending', limit: 5 }),
+  });
+
+  // Complete task mutation
+  const completeTaskMutation = useMutation({
+    mutationFn: (taskId: string) => tasksApi.complete(taskId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
   });
 
   return (
@@ -222,7 +231,12 @@ export function DashboardPage() {
                     className="flex items-center justify-between rounded-lg border p-3"
                   >
                     <div className="flex items-center gap-3">
-                      <Square className="h-5 w-5 text-muted-foreground" />
+                      <Checkbox
+                        checked={false}
+                        onCheckedChange={() => completeTaskMutation.mutate(task.id)}
+                        disabled={completeTaskMutation.isPending}
+                        className="h-5 w-5"
+                      />
                       <div>
                         <p className="font-medium">{task.title}</p>
                         {task.dueDate && (
