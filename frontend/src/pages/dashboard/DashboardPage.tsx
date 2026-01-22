@@ -4,7 +4,7 @@ import {
   Calendar,
   ChefHat,
   AlertTriangle,
-  CheckSquare,
+  Square,
   Bell,
   Plus,
   ChevronRight,
@@ -222,7 +222,7 @@ export function DashboardPage() {
                     className="flex items-center justify-between rounded-lg border p-3"
                   >
                     <div className="flex items-center gap-3">
-                      <CheckSquare className="h-5 w-5 text-muted-foreground" />
+                      <Square className="h-5 w-5 text-muted-foreground" />
                       <div>
                         <p className="font-medium">{task.title}</p>
                         {task.dueDate && (
