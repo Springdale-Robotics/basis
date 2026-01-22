@@ -680,7 +680,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         orderBy: (l, { asc }) => [asc(l.isChecked), asc(l.createdAt)],
         with: {
           item: {
-            columns: { id: true, name: true, category: true, defaultUnit: true },
+            columns: { id: true, name: true, category: true, defaultUnit: true, defaultAreaId: true },
           },
         },
       });

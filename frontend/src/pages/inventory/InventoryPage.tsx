@@ -29,7 +29,7 @@ import { ManageStockDialog } from '@/components/inventory/ManageStockDialog';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { inventoryApi } from '@/api/inventory';
 import { formatDate, cn } from '@/lib/utils';
-import { categoryOptions } from '@/lib/inventory-constants';
+import { categoryOptions, calculateTotalStock } from '@/lib/inventory-constants';
 import type { StorageAreaFormData, InventoryItemFormData } from '@/types/forms';
 import type { InventoryItem, StockEntry, StorageArea } from '@/types/models';
 import {
@@ -129,21 +129,49 @@ export function InventoryPage() {
     queryFn: inventoryApi.getKeepInStockItems,
   });
 
-  // Calculate stock totals per item
+  // Create item lookup for unit conversions
+  const itemLookup = useMemo(() => {
+    const lookup: Record<string, InventoryItem> = {};
+    if (items?.items) {
+      for (const item of items.items) {
+        lookup[item.id] = item;
+      }
+    }
+    return lookup;
+  }, [items]);
+
+  // Calculate stock totals per item with unit conversions
   const itemStockTotals = useMemo(() => {
-    const totals: Record<string, { quantity: number; unit: string | undefined; areaId?: string }> = {};
+    const totals: Record<string, { quantity: number; unit: string | undefined; areaId?: string; allConverted: boolean }> = {};
     if (stock?.stock) {
+      // Group entries by item ID first
+      const entriesByItem: Record<string, StockEntry[]> = {};
       for (const entry of stock.stock) {
         const itemId = entry.itemId || entry.inventoryItemId;
         if (!itemId) continue;
-        if (!totals[itemId]) {
-          totals[itemId] = { quantity: 0, unit: entry.unit || entry.item?.defaultUnit, areaId: entry.areaId };
+        if (!entriesByItem[itemId]) {
+          entriesByItem[itemId] = [];
         }
-        totals[itemId].quantity += parseFloat(String(entry.quantity));
+        entriesByItem[itemId].push(entry);
+      }
+
+      // Calculate totals using unit conversions
+      for (const [itemId, entries] of Object.entries(entriesByItem)) {
+        const item = itemLookup[itemId];
+        const targetUnit = item?.defaultUnit || entries[0]?.unit || 'pieces';
+        const conversions = item?.unitConversions || [];
+        const result = calculateTotalStock(entries, targetUnit, conversions);
+
+        totals[itemId] = {
+          quantity: result.total,
+          unit: targetUnit,
+          areaId: entries[0]?.areaId,
+          allConverted: result.allConverted,
+        };
       }
     }
     return totals;
-  }, [stock]);
+  }, [stock, itemLookup]);
 
   // Get items stock entries per item for area lookup
   const itemStockEntries = useMemo(() => {
@@ -351,11 +379,13 @@ export function InventoryPage() {
         keepInStock: data.keepInStock,
         minStockQuantity: data.keepInStock ? data.keepInStockThreshold : undefined,
         defaultAreaId: data.defaultAreaId || undefined,
+        unitConversions: data.unitConversions,
       };
       return inventoryApi.updateItem(id, apiData);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
       setEditingItem(null);
       setItemFormOpen(false);
     },

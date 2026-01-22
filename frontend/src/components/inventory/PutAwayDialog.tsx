@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Package, Check, SkipForward } from 'lucide-react';
+import { Package, Check, SkipForward, Zap, ListChecks } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -24,6 +24,8 @@ interface PutAwayItem {
   expiryDate: string;
 }
 
+type DialogMode = 'choice' | 'step-by-step';
+
 interface PutAwayDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -31,7 +33,7 @@ interface PutAwayDialogProps {
   inventoryItems: InventoryItem[];
   areas: StorageArea[];
   onPutAway: (data: { shoppingListItemId: string; areaId: string; quantity: number; expiryDate?: string }) => Promise<void>;
-  onSkip: (id: string) => void;
+  onPutAwayAll: () => Promise<{ movedCount: number; skippedCount: number }>;
   isSubmitting?: boolean;
 }
 
@@ -42,9 +44,10 @@ export function PutAwayDialog({
   inventoryItems,
   areas,
   onPutAway,
-  onSkip,
+  onPutAwayAll,
   isSubmitting,
 }: PutAwayDialogProps) {
+  const [mode, setMode] = useState<DialogMode>('choice');
   const [currentIndex, setCurrentIndex] = useState(0);
   const [putAwayItems, setPutAwayItems] = useState<PutAwayItem[]>([]);
   const [processing, setProcessing] = useState(false);
@@ -58,16 +61,20 @@ export function PutAwayDialog({
         .filter(item => item.inventoryItemId) // Only items linked to inventory
         .map(item => {
           const inventoryItem = inventoryItems.find(inv => inv.id === item.inventoryItemId);
+          // Use defaultAreaId from shopping list item (fresh from API) as primary source,
+          // falling back to inventoryItem for backward compatibility
+          const defaultArea = item.defaultAreaId || inventoryItem?.defaultAreaId || '';
           return {
             shoppingListItem: item,
             inventoryItem,
-            areaId: inventoryItem?.defaultAreaId || '',
+            areaId: defaultArea,
             quantity: String(item.quantity || 1),
             expiryDate: '',
           };
         });
       setPutAwayItems(items);
       setCurrentIndex(0);
+      setMode('choice');
     }
     wasOpen.current = open;
   }, [open, checkedItems, inventoryItems]);
@@ -75,6 +82,10 @@ export function PutAwayDialog({
   const currentItem = putAwayItems[currentIndex];
   const hasMoreItems = currentIndex < putAwayItems.length - 1;
   const itemsWithoutInventoryLink = checkedItems.filter(item => !item.inventoryItemId);
+
+  // Count items with and without default areas
+  const itemsWithDefaultArea = putAwayItems.filter(item => item.areaId).length;
+  const itemsWithoutDefaultArea = putAwayItems.filter(item => !item.areaId).length;
 
   // Area combobox options
   const areaOptions: ComboboxOption[] = useMemo(
@@ -93,6 +104,16 @@ export function PutAwayDialog({
         idx === currentIndex ? { ...item, ...updates } : item
       )
     );
+  };
+
+  const handlePutAwayAll = async () => {
+    setProcessing(true);
+    try {
+      await onPutAwayAll();
+      handleClose();
+    } finally {
+      setProcessing(false);
+    }
   };
 
   const handlePutAway = async () => {
@@ -118,7 +139,8 @@ export function PutAwayDialog({
   };
 
   const handleSkip = () => {
-    onSkip(currentItem.shoppingListItem.id);
+    // Just move to the next item without deleting - the skipped item
+    // will remain checked on the list so the user can put it away later
     if (hasMoreItems) {
       setCurrentIndex(idx => idx + 1);
     } else {
@@ -129,12 +151,13 @@ export function PutAwayDialog({
   const handleClose = () => {
     setCurrentIndex(0);
     setPutAwayItems([]);
+    setMode('choice');
     wasOpen.current = false;
     onOpenChange(false);
   };
 
+  // No items to put away (all are custom items without inventory link)
   if (!currentItem) {
-    // No items to put away (all are custom items without inventory link)
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-[450px]">
@@ -167,6 +190,94 @@ export function PutAwayDialog({
     );
   }
 
+  // Choice screen - quick vs step-by-step
+  if (mode === 'choice') {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Package className="h-5 w-5" />
+              Put Away Groceries
+            </DialogTitle>
+            <DialogDescription>
+              {putAwayItems.length} item{putAwayItems.length !== 1 ? 's' : ''} to put away
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            {/* Quick put away option */}
+            <Card
+              className="cursor-pointer hover:border-primary transition-colors"
+              onClick={itemsWithDefaultArea > 0 && !processing ? handlePutAwayAll : undefined}
+            >
+              <CardContent className="p-4">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-full bg-primary/10 p-2">
+                    <Zap className="h-5 w-5 text-primary" />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-medium">Use default locations</h3>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Quickly put away all items in their default storage areas
+                    </p>
+                    {itemsWithDefaultArea > 0 ? (
+                      <p className="text-xs text-muted-foreground mt-2">
+                        {itemsWithDefaultArea} item{itemsWithDefaultArea !== 1 ? 's' : ''} will be put away
+                        {itemsWithoutDefaultArea > 0 && (
+                          <span className="text-amber-600">
+                            {' '}({itemsWithoutDefaultArea} without default area will be skipped)
+                          </span>
+                        )}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-amber-600 mt-2">
+                        No items have default areas set
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Step-by-step option */}
+            <Card
+              className="cursor-pointer hover:border-primary transition-colors"
+              onClick={() => !processing && setMode('step-by-step')}
+            >
+              <CardContent className="p-4">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-full bg-muted p-2">
+                    <ListChecks className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="font-medium">Review one by one</h3>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Choose location and add expiry dates for each item
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {itemsWithoutInventoryLink.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              Note: {itemsWithoutInventoryLink.length} custom item(s) without inventory links will be skipped.
+            </p>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={handleClose} disabled={processing}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  // Step-by-step mode
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[450px]">

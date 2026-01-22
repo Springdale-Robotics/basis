@@ -328,6 +328,7 @@ export interface ShoppingListItem {
   checked: boolean;
   source: 'manual' | 'meal_plan' | 'low_stock' | 'recipe';
   addedBy: string;
+  defaultAreaId?: string;
   createdAt: string;
   updatedAt: string;
 }

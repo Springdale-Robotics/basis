@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import { Plus, Trash2, Edit, Save, X, Package } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,9 +14,11 @@ import {
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { UnitConversionPromptDialog } from './UnitConversionPromptDialog';
 import type { StorageArea, InventoryItem, StockEntry } from '@/types/models';
-import { unitOptions } from '@/lib/inventory-constants';
+import { unitOptions, calculateTotalStock, convertQuantity } from '@/lib/inventory-constants';
 import { formatDate, cn } from '@/lib/utils';
+import { inventoryApi } from '@/api/inventory';
 
 interface ManageStockDialogProps {
   open: boolean;
@@ -44,6 +47,12 @@ interface EditingStock {
   notes: string;
 }
 
+interface ConversionPrompt {
+  fromUnit: string;
+  toUnit: string;
+  pendingStock: AddStockForm;
+}
+
 export function ManageStockDialog({
   open,
   onOpenChange,
@@ -55,6 +64,7 @@ export function ManageStockDialog({
   onDeleteStock,
   isSubmitting,
 }: ManageStockDialogProps) {
+  const queryClient = useQueryClient();
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState<AddStockForm>({
     areaId: '',
@@ -63,6 +73,20 @@ export function ManageStockDialog({
     expiryDate: '',
   });
   const [editingStock, setEditingStock] = useState<EditingStock | null>(null);
+  const [conversionPrompt, setConversionPrompt] = useState<ConversionPrompt | null>(null);
+  // Track locally added conversions for immediate UI update (before query refetch)
+  const [localConversions, setLocalConversions] = useState<Array<{ fromUnit: string; toUnit: string; factor: number }>>([]);
+
+  // Mutation for adding unit conversions
+  const addConversionMutation = useMutation({
+    mutationFn: (data: { fromUnit: string; toUnit: string; factor: number }) =>
+      inventoryApi.addUnitConversion(item!.id, data),
+    onSuccess: () => {
+      // Invalidate all inventory queries to refresh conversion data
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
+    },
+  });
 
   // Get stock entries for this item
   const itemStock = useMemo(() => {
@@ -73,10 +97,17 @@ export function ManageStockDialog({
     });
   }, [stockEntries, item]);
 
-  // Calculate total quantity
-  const totalQuantity = useMemo(() => {
-    return itemStock.reduce((sum, entry) => sum + parseFloat(String(entry.quantity)), 0);
-  }, [itemStock]);
+  // Merge item conversions with locally added ones for immediate updates
+  const allConversions = useMemo(() => {
+    const itemConversions = item?.unitConversions || [];
+    return [...itemConversions, ...localConversions];
+  }, [item?.unitConversions, localConversions]);
+
+  // Calculate total quantity with unit conversions
+  const stockTotal = useMemo(() => {
+    const targetUnit = item?.defaultUnit || 'pieces';
+    return calculateTotalStock(itemStock, targetUnit, allConversions);
+  }, [itemStock, item?.defaultUnit, allConversions]);
 
   // Area lookup
   const areaLookup = useMemo(() => {
@@ -103,18 +134,25 @@ export function ManageStockDialog({
     []
   );
 
-  const handleAddStock = useCallback(() => {
-    if (!item || !addForm.areaId || !addForm.quantity) return;
+  // Check if a conversion exists between two units
+  const hasConversion = useCallback((fromUnit: string, toUnit: string): boolean => {
+    if (fromUnit === toUnit) return true;
+    return convertQuantity(1, fromUnit, toUnit, allConversions) !== null;
+  }, [allConversions]);
 
-    const quantity = parseFloat(addForm.quantity);
+  // Actually add the stock (after conversion check passes)
+  const doAddStock = useCallback((formData: AddStockForm) => {
+    if (!item) return;
+
+    const quantity = parseFloat(formData.quantity);
     if (isNaN(quantity) || quantity <= 0) return;
 
     onAddStock({
       itemId: item.id,
-      areaId: addForm.areaId,
+      areaId: formData.areaId,
       quantity,
-      unit: addForm.unit || undefined,
-      expiryDate: addForm.expiryDate || undefined,
+      unit: formData.unit || undefined,
+      expiryDate: formData.expiryDate || undefined,
     });
 
     // Reset form
@@ -125,7 +163,56 @@ export function ManageStockDialog({
       expiryDate: '',
     });
     setShowAddForm(false);
-  }, [item, addForm, onAddStock]);
+  }, [item, onAddStock]);
+
+  const handleAddStock = useCallback(() => {
+    if (!item || !addForm.areaId || !addForm.quantity) return;
+
+    const quantity = parseFloat(addForm.quantity);
+    if (isNaN(quantity) || quantity <= 0) return;
+
+    const defaultUnit = item.defaultUnit || 'pieces';
+    const stockUnit = addForm.unit || defaultUnit;
+
+    // Check if we need a conversion
+    if (stockUnit !== defaultUnit && !hasConversion(stockUnit, defaultUnit)) {
+      // Prompt for conversion
+      setConversionPrompt({
+        fromUnit: stockUnit,
+        toUnit: defaultUnit,
+        pendingStock: { ...addForm },
+      });
+      return;
+    }
+
+    // Conversion exists or same unit, proceed with adding stock
+    doAddStock(addForm);
+  }, [item, addForm, hasConversion, doAddStock]);
+
+  const handleConversionConfirm = async (factor: number) => {
+    if (!conversionPrompt || !item) return;
+
+    const newConversion = {
+      fromUnit: conversionPrompt.fromUnit,
+      toUnit: conversionPrompt.toUnit,
+      factor,
+    };
+
+    // Save the conversion to the server
+    await addConversionMutation.mutateAsync(newConversion);
+
+    // Add to local conversions for immediate UI update
+    setLocalConversions(prev => [...prev, newConversion]);
+
+    // Now add the stock
+    doAddStock(conversionPrompt.pendingStock);
+    setConversionPrompt(null);
+  };
+
+  const handleConversionSkip = () => {
+    // User chose to skip - don't add the stock
+    setConversionPrompt(null);
+  };
 
   const handleStartEdit = (entry: StockEntry) => {
     setEditingStock({
@@ -160,6 +247,7 @@ export function ManageStockDialog({
   const handleClose = () => {
     setShowAddForm(false);
     setEditingStock(null);
+    setLocalConversions([]);
     setAddForm({
       areaId: '',
       quantity: '1',
@@ -172,6 +260,8 @@ export function ManageStockDialog({
   // Reset form when item changes
   const handleOpenChange = (isOpen: boolean) => {
     if (isOpen && item) {
+      // Reset state when opening for a new item
+      setLocalConversions([]);
       setAddForm({
         areaId: item.defaultAreaId || '',
         quantity: '1',
@@ -189,6 +279,7 @@ export function ManageStockDialog({
   if (!item) return null;
 
   return (
+    <>
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-[600px] max-h-[80vh] flex flex-col">
         <DialogHeader>
@@ -206,10 +297,15 @@ export function ManageStockDialog({
           <div>
             <p className="text-sm text-muted-foreground">Total in stock</p>
             <p className="text-2xl font-bold">
-              {totalQuantity.toFixed(1)} {item.defaultUnit || 'units'}
+              {stockTotal.total.toFixed(1)} {item.defaultUnit || 'units'}
             </p>
+            {!stockTotal.allConverted && (
+              <p className="text-xs text-amber-600 mt-1">
+                + items in {stockTotal.unconvertedUnits.join(', ')} (no conversion defined)
+              </p>
+            )}
           </div>
-          <Badge variant={totalQuantity > 0 ? 'default' : 'outline'}>
+          <Badge variant={stockTotal.total > 0 ? 'default' : 'outline'}>
             {itemStock.length} location{itemStock.length !== 1 ? 's' : ''}
           </Badge>
         </div>
@@ -426,5 +522,19 @@ export function ManageStockDialog({
         )}
       </DialogContent>
     </Dialog>
+
+    {/* Unit Conversion Prompt */}
+    {item && conversionPrompt && (
+      <UnitConversionPromptDialog
+        open={!!conversionPrompt}
+        onOpenChange={(open) => !open && setConversionPrompt(null)}
+        itemName={item.name}
+        fromUnit={conversionPrompt.fromUnit}
+        toUnit={conversionPrompt.toUnit}
+        onConfirm={handleConversionConfirm}
+        onSkip={handleConversionSkip}
+      />
+    )}
+    </>
   );
 }

@@ -23,6 +23,10 @@ export interface CreateItemRequest {
   defaultUnit: string;
   keepInStock?: boolean;
   minStockLevel?: number;
+  minStockQuantity?: number;
+  defaultAreaId?: string;
+  icon?: string;
+  unitConversions?: Array<{ fromUnit: string; toUnit: string; factor: number }>;
 }
 
 export interface UpdateItemRequest extends Partial<CreateItemRequest> {}
@@ -190,6 +194,13 @@ export const inventoryApi = {
       targetAreaId?: string;
       createdAt: string;
       updatedAt: string;
+      item?: {
+        id: string;
+        name: string;
+        category?: string;
+        defaultUnit?: string;
+        defaultAreaId?: string;
+      };
     }> }>('/inventory/shopping-list');
 
     // Transform backend field names to frontend expected names
@@ -207,6 +218,7 @@ export const inventoryApi = {
         addedBy: item.addedBy,
         createdAt: item.createdAt,
         updatedAt: item.updatedAt,
+        defaultAreaId: item.item?.defaultAreaId,
       })) as ShoppingListItem[]
     };
   },

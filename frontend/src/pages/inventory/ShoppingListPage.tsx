@@ -103,8 +103,11 @@ export function ShoppingListPage() {
     queryClient.invalidateQueries({ queryKey: ['inventory'] });
   };
 
-  const handleSkipItem = (id: string) => {
-    deleteItemMutation.mutate(id);
+  const handlePutAwayAll = async () => {
+    const result = await inventoryApi.putAwayGroceries();
+    queryClient.invalidateQueries({ queryKey: ['shopping-list'] });
+    queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    return result;
   };
 
   const shoppingList = items?.shoppingList || [];
@@ -240,7 +243,7 @@ export function ShoppingListPage() {
         inventoryItems={inventoryItems}
         areas={areas}
         onPutAway={handlePutAway}
-        onSkip={handleSkipItem}
+        onPutAwayAll={handlePutAwayAll}
       />
 
       {/* Add to List Dialog */}

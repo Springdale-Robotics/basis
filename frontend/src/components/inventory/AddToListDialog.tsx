@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react';
-import { Plus, Search, Package } from 'lucide-react';
+import { Plus, Search, Package, ChevronDown, ChevronRight } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
@@ -12,12 +13,18 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { inventoryApi } from '@/api/inventory';
-import type { StorageArea, InventoryItem } from '@/types/models';
-import { unitOptions } from '@/lib/inventory-constants';
+import type { StorageArea, InventoryItem, UnitConversion } from '@/types/models';
+import { categoryOptions, unitOptions } from '@/lib/inventory-constants';
+import { UnitConversionsEditor } from './UnitConversionsEditor';
 
 interface AddToListDialogProps {
   open: boolean;
@@ -27,6 +34,30 @@ interface AddToListDialogProps {
 }
 
 type Mode = 'select' | 'create';
+
+interface NewItemForm {
+  name: string;
+  category: string;
+  unit: string;
+  icon: string;
+  barcode: string;
+  keepInStock: boolean;
+  keepInStockThreshold: number;
+  defaultAreaId: string;
+  unitConversions: UnitConversion[];
+}
+
+const defaultNewItemForm: NewItemForm = {
+  name: '',
+  category: '',
+  unit: 'pieces',
+  icon: '',
+  barcode: '',
+  keepInStock: false,
+  keepInStockThreshold: 1,
+  defaultAreaId: '',
+  unitConversions: [],
+};
 
 export function AddToListDialog({
   open,
@@ -40,12 +71,10 @@ export function AddToListDialog({
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [quantity, setQuantity] = useState('1');
   const [unit, setUnit] = useState('');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  // New item form
-  const [newItemName, setNewItemName] = useState('');
-  const [newItemUnit, setNewItemUnit] = useState('pieces');
-  const [newItemCategory, setNewItemCategory] = useState('');
-  const [newItemDefaultArea, setNewItemDefaultArea] = useState('');
+  // New item form state
+  const [newItem, setNewItem] = useState<NewItemForm>(defaultNewItemForm);
 
   const filteredItems = useMemo(() => {
     if (!search) return inventoryItems;
@@ -72,6 +101,11 @@ export function AddToListDialog({
     [areas]
   );
 
+  const categoryComboboxOptions: ComboboxOption[] = useMemo(
+    () => categoryOptions.map((cat) => ({ value: cat, label: cat })),
+    []
+  );
+
   const unitComboboxOptions: ComboboxOption[] = useMemo(
     () => unitOptions.map((u) => ({ value: u, label: u })),
     []
@@ -91,15 +125,27 @@ export function AddToListDialog({
   });
 
   const createItemMutation = useMutation({
-    mutationFn: (data: { name: string; defaultUnit?: string; category?: string; defaultAreaId?: string }) =>
-      inventoryApi.quickCreateItem(data),
+    mutationFn: (data: NewItemForm) => {
+      const apiData = {
+        name: data.name,
+        category: data.category || undefined,
+        barcode: data.barcode || undefined,
+        defaultUnit: data.unit || 'pieces',
+        keepInStock: data.keepInStock,
+        minStockQuantity: data.keepInStock ? data.keepInStockThreshold : undefined,
+        defaultAreaId: data.defaultAreaId || undefined,
+        icon: data.icon || undefined,
+      };
+      return inventoryApi.createItem(apiData);
+    },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
       // Add the newly created item to the shopping list
       addToListMutation.mutate({
         itemId: data.item.id,
         quantity: parseFloat(quantity) || 1,
-        unit: newItemUnit,
+        unit: newItem.unit,
       });
     },
   });
@@ -122,13 +168,8 @@ export function AddToListDialog({
   };
 
   const handleCreateAndAdd = () => {
-    if (!newItemName.trim()) return;
-    createItemMutation.mutate({
-      name: newItemName.trim(),
-      defaultUnit: newItemUnit || undefined,
-      category: newItemCategory || undefined,
-      defaultAreaId: newItemDefaultArea || undefined,
-    });
+    if (!newItem.name.trim()) return;
+    createItemMutation.mutate(newItem);
   };
 
   const handleClose = () => {
@@ -137,23 +178,25 @@ export function AddToListDialog({
     setSelectedItemId(null);
     setQuantity('1');
     setUnit('');
-    setNewItemName('');
-    setNewItemUnit('pieces');
-    setNewItemCategory('');
-    setNewItemDefaultArea('');
+    setNewItem(defaultNewItemForm);
+    setAdvancedOpen(false);
     onOpenChange(false);
   };
 
   const handleSwitchToCreate = () => {
     setMode('create');
-    setNewItemName(search); // Pre-fill with search term
+    setNewItem({ ...defaultNewItemForm, name: search }); // Pre-fill with search term
+  };
+
+  const updateNewItem = (updates: Partial<NewItemForm>) => {
+    setNewItem((prev) => ({ ...prev, ...updates }));
   };
 
   const isSubmitting = addToListMutation.isPending || createItemMutation.isPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px] max-h-[80vh] flex flex-col">
+      <DialogContent className="sm:max-w-[500px] max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Plus className="h-5 w-5" />
@@ -258,63 +301,150 @@ export function AddToListDialog({
             )}
           </>
         ) : (
-          /* Create new item form */
-          <div className="space-y-4">
-            <div>
-              <Label>Item Name *</Label>
+          /* Create new item form - mirrors ItemForm */
+          <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+            <div className="space-y-2">
+              <Label htmlFor="newItemName">Name *</Label>
               <Input
-                value={newItemName}
-                onChange={(e) => setNewItemName(e.target.value)}
+                id="newItemName"
+                value={newItem.name}
+                onChange={(e) => updateNewItem({ name: e.target.value })}
                 placeholder="e.g., Organic Milk"
               />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Default Unit</Label>
+              <div className="space-y-2">
+                <Label>Category</Label>
                 <Combobox
-                  options={unitComboboxOptions}
-                  value={newItemUnit}
-                  onValueChange={(v) => setNewItemUnit(v || 'pieces')}
-                  placeholder="Unit"
+                  options={categoryComboboxOptions}
+                  value={newItem.category}
+                  onValueChange={(v) => updateNewItem({ category: v })}
+                  placeholder="Select category"
                   searchPlaceholder="Search..."
-                  emptyText="Not found"
+                  emptyText="No category found"
+                  allowClear
+                  clearLabel="No category"
                 />
               </div>
-              <div>
-                <Label>Quantity to Add</Label>
+              <div className="space-y-2">
+                <Label>Unit</Label>
+                <Combobox
+                  options={unitComboboxOptions}
+                  value={newItem.unit}
+                  onValueChange={(v) => updateNewItem({ unit: v || 'pieces' })}
+                  placeholder="Select unit"
+                  searchPlaceholder="Search..."
+                  emptyText="No unit found"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Default Storage Area</Label>
+              <Combobox
+                options={areaOptions}
+                value={newItem.defaultAreaId}
+                onValueChange={(v) => updateNewItem({ defaultAreaId: v })}
+                placeholder="Select storage area"
+                searchPlaceholder="Search areas..."
+                emptyText="No area found"
+                allowClear
+                clearLabel="No default area"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="newItemIcon">Icon (emoji)</Label>
                 <Input
+                  id="newItemIcon"
+                  value={newItem.icon}
+                  onChange={(e) => updateNewItem({ icon: e.target.value })}
+                  placeholder="📦"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="newItemBarcode">Barcode</Label>
+                <Input
+                  id="newItemBarcode"
+                  value={newItem.barcode}
+                  onChange={(e) => updateNewItem({ barcode: e.target.value })}
+                  placeholder="Optional barcode"
+                />
+              </div>
+            </div>
+
+            {/* Quantity to add to shopping list */}
+            <div className="space-y-2 border rounded-lg p-3 bg-muted/30">
+              <Label htmlFor="quantityToAdd">Quantity to Add to List *</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="quantityToAdd"
                   type="number"
                   min="0.1"
                   step="0.1"
                   value={quantity}
                   onChange={(e) => setQuantity(e.target.value)}
+                  className="w-24"
                 />
+                <span className="text-sm text-muted-foreground">{newItem.unit || 'pieces'}</span>
               </div>
             </div>
 
-            <div>
-              <Label>Category (optional)</Label>
-              <Input
-                value={newItemCategory}
-                onChange={(e) => setNewItemCategory(e.target.value)}
-                placeholder="e.g., Dairy"
-              />
+            <div className="space-y-4 border rounded-lg p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="keepInStock">Keep in Stock</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Add to shopping list when low
+                  </p>
+                </div>
+                <Switch
+                  id="keepInStock"
+                  checked={newItem.keepInStock}
+                  onCheckedChange={(checked) => updateNewItem({ keepInStock: checked })}
+                />
+              </div>
+              {newItem.keepInStock && (
+                <div className="space-y-2">
+                  <Label htmlFor="keepInStockThreshold">Minimum Quantity</Label>
+                  <Input
+                    id="keepInStockThreshold"
+                    type="number"
+                    min="1"
+                    value={newItem.keepInStockThreshold}
+                    onChange={(e) => updateNewItem({ keepInStockThreshold: parseInt(e.target.value) || 1 })}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Alert when quantity falls below this number
+                  </p>
+                </div>
+              )}
             </div>
 
-            <div>
-              <Label>Default Storage Area (optional)</Label>
-              <Combobox
-                options={areaOptions}
-                value={newItemDefaultArea}
-                onValueChange={(v) => setNewItemDefaultArea(v)}
-                placeholder="Select area..."
-                searchPlaceholder="Search areas..."
-                emptyText="No areas found"
-                allowClear
-                clearLabel="None"
-              />
-            </div>
+            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+              <CollapsibleTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full justify-between px-4"
+                >
+                  Advanced Settings
+                  {advancedOpen ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="border rounded-lg p-4 mt-2">
+                <UnitConversionsEditor
+                  conversions={newItem.unitConversions}
+                  onChange={(newConversions) => updateNewItem({ unitConversions: newConversions })}
+                />
+              </CollapsibleContent>
+            </Collapsible>
 
             <Button
               variant="ghost"
@@ -340,9 +470,9 @@ export function AddToListDialog({
           ) : (
             <Button
               onClick={handleCreateAndAdd}
-              disabled={!newItemName.trim() || isSubmitting}
+              disabled={!newItem.name.trim() || isSubmitting}
             >
-              Create & Add
+              Create & Add to List
             </Button>
           )}
         </DialogFooter>
