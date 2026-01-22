@@ -83,6 +83,10 @@ export interface IngredientMatch {
     itemId: string;
     name: string;
     confidence: number;
+    needsConversion?: {
+      fromUnit: string;
+      toUnit: string;
+    };
   }>;
 }
 
@@ -118,6 +122,10 @@ export interface MatchSuggestion {
     fromUnit: string;
     toUnit: string;
     factor: number;
+  };
+  needsConversion?: {
+    fromUnit: string;
+    toUnit: string;
   };
 }
 

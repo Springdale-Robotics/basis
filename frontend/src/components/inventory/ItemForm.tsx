@@ -1,7 +1,7 @@
 import { useForm } from 'react-hook-form';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -14,9 +14,15 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { inventoryItemSchema, type InventoryItemFormData } from '@/types/forms';
-import type { InventoryItem, StorageArea } from '@/types/models';
+import type { InventoryItem, StorageArea, UnitConversion } from '@/types/models';
 import { categoryOptions, unitOptions } from '@/lib/inventory-constants';
+import { UnitConversionsEditor } from './UnitConversionsEditor';
 
 interface ItemFormProps {
   open: boolean;
@@ -40,6 +46,7 @@ export function ItemForm({
   isSubmitting,
 }: ItemFormProps) {
   const isEditing = !!item;
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const getDefaultValues = (item: InventoryItem | null | undefined): InventoryItemFormData => {
     if (item) {
@@ -52,6 +59,7 @@ export function ItemForm({
         keepInStock: item.keepInStock ?? false,
         keepInStockThreshold: item.minStockLevel || item.keepInStockThreshold || 1,
         defaultAreaId: item.defaultAreaId || defaultAreaId || '',
+        unitConversions: item.unitConversions || [],
       };
     }
     return {
@@ -63,6 +71,7 @@ export function ItemForm({
       keepInStock: false,
       keepInStockThreshold: 1,
       defaultAreaId: defaultAreaId || areas[0]?.id || '',
+      unitConversions: [],
     };
   };
 
@@ -82,6 +91,8 @@ export function ItemForm({
   useEffect(() => {
     if (open) {
       reset(getDefaultValues(item));
+      // Open advanced settings if there are conversions
+      setAdvancedOpen((item?.unitConversions?.length ?? 0) > 0);
     }
   }, [item, open, reset, defaultAreaId, areas]);
 
@@ -89,6 +100,7 @@ export function ItemForm({
   const unit = watch('unit');
   const keepInStock = watch('keepInStock');
   const areaId = watch('defaultAreaId');
+  const unitConversions = watch('unitConversions') || [];
 
   // Memoize combobox options
   const categoryComboboxOptions: ComboboxOption[] = useMemo(
@@ -231,6 +243,29 @@ export function ItemForm({
               </div>
             )}
           </div>
+
+          <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+            <CollapsibleTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full justify-between px-4"
+              >
+                Advanced Settings
+                {advancedOpen ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronRight className="h-4 w-4" />
+                )}
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="border rounded-lg p-4 mt-2">
+              <UnitConversionsEditor
+                conversions={unitConversions as UnitConversion[]}
+                onChange={(newConversions) => setValue('unitConversions', newConversions)}
+              />
+            </CollapsibleContent>
+          </Collapsible>
 
           <DialogFooter className="flex justify-between">
             {isEditing && onDelete && (

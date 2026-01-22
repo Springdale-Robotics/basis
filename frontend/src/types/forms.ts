@@ -102,6 +102,13 @@ export const storageAreaFormSchema = z.object({
 });
 export type StorageAreaFormData = z.infer<typeof storageAreaFormSchema>;
 
+export const unitConversionSchema = z.object({
+  fromUnit: z.string().min(1),
+  toUnit: z.string().min(1),
+  factor: z.number().positive(),
+});
+export type UnitConversionFormData = z.infer<typeof unitConversionSchema>;
+
 export const inventoryItemFormSchema = z.object({
   name: z.string().min(1, 'Name is required').max(255),
   category: z.string().optional(),
@@ -113,6 +120,7 @@ export const inventoryItemFormSchema = z.object({
   keepInStockThreshold: z.number().min(0).optional(),
   minStockLevel: z.number().min(0).optional(),
   defaultAreaId: z.string().optional(),
+  unitConversions: z.array(unitConversionSchema).optional(),
 });
 export const inventoryItemSchema = inventoryItemFormSchema;
 export type InventoryItemFormData = z.infer<typeof inventoryItemFormSchema>;

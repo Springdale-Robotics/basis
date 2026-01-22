@@ -53,6 +53,12 @@ export interface BatchUpdateItemsRequest {
   };
 }
 
+export interface AddUnitConversionRequest {
+  fromUnit: string;
+  toUnit: string;
+  factor: number;
+}
+
 export interface GetItemsParams {
   search?: string;
   category?: string;
@@ -139,6 +145,9 @@ export const inventoryApi = {
 
   batchUpdateItems: (data: BatchUpdateItemsRequest) =>
     apiPost<{ items: InventoryItem[] }>('/inventory/items/batch-update', data),
+
+  addUnitConversion: (itemId: string, data: AddUnitConversionRequest) =>
+    apiPatch<{ item: InventoryItem }>(`/inventory/items/${itemId}/conversions`, data),
 
   // Stock
   getStock: () =>

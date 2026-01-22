@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, GripVertical, Loader2, Link2, Check, Search, Package, Tag, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,11 +28,14 @@ import {
 } from '@/components/ui/popover';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { recipeSchema, type RecipeFormData } from '@/types/forms';
 import { inventoryApi } from '@/api/inventory';
 import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
-import type { Recipe, InventoryItem } from '@/types/models';
+import type { Recipe, InventoryItem, UnitConversion } from '@/types/models';
+import { unitOptions } from '@/lib/inventory-constants';
+import { UnitConversionPromptDialog } from '@/components/inventory/UnitConversionPromptDialog';
 
 interface RecipeFormProps {
   open: boolean;
@@ -243,6 +246,30 @@ interface TagInputProps {
   onRemoveTag: (tag: string) => void;
 }
 
+interface UnitComboboxProps {
+  value: string;
+  onChange: (value: string) => void;
+}
+
+function UnitCombobox({ value, onChange }: UnitComboboxProps) {
+  const unitComboboxOptions: ComboboxOption[] = useMemo(
+    () => unitOptions.map((u) => ({ value: u, label: u })),
+    []
+  );
+
+  return (
+    <Combobox
+      options={unitComboboxOptions}
+      value={value}
+      onValueChange={onChange}
+      placeholder="Unit"
+      searchPlaceholder="Search units..."
+      emptyText="No unit found"
+      className="h-10"
+    />
+  );
+}
+
 function TagInput({ tags, onAddTag, onRemoveTag }: TagInputProps) {
   const [inputValue, setInputValue] = useState('');
   const [open, setOpen] = useState(false);
@@ -403,6 +430,15 @@ function TagInput({ tags, onAddTag, onRemoveTag }: TagInputProps) {
   );
 }
 
+interface PendingConversion {
+  ingredientIndex: number;
+  ingredientName: string;
+  itemId: string;
+  itemName: string;
+  fromUnit: string;
+  toUnit: string;
+}
+
 export function RecipeForm({
   open,
   onOpenChange,
@@ -411,8 +447,19 @@ export function RecipeForm({
   onDelete,
   isSubmitting,
 }: RecipeFormProps) {
+  const queryClient = useQueryClient();
   const isEditing = !!recipe;
   const [activeTab, setActiveTab] = useState('details');
+  const [pendingConversions, setPendingConversions] = useState<PendingConversion[]>([]);
+  const [currentConversionIndex, setCurrentConversionIndex] = useState(0);
+  const [pendingFormData, setPendingFormData] = useState<RecipeFormData | null>(null);
+
+  // Fetch inventory items to check for unit conversions
+  const { data: itemsData } = useQuery({
+    queryKey: ['inventory-items'],
+    queryFn: () => inventoryApi.getItems(),
+    staleTime: 60000,
+  });
 
   const {
     register,
@@ -499,8 +546,99 @@ export function RecipeForm({
     }
   }, [open, recipe, reset]);
 
+  const items = itemsData?.items || [];
+
+  // Check if a unit conversion exists for an item
+  const hasConversion = (item: InventoryItem, fromUnit: string, toUnit: string): boolean => {
+    const normalizeUnit = (u: string) => u.toLowerCase().trim();
+    const normFrom = normalizeUnit(fromUnit);
+    const normTo = normalizeUnit(toUnit);
+
+    if (normFrom === normTo) return true;
+
+    const conversions = (item.unitConversions || []) as UnitConversion[];
+    return conversions.some(c =>
+      (normalizeUnit(c.fromUnit) === normFrom && normalizeUnit(c.toUnit) === normTo) ||
+      (normalizeUnit(c.fromUnit) === normTo && normalizeUnit(c.toUnit) === normFrom)
+    );
+  };
+
   const handleFormSubmit = (data: RecipeFormData) => {
-    onSubmit(data);
+    // Check for ingredients that need unit conversions
+    const neededConversions: PendingConversion[] = [];
+
+    for (let i = 0; i < data.ingredients.length; i++) {
+      const ing = data.ingredients[i];
+      if (ing.inventoryItemId && ing.unit) {
+        const item = items.find(it => it.id === ing.inventoryItemId);
+        if (item && item.defaultUnit && ing.unit !== item.defaultUnit) {
+          // Check if conversion already exists
+          if (!hasConversion(item, ing.unit, item.defaultUnit)) {
+            neededConversions.push({
+              ingredientIndex: i,
+              ingredientName: ing.name,
+              itemId: item.id,
+              itemName: item.name,
+              fromUnit: ing.unit,
+              toUnit: item.defaultUnit,
+            });
+          }
+        }
+      }
+    }
+
+    if (neededConversions.length > 0) {
+      // Store form data and show conversion prompts
+      setPendingFormData(data);
+      setPendingConversions(neededConversions);
+      setCurrentConversionIndex(0);
+    } else {
+      // No conversions needed, submit directly
+      onSubmit(data);
+    }
+  };
+
+  const handleConversionConfirm = async (factor: number, saveForFuture: boolean) => {
+    const currentConversion = pendingConversions[currentConversionIndex];
+
+    if (saveForFuture && currentConversion) {
+      // Save the conversion to the inventory item
+      await inventoryApi.addUnitConversion(currentConversion.itemId, {
+        fromUnit: currentConversion.fromUnit,
+        toUnit: currentConversion.toUnit,
+        factor,
+      });
+      // Invalidate inventory queries
+      queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
+    }
+
+    // Move to next conversion or submit
+    if (currentConversionIndex < pendingConversions.length - 1) {
+      setCurrentConversionIndex(currentConversionIndex + 1);
+    } else {
+      // All conversions handled, submit the form
+      if (pendingFormData) {
+        onSubmit(pendingFormData);
+      }
+      setPendingConversions([]);
+      setPendingFormData(null);
+      setCurrentConversionIndex(0);
+    }
+  };
+
+  const handleConversionSkip = () => {
+    // Move to next conversion or submit
+    if (currentConversionIndex < pendingConversions.length - 1) {
+      setCurrentConversionIndex(currentConversionIndex + 1);
+    } else {
+      // All conversions handled (skipped), submit the form
+      if (pendingFormData) {
+        onSubmit(pendingFormData);
+      }
+      setPendingConversions([]);
+      setPendingFormData(null);
+      setCurrentConversionIndex(0);
+    }
   };
 
   const handleFormError = (errors: any) => {
@@ -509,6 +647,9 @@ export function RecipeForm({
 
   const handleClose = () => {
     reset();
+    setPendingConversions([]);
+    setPendingFormData(null);
+    setCurrentConversionIndex(0);
     onOpenChange(false);
   };
 
@@ -648,26 +789,11 @@ export function RecipeForm({
                           })}
                         />
                       </div>
-                      <div className="w-20">
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <div>
-                                <Input
-                                  placeholder="Unit"
-                                  disabled={isLinked}
-                                  className={cn(isLinked && 'bg-muted cursor-not-allowed')}
-                                  {...register(`ingredients.${index}.unit` as const)}
-                                />
-                              </div>
-                            </TooltipTrigger>
-                            {isLinked && (
-                              <TooltipContent>
-                                <p>Unit is set by the linked inventory item</p>
-                              </TooltipContent>
-                            )}
-                          </Tooltip>
-                        </TooltipProvider>
+                      <div className="w-24">
+                        <UnitCombobox
+                          value={watch(`ingredients.${index}.unit`) || ''}
+                          onChange={(value) => setValue(`ingredients.${index}.unit`, value)}
+                        />
                       </div>
                       <IngredientNameInput
                         value={ingredientName || ''}
@@ -762,6 +888,25 @@ export function RecipeForm({
           </DialogFooter>
         </form>
       </DialogContent>
+
+      {/* Unit Conversion Prompt Dialog */}
+      {pendingConversions.length > 0 && pendingConversions[currentConversionIndex] && (
+        <UnitConversionPromptDialog
+          open={true}
+          onOpenChange={(open) => {
+            if (!open) {
+              setPendingConversions([]);
+              setPendingFormData(null);
+              setCurrentConversionIndex(0);
+            }
+          }}
+          itemName={pendingConversions[currentConversionIndex].itemName}
+          fromUnit={pendingConversions[currentConversionIndex].fromUnit}
+          toUnit={pendingConversions[currentConversionIndex].toUnit}
+          onConfirm={handleConversionConfirm}
+          onSkip={handleConversionSkip}
+        />
+      )}
     </Dialog>
   );
 }

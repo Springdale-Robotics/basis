@@ -273,6 +273,12 @@ export interface StorageArea {
   updatedAt: string;
 }
 
+export interface UnitConversion {
+  fromUnit: string;
+  toUnit: string;
+  factor: number;
+}
+
 export interface InventoryItem {
   id: string;
   householdId: string;
@@ -287,6 +293,7 @@ export interface InventoryItem {
   keepInStockThreshold?: number;
   minStockLevel?: number;
   defaultAreaId?: string;
+  unitConversions?: UnitConversion[];
   stockEntries?: StockEntry[];
   createdAt: string;
   updatedAt: string;

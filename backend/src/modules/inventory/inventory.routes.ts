@@ -14,6 +14,12 @@ const createAreaSchema = z.object({
   sortOrder: z.number().int().default(0),
 });
 
+const unitConversionSchema = z.object({
+  fromUnit: z.string().min(1).max(50),
+  toUnit: z.string().min(1).max(50),
+  factor: z.number().positive(),
+});
+
 const createItemSchema = z.object({
   name: z.string().min(1).max(255),
   barcode: z.string().max(255).optional(),
@@ -23,6 +29,7 @@ const createItemSchema = z.object({
   keepInStock: z.boolean().default(false),
   minStockQuantity: z.number().positive().optional(),
   defaultAreaId: z.string().uuid().optional(),
+  unitConversions: z.array(unitConversionSchema).optional(),
 });
 
 const addStockSchema = z.object({
@@ -205,6 +212,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           keepInStock: input.keepInStock,
           minStockQuantity: input.minStockQuantity?.toString(),
           defaultAreaId: input.defaultAreaId,
+          unitConversions: input.unitConversions || [],
         })
         .returning();
 
@@ -235,9 +243,21 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     async (request) => {
       const input = createItemSchema.partial().parse(request.body);
 
+      // Build update data, handling minStockQuantity separately
+      const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      if (input.name !== undefined) updateData.name = input.name;
+      if (input.barcode !== undefined) updateData.barcode = input.barcode;
+      if (input.defaultUnit !== undefined) updateData.defaultUnit = input.defaultUnit;
+      if (input.defaultShelfLifeDays !== undefined) updateData.defaultShelfLifeDays = input.defaultShelfLifeDays;
+      if (input.category !== undefined) updateData.category = input.category;
+      if (input.keepInStock !== undefined) updateData.keepInStock = input.keepInStock;
+      if (input.minStockQuantity !== undefined) updateData.minStockQuantity = input.minStockQuantity.toString();
+      if (input.defaultAreaId !== undefined) updateData.defaultAreaId = input.defaultAreaId;
+      if (input.unitConversions !== undefined) updateData.unitConversions = input.unitConversions;
+
       const [updated] = await db
         .update(inventoryItems)
-        .set({ ...input, updatedAt: new Date() })
+        .set(updateData)
         .where(
           and(
             eq(inventoryItems.id, request.params.id),
@@ -247,6 +267,50 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         .returning();
 
       if (!updated) throw Errors.notFound('Item');
+
+      return { success: true, data: { item: updated } };
+    }
+  );
+
+  // Add a single unit conversion to an item
+  app.patch<{ Params: { id: string } }>(
+    '/items/:id/conversions',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = unitConversionSchema.parse(request.body);
+
+      // Get the current item
+      const item = await db.query.inventoryItems.findFirst({
+        where: and(
+          eq(inventoryItems.id, request.params.id),
+          eq(inventoryItems.householdId, request.user!.householdId)
+        ),
+      });
+
+      if (!item) throw Errors.notFound('Item');
+
+      // Check if this conversion already exists (same fromUnit and toUnit)
+      const existingConversions = (item.unitConversions || []) as { fromUnit: string; toUnit: string; factor: number }[];
+      const existingIndex = existingConversions.findIndex(
+        c => c.fromUnit.toLowerCase() === input.fromUnit.toLowerCase() &&
+             c.toUnit.toLowerCase() === input.toUnit.toLowerCase()
+      );
+
+      let updatedConversions;
+      if (existingIndex >= 0) {
+        // Update existing conversion
+        updatedConversions = [...existingConversions];
+        updatedConversions[existingIndex] = input;
+      } else {
+        // Add new conversion
+        updatedConversions = [...existingConversions, input];
+      }
+
+      const [updated] = await db
+        .update(inventoryItems)
+        .set({ unitConversions: updatedConversions, updatedAt: new Date() })
+        .where(eq(inventoryItems.id, request.params.id))
+        .returning();
 
       return { success: true, data: { item: updated } };
     }

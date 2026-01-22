@@ -107,6 +107,10 @@ export interface MatchSuggestion {
     toUnit: string;
     factor: number;
   };
+  needsConversion?: {
+    fromUnit: string;
+    toUnit: string;
+  };
 }
 
 /**
@@ -318,13 +322,24 @@ export async function matchIngredients(
 
         // Check for unit conversion if units differ
         if (parsed.unit && item.defaultUnit) {
-          const conversion = findUnitConversion(
-            parsed.unit,
-            item.defaultUnit,
-            (item.unitConversions as UnitConversion[]) || []
-          );
-          if (conversion) {
-            suggestion.unitConversion = conversion;
+          const normFrom = normalizeUnit(parsed.unit);
+          const normTo = normalizeUnit(item.defaultUnit);
+
+          if (normFrom !== normTo) {
+            const conversion = findUnitConversion(
+              parsed.unit,
+              item.defaultUnit,
+              (item.unitConversions as UnitConversion[]) || []
+            );
+            if (conversion) {
+              suggestion.unitConversion = conversion;
+            } else {
+              // No conversion found - flag that one is needed
+              suggestion.needsConversion = {
+                fromUnit: parsed.unit,
+                toUnit: item.defaultUnit,
+              };
+            }
           }
         }
 
@@ -393,13 +408,24 @@ export async function matchSingleIngredient(
       };
 
       if (unit && item.defaultUnit) {
-        const conversion = findUnitConversion(
-          unit,
-          item.defaultUnit,
-          (item.unitConversions as UnitConversion[]) || []
-        );
-        if (conversion) {
-          suggestion.unitConversion = conversion;
+        const normFrom = normalizeUnit(unit);
+        const normTo = normalizeUnit(item.defaultUnit);
+
+        if (normFrom !== normTo) {
+          const conversion = findUnitConversion(
+            unit,
+            item.defaultUnit,
+            (item.unitConversions as UnitConversion[]) || []
+          );
+          if (conversion) {
+            suggestion.unitConversion = conversion;
+          } else {
+            // No conversion found - flag that one is needed
+            suggestion.needsConversion = {
+              fromUnit: unit,
+              toUnit: item.defaultUnit,
+            };
+          }
         }
       }
 

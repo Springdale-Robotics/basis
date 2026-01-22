@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Check, X, ChevronDown, Plus, Loader2, Link2, Unlink } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -20,8 +20,9 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { inventoryApi } from '@/api/inventory';
-import { recipesApi, type IngredientMatch } from '@/api/recipes';
+import { recipesApi, type IngredientMatch, type MatchSuggestion } from '@/api/recipes';
 import { cn } from '@/lib/utils';
+import { UnitConversionPromptDialog } from '@/components/inventory/UnitConversionPromptDialog';
 
 interface IngredientMatchRowProps {
   match: IngredientMatch;
@@ -30,11 +31,18 @@ interface IngredientMatchRowProps {
 }
 
 export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientMatchRowProps) {
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [newItemName, setNewItemName] = useState('');
   const [newItemUnit, setNewItemUnit] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [conversionPrompt, setConversionPrompt] = useState<{
+    itemId: string;
+    itemName: string;
+    fromUnit: string;
+    toUnit: string;
+  } | null>(null);
 
   // Fetch inventory items for selection
   const { data: itemsData } = useQuery({
@@ -53,9 +61,48 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
   const items = itemsData?.items || [];
   const suggestions = suggestionsData?.suggestions || match.suggestions || [];
 
-  const handleSelect = (itemId: string, itemName: string) => {
+  const handleSelect = (itemId: string, itemName: string, suggestion?: MatchSuggestion) => {
+    // Check if this selection needs a unit conversion
+    if (suggestion?.needsConversion) {
+      setConversionPrompt({
+        itemId,
+        itemName,
+        fromUnit: suggestion.needsConversion.fromUnit,
+        toUnit: suggestion.needsConversion.toUnit,
+      });
+      setOpen(false);
+      return;
+    }
+
     onUpdate(match.parsedName, itemId, itemName);
     setOpen(false);
+  };
+
+  const handleConversionConfirm = async (factor: number, saveForFuture: boolean) => {
+    if (!conversionPrompt) return;
+
+    // Save conversion to item if requested
+    if (saveForFuture) {
+      await inventoryApi.addUnitConversion(conversionPrompt.itemId, {
+        fromUnit: conversionPrompt.fromUnit,
+        toUnit: conversionPrompt.toUnit,
+        factor,
+      });
+      // Invalidate inventory queries to reflect the update
+      queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
+      queryClient.invalidateQueries({ queryKey: ['ingredient-suggestions'] });
+    }
+
+    // Complete the match
+    onUpdate(match.parsedName, conversionPrompt.itemId, conversionPrompt.itemName);
+    setConversionPrompt(null);
+  };
+
+  const handleConversionSkip = () => {
+    if (!conversionPrompt) return;
+    // Complete the match without conversion
+    onUpdate(match.parsedName, conversionPrompt.itemId, conversionPrompt.itemName);
+    setConversionPrompt(null);
   };
 
   const handleUnlink = () => {
@@ -138,7 +185,7 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
                         {suggestions.slice(0, 5).map((suggestion) => (
                           <CommandItem
                             key={suggestion.itemId}
-                            onSelect={() => handleSelect(suggestion.itemId, suggestion.name)}
+                            onSelect={() => handleSelect(suggestion.itemId, suggestion.name, suggestion)}
                           >
                             <Check
                               className={cn(
@@ -147,6 +194,11 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
                               )}
                             />
                             <span className="flex-1">{suggestion.name}</span>
+                            {suggestion.needsConversion && (
+                              <Badge variant="outline" className="text-xs ml-1 text-orange-600">
+                                needs conversion
+                              </Badge>
+                            )}
                             <Badge variant="secondary" className="text-xs ml-2">
                               {Math.round(suggestion.confidence * 100)}%
                             </Badge>
@@ -158,23 +210,42 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
                     <CommandSeparator />
 
                     <CommandGroup heading="All Items">
-                      {items.map((item) => (
-                        <CommandItem
-                          key={item.id}
-                          onSelect={() => handleSelect(item.id, item.name)}
-                        >
-                          <Check
-                            className={cn(
-                              'mr-2 h-4 w-4',
-                              match.matchedItemId === item.id ? 'opacity-100' : 'opacity-0'
+                      {items.map((item) => {
+                        // Check if this item would need conversion
+                        const needsConversion = match.parsedUnit && item.defaultUnit &&
+                          match.parsedUnit.toLowerCase() !== item.defaultUnit.toLowerCase();
+
+                        return (
+                          <CommandItem
+                            key={item.id}
+                            onSelect={() => handleSelect(item.id, item.name, needsConversion ? {
+                              itemId: item.id,
+                              name: item.name,
+                              confidence: 0,
+                              needsConversion: {
+                                fromUnit: match.parsedUnit!,
+                                toUnit: item.defaultUnit,
+                              }
+                            } : undefined)}
+                          >
+                            <Check
+                              className={cn(
+                                'mr-2 h-4 w-4',
+                                match.matchedItemId === item.id ? 'opacity-100' : 'opacity-0'
+                              )}
+                            />
+                            <span className="flex-1">{item.name}</span>
+                            {needsConversion && (
+                              <Badge variant="outline" className="text-xs ml-1 text-orange-600">
+                                needs conversion
+                              </Badge>
                             )}
-                          />
-                          <span className="flex-1">{item.name}</span>
-                          {item.defaultUnit && (
-                            <span className="text-xs text-muted-foreground">{item.defaultUnit}</span>
-                          )}
-                        </CommandItem>
-                      ))}
+                            {item.defaultUnit && (
+                              <span className="text-xs text-muted-foreground ml-1">{item.defaultUnit}</span>
+                            )}
+                          </CommandItem>
+                        );
+                      })}
                     </CommandGroup>
 
                     <CommandSeparator />
@@ -235,6 +306,21 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
           </Popover>
         )}
       </div>
+
+      {/* Unit Conversion Prompt Dialog */}
+      {conversionPrompt && (
+        <UnitConversionPromptDialog
+          open={!!conversionPrompt}
+          onOpenChange={(open) => {
+            if (!open) setConversionPrompt(null);
+          }}
+          itemName={conversionPrompt.itemName}
+          fromUnit={conversionPrompt.fromUnit}
+          toUnit={conversionPrompt.toUnit}
+          onConfirm={handleConversionConfirm}
+          onSkip={handleConversionSkip}
+        />
+      )}
     </div>
   );
 }
