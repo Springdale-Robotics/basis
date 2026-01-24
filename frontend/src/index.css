@@ -4,51 +4,107 @@
 
 @layer base {
   :root {
-    /* Skylight Calendar inspired theme - warm, family-friendly */
-    --background: 50 100% 98%; /* Cream #FFFEF9 */
-    --foreground: 0 0% 27%; /* Dark gray #444444 */
-    --card: 0 0% 100%; /* White for cards */
-    --card-foreground: 0 0% 27%;
+    /* Lavender theme - soft purple with indigo accents */
+    --background: 260 40% 98%;
+    --foreground: 255 20% 15%;
+    --card: 0 0% 100%;
+    --card-foreground: 255 20% 15%;
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 27%;
-    --primary: 9 91% 64%; /* Coral/Orange #f66951 */
+    --popover-foreground: 255 20% 15%;
+    --primary: 239 84% 67%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 35 100% 96%; /* Light warm beige */
-    --secondary-foreground: 0 0% 27%;
-    --muted: 35 30% 94%; /* Warm gray */
-    --muted-foreground: 0 0% 45%;
-    --accent: 9 91% 64%; /* Same coral for accent */
+    --secondary: 260 30% 96%;
+    --secondary-foreground: 255 20% 15%;
+    --muted: 260 20% 94%;
+    --muted-foreground: 255 10% 45%;
+    --accent: 262 83% 58%;
     --accent-foreground: 0 0% 100%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-    --border: 35 20% 88%;
-    --input: 35 20% 88%;
-    --ring: 9 91% 64%;
-    --radius: 0.75rem; /* More rounded for friendly feel */
+    --border: 260 20% 90%;
+    --input: 260 20% 90%;
+    --ring: 239 84% 67%;
+    --radius: 0.75rem;
     --font-sans: 'Inter', system-ui, sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+    /* Semantic - Success */
+    --success: 142 76% 36%;
+    --success-foreground: 0 0% 100%;
+    --success-muted: 142 76% 95%;
+    --success-muted-foreground: 142 76% 25%;
+
+    /* Semantic - Warning */
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 0%;
+    --warning-muted: 38 92% 95%;
+    --warning-muted-foreground: 38 92% 30%;
+
+    /* Semantic - Error */
+    --error: 0 84% 60%;
+    --error-foreground: 0 0% 100%;
+    --error-muted: 0 84% 95%;
+    --error-muted-foreground: 0 84% 30%;
+
+    /* Semantic - Info */
+    --info: 217 91% 60%;
+    --info-foreground: 0 0% 100%;
+    --info-muted: 217 91% 95%;
+    --info-muted-foreground: 217 91% 30%;
+
+    /* Overlay */
+    --overlay: 0 0% 0%;
+    --overlay-opacity: 0.8;
   }
 
   .dark {
-    --background: 0 0% 9%; /* Very dark gray */
-    --foreground: 0 0% 95%;
-    --card: 0 0% 12%;
-    --card-foreground: 0 0% 95%;
-    --popover: 0 0% 12%;
-    --popover-foreground: 0 0% 95%;
-    --primary: 9 91% 64%; /* Keep coral in dark mode */
+    /* Lavender dark - subtle purple tint */
+    --background: 255 8% 9%;
+    --foreground: 255 5% 95%;
+    --card: 255 8% 12%;
+    --card-foreground: 255 5% 95%;
+    --popover: 255 8% 12%;
+    --popover-foreground: 255 5% 95%;
+    --primary: 239 84% 67%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 18%;
-    --secondary-foreground: 0 0% 95%;
-    --muted: 0 0% 18%;
-    --muted-foreground: 0 0% 60%;
-    --accent: 9 91% 64%;
+    --secondary: 255 6% 18%;
+    --secondary-foreground: 255 5% 95%;
+    --muted: 255 6% 18%;
+    --muted-foreground: 255 5% 60%;
+    --accent: 262 83% 58%;
     --accent-foreground: 0 0% 100%;
     --destructive: 0 62% 50%;
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 20%;
-    --input: 0 0% 20%;
-    --ring: 9 91% 64%;
+    --border: 255 6% 20%;
+    --input: 255 6% 20%;
+    --ring: 239 84% 67%;
+
+    /* Semantic - Success (adjusted for dark) */
+    --success: 142 76% 45%;
+    --success-foreground: 0 0% 100%;
+    --success-muted: 142 40% 15%;
+    --success-muted-foreground: 142 76% 65%;
+
+    /* Semantic - Warning */
+    --warning: 38 92% 55%;
+    --warning-foreground: 0 0% 0%;
+    --warning-muted: 38 40% 15%;
+    --warning-muted-foreground: 38 92% 70%;
+
+    /* Semantic - Error */
+    --error: 0 72% 55%;
+    --error-foreground: 0 0% 100%;
+    --error-muted: 0 40% 15%;
+    --error-muted-foreground: 0 72% 70%;
+
+    /* Semantic - Info */
+    --info: 217 91% 65%;
+    --info-foreground: 0 0% 100%;
+    --info-muted: 217 40% 15%;
+    --info-muted-foreground: 217 91% 75%;
+
+    /* Overlay */
+    --overlay-opacity: 0.9;
   }
 }
 

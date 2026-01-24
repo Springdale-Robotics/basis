@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
+import { EditGate } from '@/components/permissions';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -29,6 +30,8 @@ import { BulkAddDialog } from '@/components/inventory/BulkAddDialog';
 import { ManageStockDialog } from '@/components/inventory/ManageStockDialog';
 import { LeftoverCard } from '@/components/inventory/LeftoverCard';
 import { LeftoverForm } from '@/components/inventory/LeftoverForm';
+import { FixIncompleteItemDialog } from '@/components/inventory/FixIncompleteItemDialog';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { inventoryApi } from '@/api/inventory';
 import { formatDate, cn } from '@/lib/utils';
@@ -85,6 +88,17 @@ function getExpiryBadgeVariant(days: number): 'destructive' | 'secondary' | 'out
   return 'secondary';
 }
 
+function isItemIncomplete(item: InventoryItem): boolean {
+  // Check required data fields (excludes icon and barcode)
+  if (!item.category) return true;
+  if (!item.defaultUnit) return true;
+  if (!item.defaultAreaId) return true;
+  // Check minStockQuantity (what API returns) or legacy field names
+  const minStock = item.minStockQuantity ?? item.minStockLevel ?? item.keepInStockThreshold;
+  if (item.keepInStock && minStock == null) return true;
+  return false;
+}
+
 export function InventoryPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
@@ -108,6 +122,7 @@ export function InventoryPage() {
   const [manageStockItem, setManageStockItem] = useState<InventoryItem | null>(null);
   const [leftoverFormOpen, setLeftoverFormOpen] = useState(false);
   const [editingLeftover, setEditingLeftover] = useState<Leftover | null>(null);
+  const [fixIncompleteDialogOpen, setFixIncompleteDialogOpen] = useState(false);
 
   const { data: areas, isLoading: areasLoading } = useQuery({
     queryKey: ['inventory', 'areas'],
@@ -213,6 +228,12 @@ export function InventoryPage() {
     }
     return lookup;
   }, [areas]);
+
+  // Calculate incomplete items
+  const incompleteItems = useMemo(
+    () => (items?.items || []).filter(isItemIncomplete),
+    [items]
+  );
 
   // Combobox options for filters
   const categoryFilterOptions: ComboboxOption[] = useMemo(
@@ -524,6 +545,19 @@ export function InventoryPage() {
       queryClient.invalidateQueries({ queryKey: ['inventory', 'leftovers'] });
     },
   });
+
+  const handleFixIncompleteItem = async (
+    itemId: string,
+    updates: {
+      category?: string;
+      defaultUnit?: string;
+      defaultAreaId?: string;
+      minStockQuantity?: number;
+    }
+  ) => {
+    await inventoryApi.updateItem(itemId, updates);
+    queryClient.invalidateQueries({ queryKey: ['inventory'] });
+  };
 
   const handleSelectItem = (itemId: string, checked: boolean) => {
     setSelectedItems((prev) => {
@@ -1057,63 +1091,65 @@ export function InventoryPage() {
         title="Inventory"
         description="Manage your household inventory"
         actions={
-          <div className="flex gap-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline">
-                  <Settings className="mr-2 h-4 w-4" />
-                  Areas
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuItem
-                  onClick={() => {
-                    setEditingArea(null);
-                    setAreaFormOpen(true);
-                  }}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add New Area
-                </DropdownMenuItem>
-                {areas?.areas && areas.areas.length > 0 && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuLabel>Edit Area</DropdownMenuLabel>
-                    {areas.areas.map((area) => (
-                      <DropdownMenuItem
-                        key={area.id}
-                        onClick={() => {
-                          setEditingArea(area);
-                          setAreaFormOpen(true);
-                        }}
-                      >
-                        <span className="mr-2">{area.icon || '📦'}</span>
-                        {area.name}
-                      </DropdownMenuItem>
-                    ))}
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button onClick={() => setItemFormOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Item
-            </Button>
-          </div>
+          <EditGate feature="inventory">
+            <div className="flex gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline">
+                    <Settings className="mr-2 h-4 w-4" />
+                    Areas
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setEditingArea(null);
+                      setAreaFormOpen(true);
+                    }}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add New Area
+                  </DropdownMenuItem>
+                  {areas?.areas && areas.areas.length > 0 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel>Edit Area</DropdownMenuLabel>
+                      {areas.areas.map((area) => (
+                        <DropdownMenuItem
+                          key={area.id}
+                          onClick={() => {
+                            setEditingArea(area);
+                            setAreaFormOpen(true);
+                          }}
+                        >
+                          <span className="mr-2">{area.icon || '📦'}</span>
+                          {area.name}
+                        </DropdownMenuItem>
+                      ))}
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button onClick={() => setItemFormOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Item
+              </Button>
+            </div>
+          </EditGate>
         }
       />
 
       {/* Alerts */}
       <div className="mb-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {expiringItems?.expiring && expiringItems.expiring.length > 0 && (
-          <Card className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950">
+          <Card className="border-warning/30 bg-warning-muted">
             <CardContent className="flex items-center gap-3 p-4">
-              <AlertTriangle className="h-5 w-5 text-amber-600" />
+              <AlertTriangle className="h-5 w-5 text-warning" />
               <div>
-                <p className="font-medium text-amber-900 dark:text-amber-100">
+                <p className="font-medium text-warning-muted-foreground">
                   {expiringItems.expiring.length} items expiring soon
                 </p>
-                <p className="text-sm text-amber-700 dark:text-amber-300">
+                <p className="text-sm text-warning-muted-foreground/80">
                   Check your inventory
                 </p>
               </div>
@@ -1121,14 +1157,14 @@ export function InventoryPage() {
           </Card>
         )}
         {expiringLeftoversData?.leftovers && expiringLeftoversData.leftovers.length > 0 && (
-          <Card className="border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-950">
+          <Card className="border-error/30 bg-error-muted">
             <CardContent className="flex items-center gap-3 p-4">
-              <Soup className="h-5 w-5 text-orange-600" />
+              <Soup className="h-5 w-5 text-error" />
               <div>
-                <p className="font-medium text-orange-900 dark:text-orange-100">
+                <p className="font-medium text-error-muted-foreground">
                   {expiringLeftoversData.leftovers.length} leftover{expiringLeftoversData.leftovers.length !== 1 ? 's' : ''} expiring soon
                 </p>
-                <p className="text-sm text-orange-700 dark:text-orange-300">
+                <p className="text-sm text-error-muted-foreground/80">
                   Finish them before they go bad
                 </p>
               </div>
@@ -1136,14 +1172,14 @@ export function InventoryPage() {
           </Card>
         )}
         {lowStockItems?.lowStock && lowStockItems.lowStock.length > 0 && (
-          <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950">
+          <Card className="border-info/30 bg-info-muted">
             <CardContent className="flex items-center gap-3 p-4">
-              <RefreshCcw className="h-5 w-5 text-blue-600" />
+              <RefreshCcw className="h-5 w-5 text-info" />
               <div>
-                <p className="font-medium text-blue-900 dark:text-blue-100">
+                <p className="font-medium text-info-muted-foreground">
                   {lowStockItems.lowStock.length} items running low
                 </p>
-                <p className="text-sm text-blue-700 dark:text-blue-300">
+                <p className="text-sm text-info-muted-foreground/80">
                   Consider adding to shopping list
                 </p>
               </div>
@@ -1151,6 +1187,21 @@ export function InventoryPage() {
           </Card>
         )}
       </div>
+
+      {/* Incomplete Items Alert */}
+      {incompleteItems.length > 0 && (
+        <Alert className="mb-6">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription className="flex items-center justify-between">
+            <span>
+              {incompleteItems.length} item{incompleteItems.length !== 1 ? 's' : ''} need attention (missing category, unit, or storage area)
+            </span>
+            <Button size="sm" onClick={() => setFixIncompleteDialogOpen(true)}>
+              Fix Incomplete Items
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Tabs defaultValue="all">
         <TabsList className="mb-4">
@@ -1401,9 +1452,9 @@ export function InventoryPage() {
               {keepInStockItems.items.map((entry) => {
                 const statusColor =
                   entry.status === 'out'
-                    ? 'text-red-600 bg-red-50 border-red-200 dark:text-red-400 dark:bg-red-950 dark:border-red-900'
+                    ? 'text-error bg-error-muted border-error/30'
                     : entry.status === 'low'
-                    ? 'text-amber-600 bg-amber-50 border-amber-200 dark:text-amber-400 dark:bg-amber-950 dark:border-amber-900'
+                    ? 'text-warning bg-warning-muted border-warning/30'
                     : '';
                 return (
                   <Card key={entry.item.id} className={cn(statusColor)}>
@@ -1419,12 +1470,12 @@ export function InventoryPage() {
                           <Badge variant="destructive">Out of stock</Badge>
                         )}
                         {entry.status === 'low' && (
-                          <Badge variant="secondary" className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
+                          <Badge variant="secondary" className="bg-warning-muted text-warning-muted-foreground">
                             Low
                           </Badge>
                         )}
                         {entry.status === 'ok' && (
-                          <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                          <Badge variant="secondary" className="bg-success-muted text-success-muted-foreground">
                             Good
                           </Badge>
                         )}
@@ -1570,6 +1621,15 @@ export function InventoryPage() {
         }}
         onDelete={editingLeftover ? () => deleteLeftoverMutation.mutate(editingLeftover.id) : undefined}
         isSubmitting={createLeftoverMutation.isPending || updateLeftoverMutation.isPending}
+      />
+
+      {/* Fix Incomplete Items Dialog */}
+      <FixIncompleteItemDialog
+        open={fixIncompleteDialogOpen}
+        onOpenChange={setFixIncompleteDialogOpen}
+        incompleteItems={incompleteItems}
+        areas={areas?.areas || []}
+        onSave={handleFixIncompleteItem}
       />
     </div>
   );

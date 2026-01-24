@@ -61,8 +61,8 @@ export function RewardsPage() {
           <div className="mb-8 grid gap-4 md:grid-cols-3">
             <Card>
               <CardContent className="flex items-center gap-4 p-6">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-yellow-100 dark:bg-yellow-900">
-                  <Star className="h-6 w-6 text-yellow-600" />
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-warning-muted">
+                  <Star className="h-6 w-6 text-warning" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold">{userRewards?.points || 0}</p>
@@ -73,8 +73,8 @@ export function RewardsPage() {
 
             <Card>
               <CardContent className="flex items-center gap-4 p-6">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100 dark:bg-green-900">
-                  <TrendingUp className="h-6 w-6 text-green-600" />
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-success-muted">
+                  <TrendingUp className="h-6 w-6 text-success" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold">{userRewards?.lifetimePoints || 0}</p>
@@ -85,8 +85,8 @@ export function RewardsPage() {
 
             <Card>
               <CardContent className="flex items-center gap-4 p-6">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-purple-100 dark:bg-purple-900">
-                  <Trophy className="h-6 w-6 text-purple-600" />
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-info-muted">
+                  <Trophy className="h-6 w-6 text-info" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold">{earnedAchievements.length}</p>
@@ -102,7 +102,7 @@ export function RewardsPage() {
               <h2 className="mb-4 text-lg font-semibold">Your Achievements</h2>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {earnedAchievements.map((achievement) => (
-                  <Card key={achievement.id} className="border-yellow-200 bg-yellow-50/50 dark:border-yellow-800 dark:bg-yellow-950/50">
+                  <Card key={achievement.id} className="border-warning/30 bg-warning-muted/50">
                     <CardContent className="p-4">
                       <div className="flex items-center gap-3">
                         <div className="text-3xl">{achievement.icon}</div>

@@ -67,8 +67,8 @@ export function ShoppingListItem({
             variant="secondary"
             className={cn(
               'text-xs',
-              item.source === 'low_stock' && 'bg-orange-100 text-orange-700',
-              item.source === 'meal_plan' && 'bg-blue-100 text-blue-700'
+              item.source === 'low_stock' && 'bg-warning-muted text-warning-muted-foreground',
+              item.source === 'meal_plan' && 'bg-info-muted text-info-muted-foreground'
             )}
           >
             {sourceLabel[item.source] || 'Manual'}

@@ -42,10 +42,10 @@ export function TaskCard({
   };
 
   const priorityColors = {
-    low: 'bg-gray-100 text-gray-700',
-    medium: 'bg-blue-100 text-blue-700',
-    high: 'bg-orange-100 text-orange-700',
-    urgent: 'bg-red-100 text-red-700',
+    low: 'bg-muted text-muted-foreground',
+    medium: 'bg-info-muted text-info-muted-foreground',
+    high: 'bg-warning-muted text-warning-muted-foreground',
+    urgent: 'bg-error-muted text-error-muted-foreground',
   };
 
   return (
@@ -57,7 +57,7 @@ export function TaskCard({
             size="icon"
             className={cn(
               'shrink-0 h-6 w-6 rounded-full',
-              isCompleted && 'bg-green-500 hover:bg-green-600'
+              isCompleted && 'bg-success hover:bg-success/90'
             )}
             onClick={onComplete}
           >
@@ -114,7 +114,7 @@ export function TaskCard({
                 </div>
               )}
               {task.points && task.points > 0 && (
-                <div className="flex items-center gap-1 text-xs text-yellow-600">
+                <div className="flex items-center gap-1 text-xs text-warning">
                   <Star className="h-3 w-3 fill-current" />
                   {task.points} pts
                 </div>

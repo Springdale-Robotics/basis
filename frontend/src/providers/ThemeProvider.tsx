@@ -1,6 +1,12 @@
-import { createContext, useContext, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
 import { useThemeStore } from '@/stores/themeStore';
-import { COLOR_PRESETS, type ColorPreset, type ColorPalette } from '@/lib/theme-presets';
+import {
+  THEME_PRESETS,
+  colorKeyToVar,
+  type ThemeColors,
+  type ThemePresetId,
+  type ColorPalette,
+} from '@/lib/theme-presets';
 
 type Theme = 'dark' | 'light' | 'system';
 
@@ -12,15 +18,22 @@ interface ThemeProviderProps {
 
 interface ThemeProviderState {
   theme: Theme;
-  colorPreset: ColorPreset;
+  presetId: ThemePresetId;
   colorPalette: ColorPalette;
   fontSize: number;
   borderRadius: number;
+  customColors: {
+    light?: Partial<ThemeColors>;
+    dark?: Partial<ThemeColors>;
+  };
+  resolvedTheme: 'light' | 'dark';
   setTheme: (theme: Theme) => void;
-  setColorPreset: (colorPreset: ColorPreset) => void;
+  setPresetId: (presetId: ThemePresetId) => void;
   setColorPalette: (colorPalette: ColorPalette) => void;
   setFontSize: (fontSize: number) => void;
   setBorderRadius: (borderRadius: number) => void;
+  setCustomColor: (mode: 'light' | 'dark', key: keyof ThemeColors, value: string) => void;
+  clearCustomColors: () => void;
   resetToDefaults: () => void;
 }
 
@@ -33,17 +46,30 @@ export function ThemeProvider({
 }: ThemeProviderProps) {
   const {
     theme,
-    colorPreset,
+    presetId,
     colorPalette,
     fontSize,
     borderRadius,
+    customColors,
     setTheme,
-    setColorPreset,
+    setPresetId,
     setColorPalette,
     setFontSize,
     setBorderRadius,
+    setCustomColor,
+    clearCustomColors,
     resetToDefaults,
   } = useThemeStore();
+
+  // Compute resolved theme
+  const resolvedTheme = useMemo(() => {
+    if (theme === 'system') {
+      return typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'dark'
+        : 'light';
+    }
+    return theme;
+  }, [theme]);
 
   // Apply dark/light theme class
   useEffect(() => {
@@ -77,27 +103,80 @@ export function ThemeProvider({
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, [theme]);
 
-  // Apply CSS custom properties for color preset, font size, and border radius
+  // Apply all theme colors as CSS variables
   useEffect(() => {
     const root = document.documentElement;
-    const preset = COLOR_PRESETS[colorPreset];
-    root.style.setProperty('--primary', preset.primary);
-    root.style.setProperty('--ring', preset.primary);
+    const preset = THEME_PRESETS[presetId];
+
+    if (!preset) return;
+
+    // Determine which color mode to use
+    const colorMode = theme === 'system'
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+      : theme;
+
+    // Get base colors from preset
+    const baseColors = preset[colorMode];
+
+    // Merge with custom colors
+    const mergedColors = {
+      ...baseColors,
+      ...(customColors[colorMode] || {}),
+    };
+
+    // Apply all colors as CSS variables
+    Object.entries(mergedColors).forEach(([key, value]) => {
+      const varName = colorKeyToVar(key);
+      root.style.setProperty(varName, value as string);
+    });
+
+    // Apply font size and border radius
     root.style.fontSize = `${fontSize}px`;
     root.style.setProperty('--radius', `${borderRadius}rem`);
-  }, [colorPreset, fontSize, borderRadius]);
+  }, [presetId, theme, customColors, fontSize, borderRadius]);
+
+  // Update colors when system theme changes
+  useEffect(() => {
+    if (theme !== 'system') return;
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = () => {
+      const root = document.documentElement;
+      const preset = THEME_PRESETS[presetId];
+      if (!preset) return;
+
+      const colorMode = mediaQuery.matches ? 'dark' : 'light';
+      const baseColors = preset[colorMode];
+      const mergedColors = {
+        ...baseColors,
+        ...(customColors[colorMode] || {}),
+      };
+
+      Object.entries(mergedColors).forEach(([key, value]) => {
+        const varName = colorKeyToVar(key);
+        root.style.setProperty(varName, value as string);
+      });
+    };
+
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, [theme, presetId, customColors]);
 
   const value = {
     theme,
-    colorPreset,
+    presetId,
     colorPalette,
     fontSize,
     borderRadius,
+    customColors,
+    resolvedTheme,
     setTheme,
-    setColorPreset,
+    setPresetId,
     setColorPalette,
     setFontSize,
     setBorderRadius,
+    setCustomColor,
+    clearCustomColors,
     resetToDefaults,
   };
 

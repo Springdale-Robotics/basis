@@ -89,7 +89,7 @@ export function LeftoverCard({
       className={cn(
         'transition-colors',
         isExpired && 'border-destructive bg-destructive/5',
-        isUrgent && !isExpired && 'border-amber-400 bg-amber-50 dark:bg-amber-950/20'
+        isUrgent && !isExpired && 'border-warning/50 bg-warning-muted'
       )}
     >
       <CardContent className="flex items-center justify-between p-4">
@@ -131,7 +131,7 @@ export function LeftoverCard({
             onClick={onFinish}
             className={cn(
               isExpired && 'bg-destructive hover:bg-destructive/90',
-              isUrgent && !isExpired && 'bg-amber-500 hover:bg-amber-600 text-white'
+              isUrgent && !isExpired && 'bg-warning hover:bg-warning/90 text-warning-foreground'
             )}
           >
             <Check className="h-4 w-4 mr-1" />

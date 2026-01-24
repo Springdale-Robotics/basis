@@ -45,10 +45,10 @@ interface EventDetailProps {
 }
 
 const rsvpStatusLabels: Record<RsvpStatus, { label: string; icon: React.ReactNode; color: string }> = {
-  pending: { label: 'Pending', icon: <HelpCircle className="h-3 w-3" />, color: 'bg-muted' },
-  accepted: { label: 'Going', icon: <Check className="h-3 w-3" />, color: 'bg-green-100 text-green-700' },
-  declined: { label: 'Not going', icon: <X className="h-3 w-3" />, color: 'bg-red-100 text-red-700' },
-  maybe: { label: 'Maybe', icon: <HelpCircle className="h-3 w-3" />, color: 'bg-yellow-100 text-yellow-700' },
+  pending: { label: 'Pending', icon: <HelpCircle className="h-3 w-3" />, color: 'bg-muted text-muted-foreground' },
+  accepted: { label: 'Going', icon: <Check className="h-3 w-3" />, color: 'bg-success-muted text-success-muted-foreground' },
+  declined: { label: 'Not going', icon: <X className="h-3 w-3" />, color: 'bg-error-muted text-error-muted-foreground' },
+  maybe: { label: 'Maybe', icon: <HelpCircle className="h-3 w-3" />, color: 'bg-warning-muted text-warning-muted-foreground' },
 };
 
 function formatReminderTime(minutes: number): string {
@@ -221,7 +221,7 @@ export function EventDetail({
                     {attendees.length} guest{attendees.length !== 1 ? 's' : ''}
                   </span>
                   {attendeeCounts.accepted > 0 && (
-                    <Badge variant="secondary" className="bg-green-100 text-green-700 text-xs">
+                    <Badge variant="secondary" className="bg-success-muted text-success-muted-foreground text-xs">
                       {attendeeCounts.accepted} going
                     </Badge>
                   )}
@@ -242,19 +242,19 @@ export function EventDetail({
                       <SelectContent>
                         <SelectItem value="accepted">
                           <div className="flex items-center gap-2">
-                            <Check className="h-4 w-4 text-green-600" />
+                            <Check className="h-4 w-4 text-success" />
                             Going
                           </div>
                         </SelectItem>
                         <SelectItem value="maybe">
                           <div className="flex items-center gap-2">
-                            <HelpCircle className="h-4 w-4 text-yellow-600" />
+                            <HelpCircle className="h-4 w-4 text-warning" />
                             Maybe
                           </div>
                         </SelectItem>
                         <SelectItem value="declined">
                           <div className="flex items-center gap-2">
-                            <X className="h-4 w-4 text-red-600" />
+                            <X className="h-4 w-4 text-error" />
                             Not going
                           </div>
                         </SelectItem>

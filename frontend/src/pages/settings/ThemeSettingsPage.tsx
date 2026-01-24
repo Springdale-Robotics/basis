@@ -1,10 +1,21 @@
+import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { useTheme } from '@/hooks/useTheme';
-import { COLOR_PRESETS, COLOR_PALETTES, type ColorPreset, type ColorPalette } from '@/lib/theme-presets';
+import {
+  THEME_PRESETS,
+  COLOR_PALETTES,
+  type ThemePresetId,
+  type ColorPalette,
+} from '@/lib/theme-presets';
 import { cn } from '@/lib/utils';
-import { Sun, Moon, Monitor } from 'lucide-react';
+import { Sun, Moon, Monitor, ChevronDown, RotateCcw, Check } from 'lucide-react';
 
 const themes = [
   { id: 'light', label: 'Light', icon: Sun },
@@ -12,26 +23,34 @@ const themes = [
   { id: 'system', label: 'System', icon: Monitor },
 ] as const;
 
-const colorPresetEntries = Object.entries(COLOR_PRESETS) as [ColorPreset, typeof COLOR_PRESETS[ColorPreset]][];
-const colorPaletteEntries = Object.entries(COLOR_PALETTES) as [ColorPalette, typeof COLOR_PALETTES[ColorPalette]][];
+const presetEntries = Object.entries(THEME_PRESETS) as [ThemePresetId, (typeof THEME_PRESETS)[ThemePresetId]][];
+const colorPaletteEntries = Object.entries(COLOR_PALETTES) as [ColorPalette, (typeof COLOR_PALETTES)[ColorPalette]][];
 
 export function ThemeSettingsPage() {
   const {
     theme,
-    colorPreset,
+    presetId,
     colorPalette,
     fontSize,
     borderRadius,
+    customColors,
+    resolvedTheme,
     setTheme,
-    setColorPreset,
+    setPresetId,
     setColorPalette,
     setFontSize,
     setBorderRadius,
+    clearCustomColors,
     resetToDefaults,
   } = useTheme();
 
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  const hasCustomColors = Object.keys(customColors.light || {}).length > 0 || Object.keys(customColors.dark || {}).length > 0;
+
   return (
     <div className="space-y-6">
+      {/* Appearance */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-medium">Appearance</CardTitle>
@@ -58,38 +77,59 @@ export function ThemeSettingsPage() {
         </CardContent>
       </Card>
 
+      {/* Theme Presets */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-medium">Primary Color</CardTitle>
-          <CardDescription>Choose your accent color for buttons and highlights</CardDescription>
+          <CardTitle className="text-base font-medium">Theme</CardTitle>
+          <CardDescription>Choose a complete color scheme</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-wrap gap-3">
-            {colorPresetEntries.map(([id, preset]) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {presetEntries.map(([id, preset]) => (
               <button
                 key={id}
-                className="group relative"
-                title={preset.name}
-                onClick={() => setColorPreset(id)}
+                onClick={() => setPresetId(id)}
+                className={cn(
+                  'flex flex-col gap-3 rounded-lg border p-4 text-left transition-all',
+                  presetId === id
+                    ? 'border-primary ring-2 ring-primary ring-offset-2 ring-offset-background'
+                    : 'border-border hover:bg-muted/50'
+                )}
               >
-                <div
-                  className={cn(
-                    'h-10 w-10 rounded-full border-2 transition-transform hover:scale-110',
-                    colorPreset === id
-                      ? 'border-foreground ring-2 ring-foreground ring-offset-2 ring-offset-background'
-                      : 'border-border'
+                {/* Preview swatches */}
+                <div className="flex gap-1">
+                  <div
+                    className="h-8 w-8 rounded-md border shadow-sm"
+                    style={{ backgroundColor: preset.preview.background }}
+                    title="Background"
+                  />
+                  <div
+                    className="h-8 w-8 rounded-md border shadow-sm"
+                    style={{ backgroundColor: preset.preview.primary }}
+                    title="Primary"
+                  />
+                  <div
+                    className="h-8 w-8 rounded-md border shadow-sm"
+                    style={{ backgroundColor: preset.preview.accent }}
+                    title="Accent"
+                  />
+                  {presetId === id && (
+                    <div className="ml-auto flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                      <Check className="h-4 w-4" />
+                    </div>
                   )}
-                  style={{
-                    backgroundColor: `hsl(${preset.primary})`,
-                  }}
-                />
-                <span className="sr-only">{preset.name}</span>
+                </div>
+                <div>
+                  <p className="font-medium">{preset.name}</p>
+                  <p className="text-xs text-muted-foreground">{preset.description}</p>
+                </div>
               </button>
             ))}
           </div>
         </CardContent>
       </Card>
 
+      {/* Color Palette */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-medium">Color Palette</CardTitle>
@@ -124,6 +164,7 @@ export function ThemeSettingsPage() {
         </CardContent>
       </Card>
 
+      {/* Font Size */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-medium">Font Size</CardTitle>
@@ -147,6 +188,7 @@ export function ThemeSettingsPage() {
         </CardContent>
       </Card>
 
+      {/* Border Radius */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-medium">Border Radius</CardTitle>
@@ -174,9 +216,61 @@ export function ThemeSettingsPage() {
         </CardContent>
       </Card>
 
-      <div className="flex justify-end">
+      {/* Advanced Color Customization */}
+      <Card>
+        <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+          <CardHeader className="pb-3">
+            <CollapsibleTrigger className="flex w-full items-center justify-between">
+              <div className="text-left">
+                <CardTitle className="text-base font-medium">Advanced Customization</CardTitle>
+                <CardDescription>Fine-tune individual colors</CardDescription>
+              </div>
+              <ChevronDown
+                className={cn(
+                  'h-5 w-5 text-muted-foreground transition-transform',
+                  advancedOpen && 'rotate-180'
+                )}
+              />
+            </CollapsibleTrigger>
+          </CardHeader>
+          <CollapsibleContent>
+            <CardContent>
+              <div className="rounded-lg border border-dashed p-6 text-center text-muted-foreground">
+                <p className="text-sm">
+                  Advanced color customization allows you to override individual colors
+                  from the selected theme preset.
+                </p>
+                <p className="mt-2 text-xs">
+                  Currently viewing: {resolvedTheme === 'dark' ? 'Dark' : 'Light'} mode
+                  {hasCustomColors && ' (with custom overrides)'}
+                </p>
+                {hasCustomColors && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-4"
+                    onClick={clearCustomColors}
+                  >
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    Clear Custom Colors
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </CollapsibleContent>
+        </Collapsible>
+      </Card>
+
+      {/* Actions */}
+      <div className="flex justify-end gap-2">
+        {hasCustomColors && (
+          <Button variant="outline" onClick={clearCustomColors}>
+            <RotateCcw className="mr-2 h-4 w-4" />
+            Clear Customizations
+          </Button>
+        )}
         <Button variant="outline" onClick={resetToDefaults}>
-          Reset to Defaults
+          Reset All to Defaults
         </Button>
       </div>
     </div>

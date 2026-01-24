@@ -48,6 +48,31 @@ export default {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
+        success: {
+          DEFAULT: 'hsl(var(--success))',
+          foreground: 'hsl(var(--success-foreground))',
+          muted: 'hsl(var(--success-muted))',
+          'muted-foreground': 'hsl(var(--success-muted-foreground))',
+        },
+        warning: {
+          DEFAULT: 'hsl(var(--warning))',
+          foreground: 'hsl(var(--warning-foreground))',
+          muted: 'hsl(var(--warning-muted))',
+          'muted-foreground': 'hsl(var(--warning-muted-foreground))',
+        },
+        error: {
+          DEFAULT: 'hsl(var(--error))',
+          foreground: 'hsl(var(--error-foreground))',
+          muted: 'hsl(var(--error-muted))',
+          'muted-foreground': 'hsl(var(--error-muted-foreground))',
+        },
+        info: {
+          DEFAULT: 'hsl(var(--info))',
+          foreground: 'hsl(var(--info-foreground))',
+          muted: 'hsl(var(--info-muted))',
+          'muted-foreground': 'hsl(var(--info-muted-foreground))',
+        },
+        overlay: 'hsl(var(--overlay) / var(--overlay-opacity))',
       },
       borderRadius: {
         xl: 'calc(var(--radius) + 4px)',
