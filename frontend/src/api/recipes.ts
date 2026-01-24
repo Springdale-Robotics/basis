@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPatch, apiDelete } from './client';
+import { apiGet, apiPost, apiPatch, apiDelete, apiUpload } from './client';
 import type { Recipe, MealPlan } from '@/types/models';
 
 export interface RecipeIngredientInput {
@@ -7,6 +7,7 @@ export interface RecipeIngredientInput {
   unit?: string;
   notes?: string;
   inventoryItemId?: string;
+  linkedItemName?: string | null;  // Name from linked inventory item
 }
 
 export interface RecipeInstructionInput {
@@ -66,6 +67,8 @@ export interface ParsedIngredient {
   notes?: string;
 }
 
+export type MatchReason = 'exact' | 'synonym' | 'contains' | 'fuzzy';
+
 export interface IngredientMatch {
   parsedName: string;
   parsedQuantity?: number;
@@ -73,21 +76,48 @@ export interface IngredientMatch {
   matchStatus: 'matched' | 'unmatched' | 'manual';
   matchedItemId?: string;
   matchedItemName?: string;
+  modifiedUnit?: string;  // User-modified unit during import
   confidence?: number;
+  matchReason?: MatchReason;
   unitConversion?: {
     fromUnit: string;
     toUnit: string;
     factor: number;
   };
+  needsConversion?: {
+    fromUnit: string;
+    toUnit: string;
+    hasExisting: boolean;
+    suggestedFactor?: number;
+  };
   suggestions?: Array<{
     itemId: string;
     name: string;
     confidence: number;
+    matchReason?: MatchReason;
     needsConversion?: {
       fromUnit: string;
       toUnit: string;
+      hasExisting: boolean;
+      suggestedFactor?: number;
     };
   }>;
+  // Catalog item data from exported .recipe files
+  catalogItem?: {
+    name: string;
+    category?: string;
+    defaultUnit?: string;
+    unitConversions?: Array<{
+      fromUnit: string;
+      toUnit: string;
+      factor: number;
+    }>;
+  };
+}
+
+export interface ParsedIngredientGroup {
+  name?: string;
+  ingredients: ParsedIngredient[];
 }
 
 export interface ParsedRecipe {
@@ -98,18 +128,41 @@ export interface ParsedRecipe {
   cookTimeMinutes?: number;
   servings?: number;
   imageUrl?: string;
+  sourceUrl?: string;
+  author?: string;
+  cuisine?: string;
   ingredients: ParsedIngredient[];
+  ingredientGroups?: ParsedIngredientGroup[];
+}
+
+export type ParseMethod = 'json-ld' | 'recipe-clipper' | 'microdata' | 'heuristic' | 'text';
+
+export interface ParseUrlResponse {
+  parsedRecipe: ParsedRecipe;
+  parseMethod: ParseMethod;
+  confidence: number;
+  warnings: string[];
+}
+
+export interface ParseTextResponse {
+  parsedRecipe: ParsedRecipe;
+  parseMethod: 'text';
+  confidence: number;
+  warnings: string[];
 }
 
 export interface ImportSession {
   id: string;
   householdId: string;
   userId: string;
-  sourceType: 'url' | 'image' | 'pdf';
+  sourceType: 'url' | 'image' | 'pdf' | 'text';
   sourceData: string;
   parsedRecipe: ParsedRecipe | null;
   ingredientMatches: IngredientMatch[];
   status: 'parsing' | 'pending_review' | 'confirmed' | 'cancelled';
+  parseMethod?: ParseMethod;
+  parseConfidence?: string;
+  parseWarnings?: string[];
   createdAt: string;
   expiresAt: string;
 }
@@ -118,6 +171,7 @@ export interface MatchSuggestion {
   itemId: string;
   name: string;
   confidence: number;
+  matchReason?: MatchReason;
   unitConversion?: {
     fromUnit: string;
     toUnit: string;
@@ -126,6 +180,8 @@ export interface MatchSuggestion {
   needsConversion?: {
     fromUnit: string;
     toUnit: string;
+    hasExisting: boolean;
+    suggestedFactor?: number;
   };
 }
 
@@ -243,13 +299,19 @@ export const recipesApi = {
     apiPost<GenerateShoppingListResponse>('/recipes/meal-plans/generate-shopping-list', params),
 
   // Recipe Import
-  startImport: (data: { sourceType: 'url' | 'image' | 'pdf'; sourceData: string; rawText?: string }) =>
+  parseUrl: (url: string) =>
+    apiPost<ParseUrlResponse>('/recipes/import/parse-url', { url }),
+
+  parseText: (text: string) =>
+    apiPost<ParseTextResponse>('/recipes/import/parse-text', { text }),
+
+  startImport: (data: { sourceType: 'url' | 'image' | 'pdf' | 'text'; sourceData: string; rawText?: string }) =>
     apiPost<{ sessionId: string }>('/recipes/import/start', data),
 
   getImportSession: (sessionId: string) =>
     apiGet<{ session: ImportSession }>(`/recipes/import/${sessionId}`),
 
-  updateImportMatches: (sessionId: string, updates: Array<{ parsedName: string; matchedItemId?: string; matchedItemName?: string }>) =>
+  updateImportMatches: (sessionId: string, updates: Array<{ parsedName: string; matchedItemId?: string; matchedItemName?: string; modifiedUnit?: string }>) =>
     apiPost<{ message: string }>(`/recipes/import/${sessionId}/match`, { updates }),
 
   confirmImport: (sessionId: string, overrides?: { title?: string; description?: string; prepTimeMinutes?: number; cookTimeMinutes?: number; servings?: number; imageUrl?: string }) =>
@@ -258,6 +320,26 @@ export const recipesApi = {
   cancelImport: (sessionId: string) =>
     apiDelete<{ message: string }>(`/recipes/import/${sessionId}`),
 
+  rematchIngredients: (sessionId: string) =>
+    apiPost<{ matches: IngredientMatch[] }>(`/recipes/import/${sessionId}/rematch`, {}),
+
   matchIngredient: (name: string, unit?: string) =>
     apiPost<{ suggestions: MatchSuggestion[] }>('/recipes/ingredients/match', { name, unit }),
+
+  // Image upload/delete
+  uploadImage: (recipeId: string, file: File, onProgress?: (progress: number) => void) =>
+    apiUpload<RecipeImageResponse>(`/recipes/${recipeId}/image`, file, { onProgress }),
+
+  uploadImageFromUrl: (recipeId: string, imageUrl: string) =>
+    apiPost<RecipeImageResponse>(`/recipes/${recipeId}/image`, { imageUrl }),
+
+  deleteImage: (recipeId: string) =>
+    apiDelete<{ message: string }>(`/recipes/${recipeId}/image`),
 };
+
+export interface RecipeImageResponse {
+  imageData: string;
+  imageMimeType: string;
+  imageWidth: number;
+  imageHeight: number;
+}

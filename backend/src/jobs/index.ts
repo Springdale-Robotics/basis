@@ -91,6 +91,19 @@ export const calendarSyncQueue = new Queue('calendar-sync', {
   },
 });
 
+export const mediaQueue = new Queue('media', {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 100,
+    removeOnFail: 200,
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 2000,
+    },
+  },
+});
+
 // Job type definitions
 export interface NotificationJobData {
   type: 'low_stock' | 'expiring_soon' | 'leftover_expiring' | 'task_due' | 'sync_error' | 'custom';
@@ -134,6 +147,14 @@ export interface CalendarSyncJobData {
   type: 'sync_all' | 'sync_single';
   calendarId?: string;
   householdId?: string;
+}
+
+export interface MediaJobData {
+  type: 'thumbnail' | 'exif' | 'video_info';
+  fileId: string;
+  householdId: string;
+  storagePath: string;
+  mimeType: string;
 }
 
 // Initialize workers
@@ -266,7 +287,25 @@ export async function initializeWorkers(): Promise<void> {
     logger.error({ jobId: job?.id, error }, 'Calendar sync job failed');
   });
 
-  workers = [notificationWorker, syncWorker, backupWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker];
+  // Media worker
+  const mediaWorker = new Worker(
+    'media',
+    async (job: Job<MediaJobData>) => {
+      const { processMediaJob } = await import('./media.worker.js');
+      return processMediaJob(job);
+    },
+    { connection: redis, concurrency: 3 }
+  );
+
+  mediaWorker.on('completed', (job) => {
+    logger.debug({ jobId: job.id, type: job.data.type }, 'Media job completed');
+  });
+
+  mediaWorker.on('failed', (job, error) => {
+    logger.error({ jobId: job?.id, type: job?.data.type, error }, 'Media job failed');
+  });
+
+  workers = [notificationWorker, syncWorker, backupWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, mediaWorker];
   logger.info('Background workers initialized');
 }
 
@@ -348,6 +387,7 @@ export async function shutdownWorkers(): Promise<void> {
   await inventoryQueue.close();
   await calendarReminderQueue.close();
   await calendarSyncQueue.close();
+  await mediaQueue.close();
 
   logger.info('All workers shut down');
 }
@@ -387,4 +427,50 @@ export async function queueCalendarSync(calendarId: string, householdId: string)
   }, {
     jobId: `calendar:sync:${calendarId}:${Date.now()}`,
   });
+}
+
+// Helper to queue media processing jobs
+export async function queueMediaJob(data: MediaJobData): Promise<void> {
+  await mediaQueue.add(data.type, data, {
+    jobId: `media:${data.type}:${data.fileId}`,
+  });
+}
+
+// Helper to queue all media jobs for a new file
+export async function queueMediaProcessing(
+  fileId: string,
+  householdId: string,
+  storagePath: string,
+  mimeType: string
+): Promise<void> {
+  // Queue thumbnail generation
+  await queueMediaJob({
+    type: 'thumbnail',
+    fileId,
+    householdId,
+    storagePath,
+    mimeType,
+  });
+
+  // Queue EXIF extraction for images
+  if (mimeType.startsWith('image/')) {
+    await queueMediaJob({
+      type: 'exif',
+      fileId,
+      householdId,
+      storagePath,
+      mimeType,
+    });
+  }
+
+  // Queue video info extraction for videos
+  if (mimeType.startsWith('video/')) {
+    await queueMediaJob({
+      type: 'video_info',
+      fileId,
+      householdId,
+      storagePath,
+      mimeType,
+    });
+  }
 }

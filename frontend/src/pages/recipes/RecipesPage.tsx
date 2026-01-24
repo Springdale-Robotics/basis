@@ -10,12 +10,13 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState } from '@/components/shared/EmptyState';
-import { RecipeForm } from '@/components/recipes/RecipeForm';
+import { RecipeForm, type RecipeImageChange } from '@/components/recipes/RecipeForm';
 import { ImportRecipeDialog } from './ImportRecipeDialog';
 import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
 import type { Recipe } from '@/types/models';
 import type { RecipeFormData } from '@/types/forms';
+import { toast } from '@/hooks/useToast';
 
 type ViewMode = 'grid' | 'list';
 
@@ -33,10 +34,12 @@ export function RecipesPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (formData: RecipeFormData) => {
+    mutationFn: async ({ formData, imageChange }: { formData: RecipeFormData; imageChange: RecipeImageChange }) => {
       const prepTime = formData.prepTime || formData.prepTimeMinutes;
       const cookTime = formData.cookTime || formData.cookTimeMinutes;
-      return recipesApi.create({
+
+      // Create the recipe first
+      const result = await recipesApi.create({
         title: formData.title,
         description: formData.description || undefined,
         servings: formData.servings || undefined,
@@ -53,11 +56,28 @@ export function RecipesPage() {
         instructions: formData.instructions.filter((inst) => inst.text),
         tags: formData.tags,
       });
+
+      // Upload image if provided
+      const recipeId = result.recipe.id;
+      if (imageChange.type === 'file' && imageChange.file) {
+        await recipesApi.uploadImage(recipeId, imageChange.file);
+      } else if (imageChange.type === 'url' && imageChange.url) {
+        await recipesApi.uploadImageFromUrl(recipeId, imageChange.url);
+      }
+
+      return result;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['recipes'] });
       queryClient.invalidateQueries({ queryKey: ['tag-suggestions'] });
       setFormOpen(false);
+    },
+    onError: (error) => {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to create recipe',
+        variant: 'destructive',
+      });
     },
   });
 
@@ -141,7 +161,7 @@ export function RecipesPage() {
       <RecipeForm
         open={formOpen}
         onOpenChange={setFormOpen}
-        onSubmit={(data) => createMutation.mutate(data)}
+        onSubmit={(formData, imageChange) => createMutation.mutate({ formData, imageChange })}
         isSubmitting={createMutation.isPending}
       />
 
@@ -155,13 +175,18 @@ export function RecipesPage() {
 }
 
 function RecipeCard({ recipe }: { recipe: Recipe }) {
+  // Prefer imageData over imageUrl for backward compatibility
+  const imageSrc = recipe.imageData
+    ? `data:${recipe.imageMimeType};base64,${recipe.imageData}`
+    : recipe.imageUrl;
+
   return (
     <Link to={`/recipes/${recipe.id}`}>
       <Card className="overflow-hidden transition-shadow hover:shadow-md">
-        {recipe.imageUrl ? (
+        {imageSrc ? (
           <div className="aspect-video bg-muted">
             <img
-              src={recipe.imageUrl}
+              src={imageSrc}
               alt={recipe.title}
               className="h-full w-full object-cover"
             />
@@ -206,14 +231,19 @@ function RecipeCard({ recipe }: { recipe: Recipe }) {
 }
 
 function RecipeListItem({ recipe }: { recipe: Recipe }) {
+  // Prefer imageData over imageUrl for backward compatibility
+  const imageSrc = recipe.imageData
+    ? `data:${recipe.imageMimeType};base64,${recipe.imageData}`
+    : recipe.imageUrl;
+
   return (
     <Link to={`/recipes/${recipe.id}`}>
       <Card className="transition-shadow hover:shadow-md">
         <CardContent className="flex items-center gap-4 p-4">
-          {recipe.imageUrl ? (
+          {imageSrc ? (
             <div className="h-16 w-16 shrink-0 overflow-hidden rounded-md bg-muted">
               <img
-                src={recipe.imageUrl}
+                src={imageSrc}
                 alt={recipe.title}
                 className="h-full w-full object-cover"
               />

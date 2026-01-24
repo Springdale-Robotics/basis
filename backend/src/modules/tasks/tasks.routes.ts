@@ -4,6 +4,8 @@ import { db } from '../../config/database.js';
 import { tasks, rewards, rewardHistory, achievements, userAchievements } from '../../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
 import { authMiddleware, requireMember, requireAdmin } from '../../middleware/auth.middleware.js';
+import { requireTaskAccess, requireTasksAccess } from '../../middleware/permission.middleware.js';
+import { setResourceDefaults } from '../../services/permission.service.js';
 import { Errors } from '../../lib/errors.js';
 import { taskStatusSchema, iCalRRuleSchema } from '../../lib/validators.js';
 
@@ -34,7 +36,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
   // List tasks
   app.get(
     '/',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireTasksAccess('view')] },
     async (request) => {
       const { status, assignedTo, isChore } = request.query as any;
 
@@ -63,7 +65,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
   // Create task
   app.post(
     '/',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireTasksAccess('edit')] },
     async (request) => {
       const input = createTaskSchema.parse(request.body);
 
@@ -82,6 +84,9 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
         })
         .returning();
 
+      // Set default permissions for the new task
+      await setResourceDefaults('task', task.id, request.user!.id, request.user!.householdId);
+
       return { success: true, data: { task } };
     }
   );
@@ -89,7 +94,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
   // Get task by ID
   app.get<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireTaskAccess('view')] },
     async (request) => {
       const task = await db.query.tasks.findFirst({
         where: and(
@@ -107,7 +112,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
   // Update task
   app.patch<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireTaskAccess('edit')] },
     async (request) => {
       const input = updateTaskSchema.parse(request.body);
 
@@ -131,7 +136,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
   // Delete task
   app.delete<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireTaskAccess('admin')] },
     async (request) => {
       await db
         .delete(tasks)
@@ -238,7 +243,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
   // Get chore schedule
   app.get(
     '/chores',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireTasksAccess('view')] },
     async (request) => {
       const chores = await db.query.tasks.findMany({
         where: and(

@@ -72,7 +72,7 @@ export const calendarTypeSchema = z.enum(['individual', 'group', 'synced']);
 export type CalendarType = z.infer<typeof calendarTypeSchema>;
 
 // Permission level enum
-export const permissionLevelSchema = z.enum(['view', 'view_busy', 'edit', 'admin']);
+export const permissionLevelSchema = z.enum(['view', 'view_busy', 'edit', 'admin', 'none']);
 export type PermissionLevel = z.infer<typeof permissionLevelSchema>;
 
 // Grantee type enum
@@ -89,8 +89,23 @@ export const resourceTypeSchema = z.enum([
   'list',
   'page',
   'inventory_area',
+  'feature',
 ]);
 export type ResourceType = z.infer<typeof resourceTypeSchema>;
+
+// Feature type enum (for feature-level permissions)
+export const featureSchema = z.enum([
+  'recipes',
+  'inventory',
+  'meal_plan',
+  'shopping_list',
+  'files',
+  'calendars',
+  'lists',
+  'tasks',
+  'settings',
+]);
+export type Feature = z.infer<typeof featureSchema>;
 
 // Shopping list source enum
 export const shoppingListSourceSchema = z.enum(['manual', 'meal_plan', 'low_stock']);

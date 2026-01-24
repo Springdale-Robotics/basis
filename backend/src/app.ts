@@ -34,6 +34,12 @@ import { backupRoutes } from './modules/backup/backup.routes.js';
 import { connectionsRoutes } from './modules/connections/connections.routes.js';
 import { healthRoutes } from './modules/health/health.routes.js';
 import { setupRoutes } from './modules/setup/setup.routes.js';
+import { photosRoutes } from './modules/photos/photos.routes.js';
+import { videosRoutes } from './modules/videos/videos.routes.js';
+import { moviesRoutes } from './modules/movies/movies.routes.js';
+import { musicRoutes } from './modules/music/music.routes.js';
+import { groupsRoutes } from './modules/groups/groups.routes.js';
+import { permissionsRoutes } from './modules/permissions/permissions.routes.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -149,6 +155,16 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(settingsRoutes, { prefix: '/api/v1/settings' });
   await app.register(backupRoutes, { prefix: '/api/v1/backup' });
   await app.register(connectionsRoutes, { prefix: '/api/v1/connections' });
+
+  // Media routes
+  await app.register(photosRoutes, { prefix: '/api/v1/photos' });
+  await app.register(videosRoutes, { prefix: '/api/v1/videos' });
+  await app.register(moviesRoutes, { prefix: '/api/v1/media' });
+  await app.register(musicRoutes, { prefix: '/api/v1/music' });
+
+  // Groups and permissions
+  await app.register(groupsRoutes, { prefix: '/api/v1/groups' });
+  await app.register(permissionsRoutes, { prefix: '/api/v1/permissions' });
 
   return app;
 }

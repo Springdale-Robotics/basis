@@ -10,6 +10,9 @@ import {
   ListTodo,
   FolderOpen,
   Image,
+  Video,
+  Film,
+  Music,
   Home,
   Settings,
   ChevronLeft,
@@ -18,6 +21,8 @@ import {
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/uiStore';
 import { useFeatureFlags } from '@/hooks/useFeatureFlags';
+import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
+import { ROUTE_TO_FEATURE } from '@/lib/constants';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -39,6 +44,9 @@ const iconMap = {
   ListTodo,
   FolderOpen,
   Image,
+  Video,
+  Film,
+  Music,
   Home,
   Settings,
 };
@@ -63,6 +71,10 @@ const mainNavItems: NavItem[] = [
 
 const mediaNavItems: NavItem[] = [
   { label: 'Files', href: '/files', icon: 'FolderOpen', feature: 'files' },
+  { label: 'Photos', href: '/photos', icon: 'Image', feature: 'files' },
+  { label: 'Videos', href: '/videos', icon: 'Video', feature: 'files' },
+  { label: 'Movies & TV', href: '/movies', icon: 'Film', feature: 'files' },
+  { label: 'Music', href: '/music', icon: 'Music', feature: 'files' },
 ];
 
 const bottomNavItems: NavItem[] = [
@@ -72,10 +84,20 @@ const bottomNavItems: NavItem[] = [
 export function Sidebar() {
   const { sidebarCollapsed, toggleSidebarCollapsed } = useUIStore();
   const features = useFeatureFlags();
+  const { hasAccess, isLoading: permissionsLoading } = useFeaturePermissions();
   const location = useLocation();
 
   const filterByFeature = (items: NavItem[]) =>
-    items.filter((item) => !item.feature || features[item.feature as keyof typeof features]);
+    items.filter((item) => {
+      // Feature toggle must be enabled (existing behavior)
+      if (item.feature && !features[item.feature as keyof typeof features]) return false;
+
+      // User must have permission (new behavior)
+      const permFeature = ROUTE_TO_FEATURE[item.href];
+      if (permFeature && !hasAccess(permFeature)) return false;
+
+      return true;
+    });
 
   const renderNavItem = (item: NavItem) => {
     const Icon = iconMap[item.icon];

@@ -31,6 +31,7 @@ const envSchema = z.object({
   // File Storage
   STORAGE_PATH: z.string().default('./storage'),
   MAX_UPLOAD_SIZE_MB: z.coerce.number().default(100),
+  STORAGE_QUOTA_GB: z.coerce.number().optional(),
 
   // External Integrations
   GOOGLE_CLIENT_ID: z.string().optional(),
@@ -46,6 +47,17 @@ const envSchema = z.object({
   ENABLE_SMART_HOME: z.coerce.boolean().default(true),
   ENABLE_DLNA_SERVER: z.coerce.boolean().default(true),
   ENABLE_METRICS: z.coerce.boolean().default(true),
+
+  // Media Processing
+  THUMBNAIL_SIZES: z.string().default('150,400,800'),
+  THUMBNAIL_QUALITY: z.coerce.number().default(80),
+  FFMPEG_PATH: z.string().optional(),
+  ENABLE_TRANSCODING: z.coerce.boolean().default(true),
+  HLS_SEGMENT_DURATION: z.coerce.number().default(6),
+
+  // External Media APIs (optional)
+  TMDB_API_KEY: z.string().optional(),
+  TMDB_LANGUAGE: z.string().default('en-US'),
 
   // Development
   DISABLE_RATE_LIMIT: z.coerce.boolean().default(false),

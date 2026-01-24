@@ -1,16 +1,32 @@
+import { useMemo } from 'react';
 import { NavLink, Routes, Route, Navigate } from 'react-router-dom';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent } from '@/components/ui/card';
-import { SETTINGS_NAV } from '@/lib/constants';
+import { SETTINGS_NAV, ADMIN_ONLY_SETTINGS } from '@/lib/constants';
+import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
 import { cn } from '@/lib/utils';
 
 // Settings sub-pages (simplified versions)
 import { ProfileSettingsPage } from './ProfileSettingsPage';
 import { ThemeSettingsPage } from './ThemeSettingsPage';
 import { HouseholdSettingsPage } from './HouseholdSettingsPage';
+import { MembersSettingsPage } from './MembersSettingsPage';
 import { CalendarSettingsPage } from './CalendarSettingsPage';
+import { StorageSettingsPage } from './StorageSettingsPage';
+import { GroupsSettingsPage } from './GroupsSettingsPage';
+import { FeaturePermissionsPage } from './FeaturePermissionsPage';
 
 export function SettingsPage() {
+  const { canAdmin } = useFeaturePermissions();
+  const isSettingsAdmin = canAdmin('settings');
+
+  // Filter settings navigation to hide admin-only sections from non-admins
+  const filteredNav = useMemo(() => {
+    return SETTINGS_NAV.filter((item) =>
+      ADMIN_ONLY_SETTINGS.includes(item.href) ? isSettingsAdmin : true
+    );
+  }, [isSettingsAdmin]);
+
   return (
     <div>
       <PageHeader title="Settings" />
@@ -20,7 +36,7 @@ export function SettingsPage() {
         <Card className="lg:w-64 shrink-0">
           <CardContent className="p-2">
             <nav className="space-y-1">
-              {SETTINGS_NAV.map((item) => (
+              {filteredNav.map((item) => (
                 <NavLink
                   key={item.href}
                   to={item.href}
@@ -48,7 +64,10 @@ export function SettingsPage() {
             <Route path="theme" element={<ThemeSettingsPage />} />
             <Route path="notifications" element={<PlaceholderSettings title="Notifications" />} />
             <Route path="household" element={<HouseholdSettingsPage />} />
-            <Route path="members" element={<PlaceholderSettings title="Members" />} />
+            <Route path="members" element={<MembersSettingsPage />} />
+            <Route path="groups" element={<GroupsSettingsPage />} />
+            <Route path="permissions" element={<FeaturePermissionsPage />} />
+            <Route path="storage" element={<StorageSettingsPage />} />
             <Route path="calendars" element={<CalendarSettingsPage />} />
             <Route path="devices" element={<PlaceholderSettings title="Devices" />} />
             <Route path="remote-access" element={<PlaceholderSettings title="Remote Access" />} />

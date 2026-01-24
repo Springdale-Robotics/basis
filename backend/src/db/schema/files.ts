@@ -8,6 +8,7 @@ import {
   integer,
   jsonb,
   pgEnum,
+  boolean,
 } from 'drizzle-orm/pg-core';
 import { households } from './households';
 import { users } from './users';
@@ -29,6 +30,7 @@ export const folders = pgTable('folders', {
   parentId: uuid('parent_id').references((): any => folders.id, { onDelete: 'cascade' }),
   name: varchar('name', { length: 255 }).notNull(),
   type: folderTypeEnum('type').notNull().default('general'),
+  isRestricted: boolean('is_restricted').default(false).notNull(),
   createdBy: uuid('created_by')
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
@@ -51,6 +53,8 @@ export const files = pgTable('files', {
   sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
   type: fileTypeEnum('type').notNull(),
   metadata: jsonb('metadata').$type<FileMetadata>(),
+  excludedFromCategories: boolean('excluded_from_categories').default(false).notNull(),
+  isRestricted: boolean('is_restricted').default(false).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });

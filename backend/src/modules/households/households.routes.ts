@@ -105,6 +105,7 @@ export async function householdsRoutes(app: FastifyInstance): Promise<void> {
           invite: {
             id: invite.id,
             inviteCode: invite.inviteCode,
+            inviteLink: `/join/${invite.inviteCode}`,
             email: invite.email,
             role: invite.role,
             expiresAt: invite.expiresAt,

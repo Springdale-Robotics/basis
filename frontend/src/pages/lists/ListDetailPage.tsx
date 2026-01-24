@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { ShareButton, EditGate } from '@/components/permissions';
 import { listsApi } from '@/api/lists';
 import { cn } from '@/lib/utils';
 
@@ -102,41 +103,51 @@ export function ListDetailPage() {
         title={listData.name}
         actions={
           <div className="flex gap-2">
-            {checkedItems.length > 0 && (
-              <Button variant="outline" onClick={() => clearCheckedMutation.mutate()}>
-                <Trash2 className="mr-2 h-4 w-4" />
-                Clear Checked
+            <ShareButton
+              resourceType="list"
+              resourceId={id!}
+              resourceName={listData.name}
+              variant="outline"
+            />
+            <EditGate feature="lists">
+              {checkedItems.length > 0 && (
+                <Button variant="outline" onClick={() => clearCheckedMutation.mutate()}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Clear Checked
+                </Button>
+              )}
+              <Button variant="outline">
+                <Edit className="mr-2 h-4 w-4" />
+                Edit
               </Button>
-            )}
-            <Button variant="outline">
-              <Edit className="mr-2 h-4 w-4" />
-              Edit
-            </Button>
-            <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-              <Trash2 className="mr-2 h-4 w-4" />
-              Delete
-            </Button>
+              <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete
+              </Button>
+            </EditGate>
           </div>
         }
       />
 
       {/* Add item */}
-      <Card className="mb-6">
-        <CardContent className="p-4">
-          <form onSubmit={handleAddItem} className="flex gap-2">
-            <Input
-              placeholder="Add an item..."
-              value={newItem}
-              onChange={(e) => setNewItem(e.target.value)}
-              className="flex-1"
-            />
-            <Button type="submit" disabled={addItemMutation.isPending}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+      <EditGate feature="lists">
+        <Card className="mb-6">
+          <CardContent className="p-4">
+            <form onSubmit={handleAddItem} className="flex gap-2">
+              <Input
+                placeholder="Add an item..."
+                value={newItem}
+                onChange={(e) => setNewItem(e.target.value)}
+                className="flex-1"
+              />
+              <Button type="submit" disabled={addItemMutation.isPending}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </EditGate>
 
       {/* Items */}
       <div className="space-y-2">

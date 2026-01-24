@@ -103,7 +103,8 @@ export function CookModePage() {
   // Merge recipe ingredients with the separately fetched ones that have inventoryItemId
   const ingredients = (recipeIngredients || recipe.ingredients || []).map((ing, idx) => ({
     id: ing.id || `ing-${idx}`,
-    name: ing.name,
+    // Use linked inventory item name if available, otherwise use parsed name
+    name: ing.linkedItemName || ing.name,
     amount: typeof ing.quantity === 'string' ? parseFloat(ing.quantity) : (ing.quantity || ing.amount || 0),
     unit: ing.unit || '',
     notes: ing.notes,

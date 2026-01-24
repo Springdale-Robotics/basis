@@ -26,3 +26,6 @@ export * from './audit';
 
 // Member invites
 export * from './member-invites';
+
+// Media
+export * from './media';

@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiDelete, apiUpload } from './client';
+import { apiGet, apiPost, apiPut, apiDelete, apiUpload } from './client';
 import type { FileItem, Album } from '@/types/models';
 
 export interface GetFilesParams {
@@ -28,6 +28,15 @@ export interface AddToAlbumRequest {
 export interface StorageUsage {
   usedBytes: number;
   breakdown: Record<string, number>;
+  filesystem: {
+    totalBytes: number;
+    availableBytes: number;
+  } | null;
+  effectiveLimit: number;
+  percentUsed: number;
+  limitSource: 'household' | 'system' | 'disk';
+  householdLimitGb: number | null;
+  systemLimitGb: number | null;
 }
 
 export const filesApi = {
@@ -51,6 +60,9 @@ export const filesApi = {
   delete: (id: string) =>
     apiDelete<{ message: string }>(`/files/${id}`),
 
+  move: (id: string, targetFolderId: string | null) =>
+    apiPut<{ message: string }>(`/files/${id}/move`, { targetFolderId }),
+
   // Download streams file directly - use window.open or fetch blob
   getDownloadUrl: (id: string) => `/api/files/${id}/download`,
 
@@ -60,6 +72,9 @@ export const filesApi = {
 
   getFolder: (id: string) =>
     apiGet<{ folder: FileItem; subfolders: FileItem[]; files: FileItem[] }>(`/files/folders/${id}`),
+
+  getFolderBreadcrumb: (id: string) =>
+    apiGet<{ breadcrumb: { id: string; name: string; parentId: string | null }[] }>(`/files/folders/${id}/breadcrumb`),
 
   // Albums
   getAlbums: () =>
@@ -83,4 +98,44 @@ export const filesApi = {
   // Storage
   getStorageUsage: () =>
     apiGet<StorageUsage>('/files/storage/usage'),
+
+  // Bulk operations
+  bulkExclude: (data: { fileIds?: string[]; folderIds?: string[]; excluded: boolean }) =>
+    apiPut<{ message: string; affectedCount: number }>('/files/bulk/exclude', data),
+
+  bulkDelete: (data: { fileIds?: string[]; folderIds?: string[] }) =>
+    apiDelete<{ message: string; deletedFiles: number; deletedFolders: number }>('/files/bulk', { data }),
+
+  bulkMove: (data: { fileIds?: string[]; folderIds?: string[]; targetFolderId: string | null }) =>
+    apiPut<{ message: string; movedFiles: number; movedFolders: number }>('/files/bulk/move', data),
+
+  // Thumbnail operations
+  regenerateThumbnails: (fileIds?: string[]) =>
+    apiPost<{ message: string; queuedCount: number }>('/files/thumbnails/regenerate', { fileIds }),
+
+  // Restriction operations
+  setFileRestriction: (fileId: string, restricted: boolean) =>
+    apiPut<{ message: string; isRestricted: boolean }>(`/files/${fileId}/restrict`, { restricted }),
+
+  getFileRestriction: (fileId: string) =>
+    apiGet<{
+      isRestricted: boolean;
+      restrictedDirectly: boolean;
+      restrictedBy: { type: 'file' | 'folder'; id: string; name: string } | null;
+    }>(`/files/${fileId}/restriction`),
+
+  setFolderRestriction: (folderId: string, restricted: boolean) =>
+    apiPut<{
+      message: string;
+      isRestricted: boolean;
+      affectedFolders: number;
+      affectedFiles: number;
+    }>(`/files/folders/${folderId}/restrict`, { restricted }),
+
+  getFolderRestriction: (folderId: string) =>
+    apiGet<{
+      isRestricted: boolean;
+      restrictedDirectly: boolean;
+      restrictedBy: { type: 'file' | 'folder'; id: string; name: string } | null;
+    }>(`/files/folders/${folderId}/restriction`),
 };

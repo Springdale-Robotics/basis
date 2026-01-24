@@ -1,11 +1,12 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../../config/database.js';
-import { households, extensions, ddnsConfig, musicIntegrations } from '../../db/schema/index.js';
+import { households, extensions, ddnsConfig, musicIntegrations, files } from '../../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
 import { authMiddleware, requireAdmin } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { hexColorSchema } from '../../lib/validators.js';
+import { config } from '../../config/index.js';
 
 const updateThemeSchema = z.object({
   mode: z.enum(['light', 'dark', 'system']).optional(),
@@ -22,6 +23,11 @@ const updateFeaturesSchema = z.object({
   rewards: z.boolean().optional(),
   smartHome: z.boolean().optional(),
   nas: z.boolean().optional(),
+});
+
+const updateStorageSettingsSchema = z.object({
+  limitGb: z.number().positive().nullable().optional(),
+  warnAtPercent: z.number().int().min(1).max(99).optional(),
 });
 
 const configureDdnsSchema = z.object({
@@ -167,6 +173,86 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         .where(eq(households.id, request.user!.householdId));
 
       return { success: true, data: { features: newFeatures } };
+    }
+  );
+
+  // ===== STORAGE SETTINGS =====
+
+  // Get storage settings
+  app.get(
+    '/storage',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const household = await db.query.households.findFirst({
+        where: eq(households.id, request.user!.householdId),
+        columns: { settings: true },
+      });
+
+      const settings = household?.settings as any;
+      const storageSettings = settings?.storage || {};
+
+      // Get current usage
+      const fileList = await db.query.files.findMany({
+        where: eq(files.householdId, request.user!.householdId),
+        columns: { sizeBytes: true },
+      });
+      const currentUsageBytes = fileList.reduce((sum, f) => sum + f.sizeBytes, 0);
+
+      // Get filesystem stats for disk capacity fallback
+      let diskCapacityGb: number | null = null;
+      try {
+        const fs = await import('node:fs/promises');
+        const stats = await fs.statfs(config.STORAGE_PATH);
+        const totalBytes = stats.blocks * stats.bsize;
+        diskCapacityGb = Math.round(totalBytes / (1024 * 1024 * 1024));
+      } catch {
+        // Filesystem stats unavailable
+      }
+
+      return {
+        success: true,
+        data: {
+          storage: {
+            limitGb: storageSettings.limitGb ?? null,
+            warnAtPercent: storageSettings.warnAtPercent ?? 80,
+          },
+          systemDefaultGb: config.STORAGE_QUOTA_GB ?? null,
+          diskCapacityGb,
+          currentUsageBytes,
+        },
+      };
+    }
+  );
+
+  // Update storage settings
+  app.patch(
+    '/storage',
+    { preHandler: [authMiddleware, requireAdmin()] },
+    async (request) => {
+      const input = updateStorageSettingsSchema.parse(request.body);
+
+      const current = await db.query.households.findFirst({
+        where: eq(households.id, request.user!.householdId),
+        columns: { settings: true },
+      });
+
+      const settings = current?.settings as any || {};
+      const newStorage = { ...settings.storage, ...input };
+
+      // Clean up null values
+      if (newStorage.limitGb === null) {
+        delete newStorage.limitGb;
+      }
+
+      await db
+        .update(households)
+        .set({
+          settings: { ...settings, storage: Object.keys(newStorage).length > 0 ? newStorage : undefined },
+          updatedAt: new Date(),
+        })
+        .where(eq(households.id, request.user!.householdId));
+
+      return { success: true, data: { storage: newStorage } };
     }
   );
 

@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiDelete } from './client';
-import type { User, Household } from '@/types/models';
+import type { User, Household, UserRole } from '@/types/models';
 
 export interface LoginRequest {
   email: string;
@@ -17,6 +17,21 @@ export interface RegisterRequest {
   password: string;
   displayName: string;
   householdId: string;
+}
+
+export interface RegisterWithInviteRequest {
+  inviteCode: string;
+  email: string;
+  password: string;
+  displayName: string;
+}
+
+export interface ValidateInviteResponse {
+  invite: {
+    role: UserRole;
+    householdName: string;
+    expiresAt: string;
+  };
 }
 
 export interface ForgotPasswordRequest {
@@ -46,6 +61,12 @@ export const authApi = {
 
   register: (data: RegisterRequest) =>
     apiPost<LoginResponse>('/auth/register', data),
+
+  validateInvite: (code: string) =>
+    apiGet<ValidateInviteResponse>(`/auth/invite/${code}`),
+
+  registerWithInvite: (data: RegisterWithInviteRequest) =>
+    apiPost<LoginResponse>('/auth/register/invite', data),
 
   me: () =>
     apiGet<{ user: User }>('/auth/me'),

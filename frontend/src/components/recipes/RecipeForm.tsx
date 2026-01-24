@@ -32,16 +32,23 @@ import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { recipeSchema, type RecipeFormData } from '@/types/forms';
 import { inventoryApi } from '@/api/inventory';
 import { recipesApi } from '@/api/recipes';
+import { RecipeImageInput } from './RecipeImageInput';
 import { cn } from '@/lib/utils';
 import type { Recipe, InventoryItem, UnitConversion } from '@/types/models';
-import { unitOptions } from '@/lib/inventory-constants';
+import { unitOptions, normalizeUnit } from '@/lib/inventory-constants';
 import { UnitConversionPromptDialog } from '@/components/inventory/UnitConversionPromptDialog';
+
+export interface RecipeImageChange {
+  type: 'file' | 'url' | 'remove' | 'none';
+  file?: File;
+  url?: string;
+}
 
 interface RecipeFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   recipe?: Recipe | null;
-  onSubmit: (data: RecipeFormData) => void;
+  onSubmit: (data: RecipeFormData, imageChange: RecipeImageChange) => void;
   onDelete?: () => void;
   isSubmitting?: boolean;
 }
@@ -454,6 +461,13 @@ export function RecipeForm({
   const [currentConversionIndex, setCurrentConversionIndex] = useState(0);
   const [pendingFormData, setPendingFormData] = useState<RecipeFormData | null>(null);
 
+  // Image state
+  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
+  const [pendingImageUrl, setPendingImageUrl] = useState<string | null>(null);
+  const [imageProcessing, setImageProcessing] = useState(false);
+  const [currentImage, setCurrentImage] = useState<string | null>(null);
+  const [imageRemoved, setImageRemoved] = useState(false);
+
   // Fetch inventory items to check for unit conversions
   const { data: itemsData } = useQuery({
     queryKey: ['inventory-items'],
@@ -520,7 +534,7 @@ export function RecipeForm({
               ingredients: (recipe.ingredients || []).map((ing) => ({
                 name: ing.name || '',
                 amount: typeof ing.amount === 'number' ? ing.amount : 0,
-                unit: ing.unit || '',
+                unit: normalizeUnit(ing.unit),
                 notes: ing.notes ?? undefined,
                 optional: ing.optional ?? undefined,
                 inventoryItemId: ing.inventoryItemId ?? undefined,
@@ -543,6 +557,19 @@ export function RecipeForm({
               tags: [],
             }
       );
+      // Reset image state
+      setPendingImageFile(null);
+      setPendingImageUrl(null);
+      setImageProcessing(false);
+      setImageRemoved(false);
+      // Set current image from recipe
+      if (recipe?.imageData) {
+        setCurrentImage(`data:${recipe.imageMimeType};base64,${recipe.imageData}`);
+      } else if (recipe?.imageUrl) {
+        setCurrentImage(recipe.imageUrl);
+      } else {
+        setCurrentImage(null);
+      }
     }
   }, [open, recipe, reset]);
 
@@ -561,6 +588,20 @@ export function RecipeForm({
       (normalizeUnit(c.fromUnit) === normFrom && normalizeUnit(c.toUnit) === normTo) ||
       (normalizeUnit(c.fromUnit) === normTo && normalizeUnit(c.toUnit) === normFrom)
     );
+  };
+
+  // Build image change object
+  const getImageChange = (): RecipeImageChange => {
+    if (imageRemoved) {
+      return { type: 'remove' };
+    }
+    if (pendingImageFile) {
+      return { type: 'file', file: pendingImageFile };
+    }
+    if (pendingImageUrl) {
+      return { type: 'url', url: pendingImageUrl };
+    }
+    return { type: 'none' };
   };
 
   const handleFormSubmit = (data: RecipeFormData) => {
@@ -594,7 +635,7 @@ export function RecipeForm({
       setCurrentConversionIndex(0);
     } else {
       // No conversions needed, submit directly
-      onSubmit(data);
+      onSubmit(data, getImageChange());
     }
   };
 
@@ -618,7 +659,7 @@ export function RecipeForm({
     } else {
       // All conversions handled, submit the form
       if (pendingFormData) {
-        onSubmit(pendingFormData);
+        onSubmit(pendingFormData, getImageChange());
       }
       setPendingConversions([]);
       setPendingFormData(null);
@@ -633,7 +674,7 @@ export function RecipeForm({
     } else {
       // All conversions handled (skipped), submit the form
       if (pendingFormData) {
-        onSubmit(pendingFormData);
+        onSubmit(pendingFormData, getImageChange());
       }
       setPendingConversions([]);
       setPendingFormData(null);
@@ -650,6 +691,12 @@ export function RecipeForm({
     setPendingConversions([]);
     setPendingFormData(null);
     setCurrentConversionIndex(0);
+    // Reset image state
+    setPendingImageFile(null);
+    setPendingImageUrl(null);
+    setImageProcessing(false);
+    setCurrentImage(null);
+    setImageRemoved(false);
     onOpenChange(false);
   };
 
@@ -681,6 +728,38 @@ export function RecipeForm({
             </TabsList>
 
             <TabsContent value="details" className="space-y-4 min-h-[340px]">
+              {/* Image upload */}
+              <div className="space-y-2">
+                <Label>Image</Label>
+                <RecipeImageInput
+                  currentImage={imageRemoved ? undefined : currentImage || undefined}
+                  onFileSelect={(file) => {
+                    setPendingImageFile(file);
+                    setPendingImageUrl(null);
+                    setImageRemoved(false);
+                    // Show preview
+                    const reader = new FileReader();
+                    reader.onload = () => setCurrentImage(reader.result as string);
+                    reader.readAsDataURL(file);
+                  }}
+                  onUrlFetch={(url) => {
+                    setPendingImageUrl(url);
+                    setPendingImageFile(null);
+                    setImageRemoved(false);
+                    // Show URL as preview (will be replaced after upload)
+                    setCurrentImage(url);
+                  }}
+                  onRemove={() => {
+                    setPendingImageFile(null);
+                    setPendingImageUrl(null);
+                    setCurrentImage(null);
+                    setImageRemoved(true);
+                  }}
+                  isProcessing={imageProcessing}
+                  disabled={isSubmitting}
+                />
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="title">Title</Label>
                 <Input

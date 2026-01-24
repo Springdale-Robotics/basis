@@ -1,12 +1,93 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../../config/database.js';
-import { inventoryAreas, inventoryItems, inventoryStock, shoppingList, leftovers } from '../../db/schema/index.js';
+import { inventoryAreas, inventoryItems, inventoryStock, shoppingList, leftovers, type UnitConversion } from '../../db/schema/index.js';
 import { eq, and, lt, lte, sql, isNotNull, isNull } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
+import { requireInventoryAccess, requireShoppingListAccess } from '../../middleware/permission.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { randomBytes } from 'crypto';
 import { shoppingListSourceSchema } from '../../lib/validators.js';
+import { findConversionChain, normalizeUnit } from '../../lib/unit-conversions.js';
+
+/**
+ * Convert a quantity from one unit to another using item-specific conversions first,
+ * then falling back to global conversions.
+ */
+function convertQuantity(
+  quantity: number,
+  fromUnit: string,
+  toUnit: string,
+  itemConversions: UnitConversion[] = []
+): number | null {
+  const normFrom = normalizeUnit(fromUnit);
+  const normTo = normalizeUnit(toUnit);
+
+  // Same unit, no conversion needed
+  if (normFrom === normTo) {
+    return quantity;
+  }
+
+  // Try item-specific direct conversion
+  const direct = itemConversions.find(
+    (c) => normalizeUnit(c.fromUnit) === normFrom && normalizeUnit(c.toUnit) === normTo
+  );
+  if (direct) {
+    return quantity * direct.factor;
+  }
+
+  // Try item-specific reverse conversion
+  const reverse = itemConversions.find(
+    (c) => normalizeUnit(c.fromUnit) === normTo && normalizeUnit(c.toUnit) === normFrom
+  );
+  if (reverse) {
+    return quantity / reverse.factor;
+  }
+
+  // Fall back to global conversions
+  const globalFactor = findConversionChain(normFrom, normTo);
+  if (globalFactor !== null) {
+    return quantity * globalFactor;
+  }
+
+  return null;
+}
+
+/**
+ * Calculate total stock quantity for an item, converting all stock entries to the target unit.
+ * Returns the total and tracks any units that couldn't be converted.
+ */
+function calculateTotalStockWithConversions(
+  stockEntries: Array<{ quantity: string; unit: string | null }>,
+  targetUnit: string,
+  itemConversions: UnitConversion[] = []
+): { total: number; allConverted: boolean; unconvertedUnits: string[] } {
+  let total = 0;
+  let allConverted = true;
+  const unconvertedUnits: string[] = [];
+
+  for (const entry of stockEntries) {
+    const qty = parseFloat(entry.quantity);
+    const entryUnit = entry.unit || targetUnit;
+
+    if (normalizeUnit(entryUnit) === normalizeUnit(targetUnit)) {
+      total += qty;
+    } else {
+      const converted = convertQuantity(qty, entryUnit, targetUnit, itemConversions);
+      if (converted !== null) {
+        total += converted;
+      } else {
+        // Can't convert - add raw quantity and track the unit
+        allConverted = false;
+        if (!unconvertedUnits.includes(entryUnit)) {
+          unconvertedUnits.push(entryUnit);
+        }
+      }
+    }
+  }
+
+  return { total, allConverted, unconvertedUnits };
+}
 
 const createAreaSchema = z.object({
   name: z.string().min(1).max(255),
@@ -52,6 +133,7 @@ const quickCreateItemSchema = z.object({
   name: z.string().min(1).max(255),
   defaultUnit: z.string().max(50).optional(),
   category: z.string().max(100).optional(),
+  defaultAreaId: z.string().uuid().optional(),
 });
 
 const batchCreateItemsSchema = z.object({
@@ -98,7 +180,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.get(
     '/areas',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async (request) => {
       const areas = await db.query.inventoryAreas.findMany({
         where: eq(inventoryAreas.householdId, request.user!.householdId),
@@ -111,7 +193,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.post(
     '/areas',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = createAreaSchema.parse(request.body);
 
@@ -131,7 +213,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.patch<{ Params: { id: string } }>(
     '/areas/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = createAreaSchema.partial().parse(request.body);
 
@@ -154,7 +236,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete<{ Params: { id: string } }>(
     '/areas/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       await db
         .delete(inventoryAreas)
@@ -171,7 +253,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.post(
     '/areas/reorder',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const { order } = z
         .object({
@@ -194,7 +276,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.get<{ Querystring: { search?: string; category?: string; areaId?: string } }>(
     '/items',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async (request) => {
       const { search, category, areaId } = request.query;
 
@@ -224,7 +306,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.post(
     '/items',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = createItemSchema.parse(request.body);
 
@@ -254,7 +336,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.get<{ Params: { id: string } }>(
     '/items/:id',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async (request) => {
       const item = await db.query.inventoryItems.findFirst({
         where: and(
@@ -271,7 +353,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.patch<{ Params: { id: string } }>(
     '/items/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = createItemSchema.partial().parse(request.body);
 
@@ -307,7 +389,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Add a single unit conversion to an item
   app.patch<{ Params: { id: string } }>(
     '/items/:id/conversions',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = unitConversionSchema.parse(request.body);
 
@@ -350,7 +432,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete<{ Params: { id: string } }>(
     '/items/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       await db
         .delete(inventoryItems)
@@ -368,7 +450,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Quick create item - minimal fields, returns ID for immediate use
   app.post(
     '/items/quick-create',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = quickCreateItemSchema.parse(request.body);
 
@@ -383,6 +465,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           internalId,
           defaultUnit: input.defaultUnit,
           category: input.category,
+          defaultAreaId: input.defaultAreaId,
         })
         .returning();
 
@@ -393,7 +476,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Batch create items - for import flows
   app.post(
     '/items/batch',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = batchCreateItemsSchema.parse(request.body);
 
@@ -424,7 +507,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Batch delete items - delete multiple items at once
   app.post(
     '/items/batch-delete',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = batchDeleteItemsSchema.parse(request.body);
 
@@ -463,7 +546,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Batch update items - update multiple items at once
   app.post(
     '/items/batch-update',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = batchUpdateItemsSchema.parse(request.body);
 
@@ -508,7 +591,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.get(
     '/stock',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async (request) => {
       // Get all stock with item and area info
       const stock = await db.query.inventoryStock.findMany({
@@ -524,7 +607,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.post(
     '/stock',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = addStockSchema.parse(request.body);
 
@@ -545,7 +628,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.patch<{ Params: { id: string } }>(
     '/stock/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = addStockSchema.partial().parse(request.body);
 
@@ -568,7 +651,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete<{ Params: { id: string } }>(
     '/stock/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       await db.delete(inventoryStock).where(eq(inventoryStock.id, request.params.id));
 
@@ -579,7 +662,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Get expiring items
   app.get(
     '/expiring',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async (request) => {
       const { days = '7' } = request.query as any;
       const futureDate = new Date();
@@ -613,7 +696,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Get low stock items
   app.get(
     '/low-stock',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async (request) => {
       // Get items marked as keep-in-stock with current quantities
       const items = await db.query.inventoryItems.findMany({
@@ -629,9 +712,14 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           where: eq(inventoryStock.itemId, item.id),
         });
 
-        const totalQuantity = stock.reduce(
-          (sum, s) => sum + parseFloat(s.quantity),
-          0
+        const targetUnit = item.defaultUnit || 'pieces';
+        const itemConversions = (item.unitConversions as UnitConversion[]) || [];
+
+        // Calculate total with unit conversions
+        const { total: totalQuantity } = calculateTotalStockWithConversions(
+          stock.map((s) => ({ quantity: s.quantity, unit: s.unit })),
+          targetUnit,
+          itemConversions
         );
 
         const minQuantity = item.minStockQuantity
@@ -643,6 +731,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
             item,
             currentQuantity: totalQuantity,
             minQuantity,
+            unit: targetUnit,
             status: totalQuantity === 0 ? 'out' : 'low',
           });
         }
@@ -655,7 +744,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Keep in stock view
   app.get(
     '/keep-in-stock',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async (request) => {
       const items = await db.query.inventoryItems.findMany({
         where: and(
@@ -670,9 +759,14 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           where: eq(inventoryStock.itemId, item.id),
         });
 
-        const totalQuantity = stock.reduce(
-          (sum, s) => sum + parseFloat(s.quantity),
-          0
+        const targetUnit = item.defaultUnit || 'pieces';
+        const itemConversions = (item.unitConversions as UnitConversion[]) || [];
+
+        // Calculate total with unit conversions
+        const { total: totalQuantity } = calculateTotalStockWithConversions(
+          stock.map((s) => ({ quantity: s.quantity, unit: s.unit })),
+          targetUnit,
+          itemConversions
         );
 
         const minQuantity = item.minStockQuantity
@@ -691,7 +785,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           item,
           currentQuantity: totalQuantity,
           minQuantity,
-          unit: item.defaultUnit,
+          unit: targetUnit,
           status: totalQuantity === 0 ? 'out' : totalQuantity < minQuantity ? 'low' : 'ok',
           onShoppingList: !!onList,
         });
@@ -705,7 +799,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.get(
     '/shopping-list',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireShoppingListAccess('view')] },
     async (request) => {
       const list = await db.query.shoppingList.findMany({
         where: eq(shoppingList.householdId, request.user!.householdId),
@@ -732,7 +826,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.post(
     '/shopping-list',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireShoppingListAccess('edit')] },
     async (request) => {
       const input = addToShoppingListSchema.parse(request.body);
 
@@ -759,7 +853,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.post<{ Params: { id: string } }>(
     '/shopping-list/:id/check',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireShoppingListAccess('edit')] },
     async (request) => {
       const { acquiredQuantity, keepRemainder } = z
         .object({
@@ -833,7 +927,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.post<{ Params: { id: string } }>(
     '/shopping-list/:id/to-inventory',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireShoppingListAccess('edit'), requireInventoryAccess('edit')] },
     async (request) => {
       const { areaId, quantity, expiryDate, splits } = z
         .object({
@@ -888,7 +982,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete<{ Params: { id: string } }>(
     '/shopping-list/:id',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireShoppingListAccess('edit')] },
     async (request) => {
       await db
         .delete(shoppingList)
@@ -905,7 +999,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete(
     '/shopping-list/checked',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireShoppingListAccess('edit')] },
     async (request) => {
       await db
         .delete(shoppingList)
@@ -923,7 +1017,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Batch put away - move all checked items to inventory
   app.post(
     '/shopping-list/put-away',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireShoppingListAccess('edit'), requireInventoryAccess('edit')] },
     async (request) => {
       const { defaultAreaId } = z
         .object({
@@ -992,7 +1086,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Get all active leftovers (not finished)
   app.get(
     '/leftovers',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async (request) => {
       const leftoversList = await db.query.leftovers.findMany({
         where: and(
@@ -1015,7 +1109,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Get leftovers expiring soon
   app.get(
     '/leftovers/expiring',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async (request) => {
       const { days = '3' } = request.query as { days?: string };
       const futureDate = new Date();
@@ -1043,7 +1137,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Get single leftover
   app.get<{ Params: { id: string } }>(
     '/leftovers/:id',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async (request) => {
       const leftover = await db.query.leftovers.findFirst({
         where: and(
@@ -1067,7 +1161,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Create leftover
   app.post(
     '/leftovers',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = createLeftoverSchema.parse(request.body);
 
@@ -1096,7 +1190,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Update leftover
   app.patch<{ Params: { id: string } }>(
     '/leftovers/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = updateLeftoverSchema.parse(request.body);
 
@@ -1132,7 +1226,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Delete leftover
   app.delete<{ Params: { id: string } }>(
     '/leftovers/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       await db
         .delete(leftovers)
@@ -1150,7 +1244,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Mark leftover as finished/consumed
   app.post<{ Params: { id: string } }>(
     '/leftovers/:id/finish',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const [updated] = await db
         .update(leftovers)

@@ -30,6 +30,10 @@ export const recipes = pgTable('recipes', {
   cookTimeMinutes: integer('cook_time_minutes'),
   servings: integer('servings'),
   imageUrl: text('image_url'),
+  imageData: text('image_data'),                              // Base64-encoded image
+  imageMimeType: varchar('image_mime_type', { length: 50 }),  // e.g., 'image/webp'
+  imageWidth: integer('image_width'),
+  imageHeight: integer('image_height'),
   sourceUrl: text('source_url'),
   tags: jsonb('tags').$type<string[]>().default([]),
   timers: jsonb('timers').$type<RecipeTimer[]>().default([]),
@@ -111,7 +115,7 @@ export interface ActiveTimer {
   remainingSeconds?: number;
 }
 
-export const importSourceTypeEnum = pgEnum('import_source_type', ['url', 'image', 'pdf']);
+export const importSourceTypeEnum = pgEnum('import_source_type', ['url', 'image', 'pdf', 'text']);
 export const importStatusEnum = pgEnum('import_status', [
   'parsing',
   'pending_review',
@@ -132,6 +136,9 @@ export const recipeImportSessions = pgTable('recipe_import_sessions', {
   parsedRecipe: jsonb('parsed_recipe').$type<ParsedRecipe>(),
   ingredientMatches: jsonb('ingredient_matches').$type<IngredientMatch[]>().default([]),
   status: importStatusEnum('status').notNull().default('parsing'),
+  parseMethod: varchar('parse_method', { length: 50 }),
+  parseConfidence: decimal('parse_confidence', { precision: 5, scale: 4 }),
+  parseWarnings: jsonb('parse_warnings').$type<string[]>().default([]),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   expiresAt: timestamp('expires_at').notNull(),
 });
@@ -144,6 +151,15 @@ export interface ParsedRecipe {
   cookTimeMinutes?: number;
   servings?: number;
   imageUrl?: string;
+  sourceUrl?: string;
+  author?: string;
+  cuisine?: string;
+  ingredients: ParsedIngredient[];
+  ingredientGroups?: Array<{ name?: string; ingredients: ParsedIngredient[] }>;
+}
+
+export interface IngredientGroup {
+  name?: string;
   ingredients: ParsedIngredient[];
 }
 
@@ -161,17 +177,43 @@ export interface IngredientMatch {
   matchStatus: 'matched' | 'unmatched' | 'manual';
   matchedItemId?: string;
   matchedItemName?: string;
+  modifiedUnit?: string;  // User-modified unit during import
   confidence?: number;
+  matchReason?: 'exact' | 'synonym' | 'contains' | 'fuzzy';
   unitConversion?: {
     fromUnit: string;
     toUnit: string;
     factor: number;
   };
+  needsConversion?: {
+    fromUnit: string;
+    toUnit: string;
+    hasExisting: boolean;
+    suggestedFactor?: number;
+  };
   suggestions?: Array<{
     itemId: string;
     name: string;
     confidence: number;
+    matchReason?: 'exact' | 'synonym' | 'contains' | 'fuzzy';
+    needsConversion?: {
+      fromUnit: string;
+      toUnit: string;
+      hasExisting: boolean;
+      suggestedFactor?: number;
+    };
   }>;
+  // Catalog item data from exported .recipe files
+  catalogItem?: {
+    name: string;
+    category?: string;
+    defaultUnit?: string;
+    unitConversions?: Array<{
+      fromUnit: string;
+      toUnit: string;
+      factor: number;
+    }>;
+  };
 }
 
 export type Recipe = typeof recipes.$inferSelect;

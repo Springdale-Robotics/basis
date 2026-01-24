@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query';
-import { Upload, Link, FileText, Check, X, ChevronRight, Loader2, AlertCircle } from 'lucide-react';
+import { Upload, Link, FileText, Check, X, ChevronRight, Loader2, AlertCircle, AlertTriangle, Info, FileUp } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -15,12 +15,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { recipesApi, type IngredientMatch, type ImportSession } from '@/api/recipes';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { recipesApi, type IngredientMatch, type ImportSession, type ParsedRecipe, type ParseMethod } from '@/api/recipes';
 import { inventoryApi } from '@/api/inventory';
 import { cn } from '@/lib/utils';
 import { IngredientMatchRow } from './IngredientMatchRow';
+import { BulkIngredientActions } from './BulkIngredientActions';
 
 type ImportStep = 'source' | 'review' | 'ingredients' | 'confirm';
 
@@ -30,13 +31,34 @@ interface ImportRecipeDialogProps {
   onSuccess?: (recipeId: string) => void;
 }
 
+// Map parse method to user-friendly name
+function getParseMethodLabel(method: ParseMethod | undefined): string {
+  switch (method) {
+    case 'json-ld': return 'Structured Data';
+    case 'recipe-clipper': return 'Smart Extraction';
+    case 'microdata': return 'Microdata';
+    case 'heuristic': return 'Pattern Matching';
+    case 'text': return 'Text Parsing';
+    default: return 'Unknown';
+  }
+}
+
+// Get confidence badge color
+function getConfidenceBadgeVariant(confidence: number): 'default' | 'secondary' | 'destructive' {
+  if (confidence >= 0.8) return 'default';
+  if (confidence >= 0.5) return 'secondary';
+  return 'destructive';
+}
+
 export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportRecipeDialogProps) {
   const [step, setStep] = useState<ImportStep>('source');
-  const [sourceType, setSourceType] = useState<'url' | 'pdf' | 'text'>('text');
+  const [sourceType, setSourceType] = useState<'url' | 'pdf' | 'text' | 'file'>('text');
   const [sourceUrl, setSourceUrl] = useState('');
   const [rawText, setRawText] = useState('');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [ingredientMatches, setIngredientMatches] = useState<IngredientMatch[]>([]);
+  // Store catalog item data from imported .recipe files
+  const [importedCatalogItems, setImportedCatalogItems] = useState<Record<string, { name: string; category?: string; defaultUnit?: string; unitConversions?: Array<{ fromUnit: string; toUnit: string; factor: number }> }>>({});
   const [overrides, setOverrides] = useState<{
     title?: string;
     description?: string;
@@ -44,6 +66,12 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
     cookTimeMinutes?: number;
     servings?: number;
   }>({});
+
+  // Preview state for URL/text parsing
+  const [previewRecipe, setPreviewRecipe] = useState<ParsedRecipe | null>(null);
+  const [parseMethod, setParseMethod] = useState<ParseMethod | undefined>();
+  const [parseConfidence, setParseConfidence] = useState<number | undefined>();
+  const [parseWarnings, setParseWarnings] = useState<string[]>([]);
 
   const queryClient = useQueryClient();
 
@@ -56,12 +84,53 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
 
   const session = sessionData?.session;
 
+  // URL preview mutation
+  const previewUrlMutation = useMutation({
+    mutationFn: () => recipesApi.parseUrl(sourceUrl),
+    onSuccess: (data) => {
+      setPreviewRecipe(data.parsedRecipe);
+      setParseMethod(data.parseMethod);
+      setParseConfidence(data.confidence);
+      setParseWarnings(data.warnings);
+    },
+  });
+
+  // Text preview mutation
+  const previewTextMutation = useMutation({
+    mutationFn: () => recipesApi.parseText(rawText),
+    onSuccess: (data) => {
+      setPreviewRecipe(data.parsedRecipe);
+      setParseMethod(data.parseMethod);
+      setParseConfidence(data.confidence);
+      setParseWarnings(data.warnings);
+    },
+  });
+
   // Start import mutation
   const startImportMutation = useMutation({
     mutationFn: async () => {
+      if (sourceType === 'file' && previewRecipe) {
+        // For .recipe files, send the parsed recipe as JSON with catalogItem data
+        const fileData = {
+          version: '1.0',
+          type: 'recipe',
+          recipe: {
+            ...previewRecipe,
+            ingredients: previewRecipe.ingredients.map(ing => ({
+              ...ing,
+              catalogItem: importedCatalogItems[ing.name],
+            })),
+          },
+        };
+        return recipesApi.startImport({
+          sourceType: 'text',
+          sourceData: JSON.stringify(fileData),
+          rawText: JSON.stringify(fileData),
+        });
+      }
       const sourceData = sourceType === 'url' ? sourceUrl : rawText;
       return recipesApi.startImport({
-        sourceType: sourceType === 'text' ? 'pdf' : sourceType,
+        sourceType: sourceType === 'file' ? 'text' : sourceType,
         sourceData,
         rawText: sourceType === 'text' ? rawText : undefined,
       });
@@ -77,6 +146,15 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
     mutationFn: (updates: Array<{ parsedName: string; matchedItemId?: string; matchedItemName?: string }>) =>
       recipesApi.updateImportMatches(sessionId!, updates),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['import-session', sessionId] });
+    },
+  });
+
+  // Rematch mutation
+  const rematchMutation = useMutation({
+    mutationFn: () => recipesApi.rematchIngredients(sessionId!),
+    onSuccess: (data) => {
+      setIngredientMatches(data.matches);
       queryClient.invalidateQueries({ queryKey: ['import-session', sessionId] });
     },
   });
@@ -107,41 +185,162 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
     setRawText('');
     setSessionId(null);
     setIngredientMatches([]);
+    setImportedCatalogItems({});
     setOverrides({});
+    setPreviewRecipe(null);
+    setParseMethod(undefined);
+    setParseConfidence(undefined);
+    setParseWarnings([]);
     onOpenChange(false);
   }, [onOpenChange]);
 
-  const handleMatchUpdate = useCallback((parsedName: string, matchedItemId?: string, matchedItemName?: string) => {
+  const handlePreview = useCallback(() => {
+    if (sourceType === 'url') {
+      previewUrlMutation.mutate();
+    } else if (sourceType === 'text') {
+      previewTextMutation.mutate();
+    }
+  }, [sourceType, previewUrlMutation, previewTextMutation]);
+
+  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+
+      // Check if this is a .recipe file format
+      if (data.version && data.type === 'recipe' && data.recipe) {
+        // Extract recipe data
+        const recipe = data.recipe;
+        setPreviewRecipe({
+          title: recipe.title,
+          description: recipe.description,
+          instructions: recipe.instructions?.map((inst: { text: string }) => inst.text) || [],
+          prepTimeMinutes: recipe.prepTimeMinutes,
+          cookTimeMinutes: recipe.cookTimeMinutes,
+          servings: recipe.servings,
+          imageUrl: recipe.imageUrl,
+          sourceUrl: recipe.sourceUrl,
+          ingredients: recipe.ingredients?.map((ing: { name: string; quantity?: number; unit?: string; notes?: string }) => ({
+            name: ing.name,
+            quantity: ing.quantity,
+            unit: ing.unit,
+            notes: ing.notes,
+          })) || [],
+        });
+        setParseMethod('json-ld'); // Treat as structured data
+        setParseConfidence(1.0); // High confidence for .recipe files
+        setParseWarnings([]);
+
+        // Store catalog item data for ingredient matching (including unit conversions)
+        const catalogItems: Record<string, { name: string; category?: string; defaultUnit?: string; unitConversions?: Array<{ fromUnit: string; toUnit: string; factor: number }> }> = {};
+        recipe.ingredients?.forEach((ing: { name: string; catalogItem?: { name: string; category?: string; defaultUnit?: string; unitConversions?: Array<{ fromUnit: string; toUnit: string; factor: number }> } }) => {
+          if (ing.catalogItem) {
+            catalogItems[ing.name] = ing.catalogItem;
+          }
+        });
+        setImportedCatalogItems(catalogItems);
+      } else {
+        setParseWarnings(['Invalid .recipe file format']);
+      }
+    } catch {
+      setParseWarnings(['Failed to parse file. Make sure it is a valid .recipe file.']);
+    }
+    // Reset file input
+    e.target.value = '';
+  }, []);
+
+  const handleMatchUpdate = useCallback((parsedName: string, matchedItemId?: string, matchedItemName?: string, unit?: string) => {
     setIngredientMatches(prev =>
       prev.map(m =>
         m.parsedName === parsedName
-          ? { ...m, matchedItemId, matchedItemName, matchStatus: matchedItemId ? 'manual' : 'unmatched' }
+          ? {
+              ...m,
+              matchedItemId,
+              matchedItemName,
+              matchStatus: matchedItemId ? 'manual' : 'unmatched',
+              // Store user-modified unit
+              modifiedUnit: unit,
+            }
           : m
       )
     );
   }, []);
 
-  const handleCreateNewItem = useCallback(async (name: string, unit?: string) => {
-    const result = await createItemMutation.mutateAsync({ name, defaultUnit: unit });
+  const handleCreateNewItem = useCallback(async (name: string, unit?: string, category?: string, areaId?: string) => {
+    // Check if there's catalogItem data for this ingredient from .recipe import
+    const catalogItem = importedCatalogItems[name];
+    const result = await createItemMutation.mutateAsync({
+      name: catalogItem?.name || name,
+      defaultUnit: unit || catalogItem?.defaultUnit,
+      category: category || catalogItem?.category,
+      defaultAreaId: areaId,
+    });
     return { itemId: result.item.id, itemName: result.item.name };
-  }, [createItemMutation]);
+  }, [createItemMutation, importedCatalogItems]);
 
   const handleProceedToIngredients = useCallback(() => {
     if (session?.ingredientMatches) {
-      setIngredientMatches(session.ingredientMatches);
+      // Attach catalogItem data from imported .recipe file if available
+      const matchesWithCatalog = session.ingredientMatches.map(match => ({
+        ...match,
+        catalogItem: importedCatalogItems[match.parsedName] || match.catalogItem,
+      }));
+      setIngredientMatches(matchesWithCatalog);
     }
     setStep('ingredients');
-  }, [session]);
+  }, [session, importedCatalogItems]);
 
   const handleSaveMatches = useCallback(() => {
     const updates = ingredientMatches.map(m => ({
       parsedName: m.parsedName,
       matchedItemId: m.matchedItemId,
       matchedItemName: m.matchedItemName,
+      modifiedUnit: m.modifiedUnit,
     }));
     updateMatchesMutation.mutate(updates);
     setStep('confirm');
   }, [ingredientMatches, updateMatchesMutation]);
+
+  // Bulk action handlers
+  const handleAutoAcceptHighConfidence = useCallback(() => {
+    setIngredientMatches(prev =>
+      prev.map(m => {
+        if (m.suggestions && m.suggestions.length > 0 && m.suggestions[0].confidence >= 0.9) {
+          return {
+            ...m,
+            matchedItemId: m.suggestions[0].itemId,
+            matchedItemName: m.suggestions[0].name,
+            matchStatus: 'manual',
+            confidence: m.suggestions[0].confidence,
+          };
+        }
+        return m;
+      })
+    );
+  }, []);
+
+  const handleCreateAllUnmatched = useCallback(async () => {
+    const unmatched = ingredientMatches.filter(m => !m.matchedItemId);
+    for (const match of unmatched) {
+      try {
+        const result = await handleCreateNewItem(match.parsedName, match.parsedUnit);
+        handleMatchUpdate(match.parsedName, result.itemId, result.itemName);
+      } catch {
+        // Continue with next item on error
+      }
+    }
+    // Rematch to pick up new items
+    if (sessionId) {
+      rematchMutation.mutate();
+    }
+  }, [ingredientMatches, handleCreateNewItem, handleMatchUpdate, sessionId, rematchMutation]);
+
+  const handleSkipAllUnmatched = useCallback(() => {
+    // Nothing to do - unmatched items will be imported without inventory links
+  }, []);
 
   // Calculate step progress
   const stepProgress = {
@@ -151,23 +350,34 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
     confirm: 100,
   };
 
+  const isPreviewing = previewUrlMutation.isPending || previewTextMutation.isPending;
+  const hasPreview = !!previewRecipe;
+  const currentConfidence = parseConfidence ?? (session?.parseConfidence ? parseFloat(session.parseConfidence) : undefined);
+  const currentWarnings = parseWarnings.length > 0 ? parseWarnings : (session?.parseWarnings ?? []);
+  const currentParseMethod = parseMethod ?? session?.parseMethod;
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="flex-shrink-0">
           <DialogTitle>Import Recipe</DialogTitle>
           <DialogDescription>
             Import a recipe from text, URL, or PDF
           </DialogDescription>
         </DialogHeader>
 
-        <Progress value={stepProgress[step]} className="h-1" />
+        <Progress value={stepProgress[step]} className="h-1 flex-shrink-0" />
 
-        <ScrollArea className="flex-1 pr-4">
+        <div className="flex-1 overflow-y-auto pr-4 min-h-0">
           {step === 'source' && (
             <div className="space-y-4 py-4">
-              <Tabs value={sourceType} onValueChange={(v) => setSourceType(v as 'url' | 'pdf' | 'text')}>
-                <TabsList className="grid w-full grid-cols-3">
+              <Tabs value={sourceType} onValueChange={(v) => {
+                setSourceType(v as 'url' | 'pdf' | 'text' | 'file');
+                setPreviewRecipe(null);
+                setParseWarnings([]);
+                setImportedCatalogItems({});
+              }}>
+                <TabsList className="grid w-full grid-cols-4">
                   <TabsTrigger value="text">
                     <FileText className="mr-2 h-4 w-4" />
                     Paste Text
@@ -175,6 +385,10 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
                   <TabsTrigger value="url">
                     <Link className="mr-2 h-4 w-4" />
                     From URL
+                  </TabsTrigger>
+                  <TabsTrigger value="file">
+                    <FileUp className="mr-2 h-4 w-4" />
+                    Upload File
                   </TabsTrigger>
                   <TabsTrigger value="pdf">
                     <Upload className="mr-2 h-4 w-4" />
@@ -188,7 +402,10 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
                     <Textarea
                       placeholder="Paste the recipe here including ingredients and instructions..."
                       value={rawText}
-                      onChange={(e) => setRawText(e.target.value)}
+                      onChange={(e) => {
+                        setRawText(e.target.value);
+                        setPreviewRecipe(null);
+                      }}
                       rows={12}
                       className="font-mono text-sm"
                     />
@@ -199,17 +416,120 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
                 </TabsContent>
 
                 <TabsContent value="url" className="mt-4">
-                  <div className="space-y-2">
-                    <Label>Recipe URL</Label>
-                    <Input
-                      type="url"
-                      placeholder="https://example.com/recipe"
-                      value={sourceUrl}
-                      onChange={(e) => setSourceUrl(e.target.value)}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Enter the URL of a recipe page to import
-                    </p>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>Recipe URL</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          type="url"
+                          placeholder="https://example.com/recipe"
+                          value={sourceUrl}
+                          onChange={(e) => {
+                            setSourceUrl(e.target.value);
+                            setPreviewRecipe(null);
+                          }}
+                          className="flex-1"
+                        />
+                        <Button
+                          variant="outline"
+                          onClick={handlePreview}
+                          disabled={!sourceUrl || isPreviewing}
+                        >
+                          {isPreviewing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                          Preview
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Enter the URL of a recipe page. We support most recipe websites including AllRecipes, Food Network, and more.
+                      </p>
+                    </div>
+
+                    {previewUrlMutation.isError && (
+                      <Alert variant="destructive">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>
+                          {previewUrlMutation.error instanceof Error
+                            ? previewUrlMutation.error.message
+                            : 'Failed to fetch recipe from URL'}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                    {hasPreview && sourceType === 'url' && (
+                      <Card>
+                        <CardContent className="p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-medium">{previewRecipe?.title}</h4>
+                            <div className="flex gap-2">
+                              {currentParseMethod && (
+                                <Badge variant="outline" className="text-xs">
+                                  {getParseMethodLabel(currentParseMethod)}
+                                </Badge>
+                              )}
+                              {currentConfidence !== undefined && (
+                                <Badge variant={getConfidenceBadgeVariant(currentConfidence)} className="text-xs">
+                                  {Math.round(currentConfidence * 100)}% confidence
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                          {previewRecipe?.description && (
+                            <p className="text-sm text-muted-foreground line-clamp-2">
+                              {previewRecipe.description}
+                            </p>
+                          )}
+                          <div className="flex gap-4 text-sm text-muted-foreground">
+                            <span>{previewRecipe?.ingredients.length ?? 0} ingredients</span>
+                            <span>{previewRecipe?.instructions.length ?? 0} steps</span>
+                            {previewRecipe?.servings && <span>{previewRecipe.servings} servings</span>}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="file" className="mt-4">
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>Upload .recipe file</Label>
+                      <Input
+                        type="file"
+                        accept=".recipe"
+                        onChange={handleFileUpload}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Upload a .recipe file exported from this app or another compatible source.
+                      </p>
+                    </div>
+
+                    {hasPreview && sourceType === 'file' && (
+                      <Card>
+                        <CardContent className="p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-medium">{previewRecipe?.title}</h4>
+                            <Badge variant="default" className="text-xs">
+                              100% confidence
+                            </Badge>
+                          </div>
+                          {previewRecipe?.description && (
+                            <p className="text-sm text-muted-foreground line-clamp-2">
+                              {previewRecipe.description}
+                            </p>
+                          )}
+                          <div className="flex gap-4 text-sm text-muted-foreground">
+                            <span>{previewRecipe?.ingredients.length ?? 0} ingredients</span>
+                            <span>{previewRecipe?.instructions.length ?? 0} steps</span>
+                            {previewRecipe?.servings && <span>{previewRecipe.servings} servings</span>}
+                          </div>
+                          {Object.keys(importedCatalogItems).length > 0 && (
+                            <div className="text-sm text-green-600">
+                              {Object.keys(importedCatalogItems).length} ingredients have catalog data for easy linking
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    )}
                   </div>
                 </TabsContent>
 
@@ -223,13 +543,30 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
                 </TabsContent>
               </Tabs>
 
+              {currentWarnings.length > 0 && (
+                <Alert>
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertDescription>
+                    <ul className="list-disc list-inside space-y-1">
+                      {currentWarnings.map((warning, i) => (
+                        <li key={i} className="text-sm">{warning}</li>
+                      ))}
+                    </ul>
+                  </AlertDescription>
+                </Alert>
+              )}
+
               <div className="flex justify-end">
                 <Button
                   onClick={() => startImportMutation.mutate()}
-                  disabled={startImportMutation.isPending || (sourceType === 'text' ? !rawText : !sourceUrl)}
+                  disabled={startImportMutation.isPending || (
+                    sourceType === 'text' ? !rawText :
+                    sourceType === 'file' ? !previewRecipe :
+                    !sourceUrl
+                  )}
                 >
                   {startImportMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Parse Recipe
+                  {sourceType === 'file' ? 'Import Recipe' : 'Parse Recipe'}
                   <ChevronRight className="ml-2 h-4 w-4" />
                 </Button>
               </div>
@@ -244,6 +581,43 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
                 </div>
               ) : session?.parsedRecipe ? (
                 <>
+                  {/* Confidence and warnings banner */}
+                  {(currentConfidence !== undefined || currentWarnings.length > 0) && (
+                    <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                      <div className="flex items-center gap-2">
+                        {currentParseMethod && (
+                          <Badge variant="outline">
+                            {getParseMethodLabel(currentParseMethod)}
+                          </Badge>
+                        )}
+                        {currentConfidence !== undefined && (
+                          <Badge variant={getConfidenceBadgeVariant(currentConfidence)}>
+                            {Math.round(currentConfidence * 100)}% confidence
+                          </Badge>
+                        )}
+                      </div>
+                      {currentWarnings.length > 0 && (
+                        <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                          <AlertTriangle className="h-4 w-4" />
+                          {currentWarnings.length} warning{currentWarnings.length !== 1 ? 's' : ''}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {currentWarnings.length > 0 && (
+                    <Alert>
+                      <Info className="h-4 w-4" />
+                      <AlertDescription>
+                        <ul className="list-disc list-inside space-y-1">
+                          {currentWarnings.map((warning, i) => (
+                            <li key={i} className="text-sm">{warning}</li>
+                          ))}
+                        </ul>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
                   <div className="space-y-4">
                     <div>
                       <Label>Title</Label>
@@ -288,6 +662,12 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
                         />
                       </div>
                     </div>
+
+                    {session.parsedRecipe.author && (
+                      <div className="text-sm text-muted-foreground">
+                        By {session.parsedRecipe.author}
+                      </div>
+                    )}
 
                     <div>
                       <Label>Ingredients ({session.parsedRecipe.ingredients.length})</Label>
@@ -361,6 +741,15 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
                 </div>
               </div>
 
+              {/* Bulk actions */}
+              <BulkIngredientActions
+                matches={ingredientMatches}
+                onAutoAccept={handleAutoAcceptHighConfidence}
+                onCreateAll={handleCreateAllUnmatched}
+                onSkipAll={handleSkipAllUnmatched}
+                isCreating={createItemMutation.isPending}
+              />
+
               <div className="space-y-2">
                 {ingredientMatches.map((match, index) => (
                   <IngredientMatchRow
@@ -408,7 +797,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
               </div>
             </div>
           )}
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );

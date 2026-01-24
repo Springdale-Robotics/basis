@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiPatch, apiDelete } from './client';
-import type { Household, HouseholdSettings, User } from '@/types/models';
+import type { Household, HouseholdSettings, User, UserRole } from '@/types/models';
 
 export interface CreateHouseholdRequest {
   name: string;
@@ -13,17 +13,23 @@ export interface UpdateHouseholdRequest {
 }
 
 export interface InviteMemberRequest {
-  email: string;
-  role: 'member' | 'kid' | 'visitor';
+  role: UserRole;
+  email?: string;
 }
 
-export interface InviteResponse {
+export interface MemberInvite {
   id: string;
-  code: string;
-  email: string;
-  role: string;
+  inviteCode: string;
+  inviteLink: string;
+  email?: string;
+  role: UserRole;
+  status: 'pending' | 'accepted' | 'expired' | 'revoked';
   expiresAt: string;
+  createdAt: string;
 }
+
+// Legacy type for backwards compatibility
+export interface InviteResponse extends MemberInvite {}
 
 export const householdsApi = {
   getCurrent: () =>
@@ -36,16 +42,16 @@ export const householdsApi = {
     apiGet<{ members: User[] }>('/households/current/members'),
 
   inviteMember: (data: InviteMemberRequest) =>
-    apiPost<{ invite: InviteResponse }>('/households/current/members/invite', data),
+    apiPost<{ invite: MemberInvite }>('/households/current/members/invite', data),
 
   removeMember: (userId: string) =>
     apiDelete<void>(`/households/current/members/${userId}`),
 
-  updateMemberRole: (userId: string, role: string) =>
+  updateMemberRole: (userId: string, role: UserRole) =>
     apiPatch<{ member: User }>(`/households/current/members/${userId}`, { role }),
 
   getInvites: () =>
-    apiGet<{ invites: InviteResponse[] }>('/households/current/members/invites'),
+    apiGet<{ invites: MemberInvite[] }>('/households/current/members/invites'),
 
   revokeInvite: (inviteId: string) =>
     apiDelete<void>(`/households/current/members/invites/${inviteId}`),

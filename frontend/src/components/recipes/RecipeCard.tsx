@@ -13,15 +13,20 @@ interface RecipeCardProps {
 export function RecipeCard({ recipe, onClick }: RecipeCardProps) {
   const totalTime = (recipe.prepTime || 0) + (recipe.cookTime || 0);
 
+  // Prefer imageData over imageUrl for backward compatibility
+  const imageSrc = recipe.imageData
+    ? `data:${recipe.imageMimeType};base64,${recipe.imageData}`
+    : recipe.imageUrl;
+
   return (
     <Card
       className="overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
       onClick={onClick}
     >
-      {recipe.imageUrl ? (
+      {imageSrc ? (
         <div className="aspect-video relative overflow-hidden bg-muted">
           <img
-            src={recipe.imageUrl}
+            src={imageSrc}
             alt={recipe.title}
             className="object-cover w-full h-full"
           />
@@ -79,15 +84,20 @@ interface RecipeListItemProps {
 export function RecipeListItem({ recipe, onClick }: RecipeListItemProps) {
   const totalTime = (recipe.prepTime || 0) + (recipe.cookTime || 0);
 
+  // Prefer imageData over imageUrl for backward compatibility
+  const imageSrc = recipe.imageData
+    ? `data:${recipe.imageMimeType};base64,${recipe.imageData}`
+    : recipe.imageUrl;
+
   return (
     <div
       className="flex gap-4 p-4 border rounded-lg cursor-pointer hover:bg-muted/50 transition-colors"
       onClick={onClick}
     >
-      {recipe.imageUrl ? (
+      {imageSrc ? (
         <div className="w-24 h-24 shrink-0 rounded-md overflow-hidden bg-muted">
           <img
-            src={recipe.imageUrl}
+            src={imageSrc}
             alt={recipe.title}
             className="object-cover w-full h-full"
           />

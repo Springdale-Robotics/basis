@@ -8,25 +8,42 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/uiStore';
+import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
+import { ROUTE_TO_FEATURE } from '@/lib/constants';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Sidebar } from './Sidebar';
+import type { Feature } from '@/api/permissions';
 
-const navItems = [
+interface MobileNavItem {
+  label: string;
+  href: string;
+  icon: typeof LayoutDashboard;
+  feature?: Feature;
+}
+
+const navItems: MobileNavItem[] = [
   { label: 'Home', href: '/dashboard', icon: LayoutDashboard },
-  { label: 'Calendar', href: '/calendar', icon: Calendar },
-  { label: 'Recipes', href: '/recipes', icon: ChefHat },
-  { label: 'Shop', href: '/shopping-list', icon: ShoppingCart },
+  { label: 'Calendar', href: '/calendar', icon: Calendar, feature: 'calendars' },
+  { label: 'Recipes', href: '/recipes', icon: ChefHat, feature: 'recipes' },
+  { label: 'Shop', href: '/shopping-list', icon: ShoppingCart, feature: 'shopping_list' },
 ];
 
 export function MobileNav() {
   const location = useLocation();
   const { mobileNavOpen, setMobileNavOpen } = useUIStore();
+  const { hasAccess } = useFeaturePermissions();
+
+  // Filter nav items based on user permissions
+  const filteredNavItems = navItems.filter((item) => {
+    if (!item.feature) return true; // No feature restriction
+    return hasAccess(item.feature);
+  });
 
   return (
     <>
       {/* Bottom navigation bar */}
       <nav className="fixed bottom-0 left-0 right-0 z-50 flex h-16 items-center justify-around border-t bg-background pb-safe">
-        {navItems.map((item) => {
+        {filteredNavItems.map((item) => {
           const Icon = item.icon;
           const isActive =
             location.pathname === item.href ||

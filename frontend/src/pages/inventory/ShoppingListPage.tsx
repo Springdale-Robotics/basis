@@ -8,6 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { EditGate } from '@/components/permissions';
 import { PutAwayDialog } from '@/components/inventory/PutAwayDialog';
 import { AddToListDialog } from '@/components/inventory/AddToListDialog';
 import { CheckOffItemDialog } from '@/components/inventory/CheckOffItemDialog';
@@ -132,36 +133,40 @@ export function ShoppingListPage() {
         title="Shopping List"
         description={`${uncheckedCount} items to buy, ${checkedCount} checked off`}
         actions={
-          <div className="flex gap-2">
-            {checkedCount > 0 && (
-              <>
-                <Button variant="outline" onClick={() => clearCheckedMutation.mutate()}>
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Clear Checked
-                </Button>
-                <Button onClick={() => setPutAwayDialogOpen(true)}>
-                  <Package className="mr-2 h-4 w-4" />
-                  Put Away Groceries
-                </Button>
-              </>
-            )}
-          </div>
+          <EditGate feature="shopping_list">
+            <div className="flex gap-2">
+              {checkedCount > 0 && (
+                <>
+                  <Button variant="outline" onClick={() => clearCheckedMutation.mutate()}>
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Clear Checked
+                  </Button>
+                  <Button onClick={() => setPutAwayDialogOpen(true)}>
+                    <Package className="mr-2 h-4 w-4" />
+                    Put Away Groceries
+                  </Button>
+                </>
+              )}
+            </div>
+          </EditGate>
         }
       />
 
       {/* Add item button */}
-      <Card className="mb-6">
-        <CardContent className="p-4">
-          <Button
-            variant="outline"
-            className="w-full justify-start text-muted-foreground"
-            onClick={() => setAddDialogOpen(true)}
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Add item from catalog...
-          </Button>
-        </CardContent>
-      </Card>
+      <EditGate feature="shopping_list">
+        <Card className="mb-6">
+          <CardContent className="p-4">
+            <Button
+              variant="outline"
+              className="w-full justify-start text-muted-foreground"
+              onClick={() => setAddDialogOpen(true)}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Add item from catalog...
+            </Button>
+          </CardContent>
+        </Card>
+      </EditGate>
 
       {/* Shopping list */}
       {isLoading ? (

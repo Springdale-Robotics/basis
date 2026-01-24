@@ -212,6 +212,10 @@ export interface Recipe {
   title: string;
   description?: string;
   imageUrl?: string;
+  imageData?: string;
+  imageMimeType?: string;
+  imageWidth?: number;
+  imageHeight?: number;
   servings: number;
   prepTime?: number;
   cookTime?: number;
@@ -237,6 +241,7 @@ export interface RecipeIngredient {
   unit: string;
   notes?: string;
   optional: boolean;
+  linkedItemName?: string | null;  // Name from linked inventory item
 }
 
 export interface RecipeInstruction {
@@ -292,6 +297,7 @@ export interface InventoryItem {
   keepInStock: boolean;
   keepInStockThreshold?: number;
   minStockLevel?: number;
+  minStockQuantity?: number;
   defaultAreaId?: string;
   unitConversions?: UnitConversion[];
   stockEntries?: StockEntry[];
@@ -431,6 +437,13 @@ export interface FileItem {
   path: string;
   thumbnailUrl?: string;
   metadata?: FileMetadata;
+  excludedFromCategories?: boolean;
+  isRestricted?: boolean;
+  restrictedBy?: {
+    type: 'file' | 'folder';
+    id: string;
+    name: string;
+  } | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;

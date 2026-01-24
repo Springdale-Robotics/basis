@@ -16,7 +16,8 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { UnitConversionPromptDialog } from './UnitConversionPromptDialog';
 import type { StorageArea, InventoryItem, StockEntry } from '@/types/models';
-import { unitOptions, calculateTotalStock, convertQuantity } from '@/lib/inventory-constants';
+import { unitOptions, calculateTotalStock, convertQuantity, normalizeUnit } from '@/lib/inventory-constants';
+import { hasGlobalConversion } from '@/lib/unit-conversions';
 import { formatDate, cn } from '@/lib/utils';
 import { inventoryApi } from '@/api/inventory';
 

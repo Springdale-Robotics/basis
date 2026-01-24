@@ -4,11 +4,13 @@ import { authRateLimiter } from '../../middleware/rate-limit.middleware.js';
 import {
   loginSchema,
   registerSchema,
+  registerWithInviteSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
   changePasswordSchema,
   type LoginInput,
   type RegisterInput,
+  type RegisterWithInviteInput,
   type ForgotPasswordInput,
   type ResetPasswordInput,
   type ChangePasswordInput,
@@ -59,6 +61,78 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const input = registerSchema.parse(request.body);
       const result = await authService.register(input);
+
+      // Set session cookie
+      reply.setCookie('session', result.session.id, {
+        httpOnly: true,
+        secure: config.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: config.SESSION_MAX_AGE_MS / 1000,
+      });
+
+      return {
+        success: true,
+        data: {
+          user: result.user,
+          household: result.household,
+        },
+      };
+    }
+  );
+
+  // Validate invite code (public endpoint)
+  app.get<{ Params: { code: string } }>(
+    '/invite/:code',
+    {
+      preHandler: [authRateLimiter],
+    },
+    async (request) => {
+      const { code } = request.params;
+      const result = await authService.validateInviteCode(code);
+
+      if (!result.valid || !result.invite) {
+        const errorMessages: Record<authService.InviteValidationError, string> = {
+          NOT_FOUND: 'Invite not found',
+          EXPIRED: 'This invite has expired',
+          USED: 'This invite has already been used',
+          REVOKED: 'This invite has been revoked',
+        };
+        return {
+          success: false,
+          error: {
+            code: `INVITE_${result.error}`,
+            message: errorMessages[result.error!],
+          },
+        };
+      }
+
+      return {
+        success: true,
+        data: {
+          invite: {
+            role: result.invite.role,
+            householdName: result.invite.household.name,
+            expiresAt: result.invite.expiresAt,
+          },
+        },
+      };
+    }
+  );
+
+  // Register with invite code
+  app.post<{ Body: RegisterWithInviteInput }>(
+    '/register/invite',
+    {
+      preHandler: [authRateLimiter],
+    },
+    async (request, reply) => {
+      const input = registerWithInviteSchema.parse(request.body);
+      const result = await authService.registerWithInvite(
+        input,
+        request.ip,
+        request.headers['user-agent']
+      );
 
       // Set session cookie
       reply.setCookie('session', result.session.id, {

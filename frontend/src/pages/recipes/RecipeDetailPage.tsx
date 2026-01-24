@@ -8,6 +8,7 @@ import {
   Trash2,
   PlayCircle,
   Plus,
+  Download,
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -16,10 +17,13 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
-import { RecipeForm } from '@/components/recipes/RecipeForm';
+import { RecipeForm, type RecipeImageChange } from '@/components/recipes/RecipeForm';
+import { EditGate } from '@/components/permissions';
 import { recipesApi } from '@/api/recipes';
+import { inventoryApi } from '@/api/inventory';
 import { useState, useMemo } from 'react';
 import type { RecipeFormData } from '@/types/forms';
+import { toast } from '@/hooks/useToast';
 
 export function RecipeDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -42,7 +46,8 @@ export function RecipeDetailPage() {
       ...data.recipe,
       ingredients: (data.ingredients || []).map((ing) => ({
         id: (ing as any).id || crypto.randomUUID(),
-        name: ing.name,
+        // Use linked inventory item name if available, otherwise use parsed name
+        name: ing.linkedItemName || ing.name,
         amount: Number(ing.quantity) || 0,
         unit: ing.unit || '',
         notes: ing.notes,
@@ -53,10 +58,12 @@ export function RecipeDetailPage() {
   }, [data]);
 
   const updateMutation = useMutation({
-    mutationFn: (formData: RecipeFormData) => {
+    mutationFn: async ({ formData, imageChange }: { formData: RecipeFormData; imageChange: RecipeImageChange }) => {
       const prepTime = formData.prepTime || formData.prepTimeMinutes;
       const cookTime = formData.cookTime || formData.cookTimeMinutes;
-      return recipesApi.update(id!, {
+
+      // Update recipe data first
+      await recipesApi.update(id!, {
         title: formData.title,
         description: formData.description || undefined,
         servings: formData.servings || undefined,
@@ -74,11 +81,27 @@ export function RecipeDetailPage() {
         instructions: formData.instructions.filter((inst) => inst.text),
         tags: formData.tags,
       });
+
+      // Handle image changes
+      if (imageChange.type === 'file' && imageChange.file) {
+        await recipesApi.uploadImage(id!, imageChange.file);
+      } else if (imageChange.type === 'url' && imageChange.url) {
+        await recipesApi.uploadImageFromUrl(id!, imageChange.url);
+      } else if (imageChange.type === 'remove') {
+        await recipesApi.deleteImage(id!);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['recipes', id] });
       queryClient.invalidateQueries({ queryKey: ['tag-suggestions'] });
       setEditFormOpen(false);
+    },
+    onError: (error) => {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to update recipe',
+        variant: 'destructive',
+      });
     },
   });
 
@@ -90,6 +113,55 @@ export function RecipeDetailPage() {
       navigate('/recipes');
     },
   });
+
+  const handleExportRecipe = async () => {
+    if (!recipe || !data?.ingredients) return;
+
+    // Fetch inventory items to get catalog data for linked ingredients
+    const inventoryItems = await inventoryApi.getItems();
+    const itemsMap = new Map(inventoryItems.items.map(i => [i.id, i]));
+
+    const exportData = {
+      version: '1.0',
+      type: 'recipe',
+      exportedAt: new Date().toISOString(),
+      recipe: {
+        title: recipe.title,
+        description: recipe.description,
+        servings: recipe.servings,
+        prepTimeMinutes: recipe.prepTimeMinutes,
+        cookTimeMinutes: recipe.cookTimeMinutes,
+        tags: recipe.tags,
+        sourceUrl: recipe.sourceUrl,
+        imageUrl: recipe.imageUrl,
+        ingredients: data.ingredients.map(ing => {
+          const linkedItem = ing.inventoryItemId ? itemsMap.get(ing.inventoryItemId) : null;
+          return {
+            name: ing.linkedItemName || ing.name,
+            quantity: Number(ing.quantity) || 0,
+            unit: ing.unit || '',
+            notes: ing.notes,
+            catalogItem: linkedItem ? {
+              name: linkedItem.name,
+              category: linkedItem.category,
+              defaultUnit: linkedItem.defaultUnit,
+              unitConversions: linkedItem.unitConversions,
+            } : undefined,
+          };
+        }),
+        instructions: recipe.instructions,
+        timers: recipe.timers,
+      }
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${recipe.title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.recipe`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   if (isLoading) {
     return (
@@ -119,14 +191,20 @@ export function RecipeDetailPage() {
         title={recipe.title}
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setEditFormOpen(true)}>
-              <Edit className="mr-2 h-4 w-4" />
-              Edit
+            <Button variant="outline" onClick={handleExportRecipe}>
+              <Download className="mr-2 h-4 w-4" />
+              Export
             </Button>
-            <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-              <Trash2 className="mr-2 h-4 w-4" />
-              Delete
-            </Button>
+            <EditGate feature="recipes">
+              <Button variant="outline" onClick={() => setEditFormOpen(true)}>
+                <Edit className="mr-2 h-4 w-4" />
+                Edit
+              </Button>
+              <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete
+              </Button>
+            </EditGate>
             <Button asChild>
               <Link to={`/recipes/${id}/cook`}>
                 <PlayCircle className="mr-2 h-4 w-4" />
@@ -140,11 +218,15 @@ export function RecipeDetailPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Main content */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Image */}
-          {recipe.imageUrl && (
+          {/* Image - prefer imageData over imageUrl for backward compatibility */}
+          {(recipe.imageData || recipe.imageUrl) && (
             <div className="aspect-video overflow-hidden rounded-lg bg-muted">
               <img
-                src={recipe.imageUrl}
+                src={
+                  recipe.imageData
+                    ? `data:${recipe.imageMimeType};base64,${recipe.imageData}`
+                    : recipe.imageUrl
+                }
                 alt={recipe.title}
                 className="h-full w-full object-cover"
               />
@@ -280,7 +362,7 @@ export function RecipeDetailPage() {
         open={editFormOpen}
         onOpenChange={setEditFormOpen}
         recipe={recipe}
-        onSubmit={(formData) => updateMutation.mutate(formData)}
+        onSubmit={(formData, imageChange) => updateMutation.mutate({ formData, imageChange })}
         isSubmitting={updateMutation.isPending}
       />
     </div>

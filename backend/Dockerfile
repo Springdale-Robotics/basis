@@ -26,8 +26,8 @@ FROM node:20-alpine AS production
 
 WORKDIR /app
 
-# Install runtime dependencies for native modules (argon2, libsodium)
-RUN apk add --no-cache libstdc++
+# Install runtime dependencies for native modules (argon2, libsodium) and ffmpeg for video thumbnails
+RUN apk add --no-cache libstdc++ ffmpeg
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \

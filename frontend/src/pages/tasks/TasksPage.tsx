@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { UserAvatar } from '@/components/shared/UserAvatar';
 import { TaskForm } from '@/components/tasks/TaskForm';
+import { EditGate } from '@/components/permissions';
 import { tasksApi } from '@/api/tasks';
 import { householdsApi } from '@/api/households';
 import { formatDate } from '@/lib/utils';
@@ -75,10 +76,12 @@ export function TasksPage() {
         title="Tasks"
         description="Manage your household tasks and chores"
         actions={
-          <Button onClick={() => setFormOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add Task
-          </Button>
+          <EditGate feature="tasks">
+            <Button onClick={() => setFormOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Task
+            </Button>
+          </EditGate>
         }
       />
 
@@ -134,10 +137,12 @@ export function TasksPage() {
               title="No pending tasks"
               description="All caught up! Add a new task to get started."
               action={
-                <Button onClick={() => setFormOpen(true)}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Task
-                </Button>
+                <EditGate feature="tasks">
+                  <Button onClick={() => setFormOpen(true)}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add Task
+                  </Button>
+                </EditGate>
               }
             />
           ) : (

@@ -57,7 +57,7 @@ export function ItemForm({
         icon: item.icon || '',
         barcode: item.barcode || '',
         keepInStock: item.keepInStock ?? false,
-        keepInStockThreshold: item.minStockLevel || item.keepInStockThreshold || 1,
+        keepInStockThreshold: item.minStockQuantity ?? item.minStockLevel ?? item.keepInStockThreshold ?? 1,
         defaultAreaId: item.defaultAreaId || defaultAreaId || '',
         unitConversions: item.unitConversions || [],
       };
@@ -135,7 +135,7 @@ export function ItemForm({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[500px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {isEditing ? 'Edit Item' : 'Add Inventory Item'}
@@ -230,7 +230,9 @@ export function ItemForm({
             </div>
             {keepInStock && (
               <div className="space-y-2">
-                <Label htmlFor="keepInStockThreshold">Minimum Quantity</Label>
+                <Label htmlFor="keepInStockThreshold">
+                  Minimum Quantity {unit && <span className="text-muted-foreground">({unit})</span>}
+                </Label>
                 <Input
                   id="keepInStockThreshold"
                   type="number"

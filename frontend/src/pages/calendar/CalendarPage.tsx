@@ -12,6 +12,7 @@ import { CalendarForm } from '@/components/calendar/CalendarForm';
 import { EditRecurringEventDialog, type RecurrenceEditScope } from '@/components/calendar/EditRecurringEventDialog';
 import { DeleteRecurringEventDialog, type RecurrenceDeleteScope } from '@/components/calendar/DeleteRecurringEventDialog';
 import { CalendarSearch, CalendarSearchRef } from '@/components/calendar/CalendarSearch';
+import { EditGate } from '@/components/permissions';
 import { useCalendarShortcuts, KEYBOARD_SHORTCUTS } from '@/hooks/useCalendarShortcuts';
 import { calendarsApi } from '@/api/calendars';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -434,10 +435,12 @@ export function CalendarPage() {
         <div className="w-64 shrink-0">
           <Card className="sticky top-4">
             <CardContent className="p-4">
-              <Button onClick={handleCreateCalendar} className="w-full mb-4">
-                <Plus className="mr-2 h-4 w-4" />
-                Create Calendar
-              </Button>
+              <EditGate feature="calendars">
+                <Button onClick={handleCreateCalendar} className="w-full mb-4">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create Calendar
+                </Button>
+              </EditGate>
 
               <ScrollArea className="max-h-[60vh]">
                 <div className="space-y-4">
@@ -607,10 +610,12 @@ export function CalendarPage() {
                   setDetailOpen(true);
                 }}
               />
-              <Button onClick={() => setFormOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                Add Event
-              </Button>
+              <EditGate feature="calendars">
+                <Button onClick={() => setFormOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Event
+                </Button>
+              </EditGate>
             </div>
           }
         />

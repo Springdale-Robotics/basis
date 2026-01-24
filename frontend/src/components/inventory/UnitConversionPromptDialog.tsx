@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Loader2, ArrowLeftRight } from 'lucide-react';
 import {
   Dialog,
@@ -18,6 +18,7 @@ interface UnitConversionPromptDialogProps {
   itemName: string;
   fromUnit: string;
   toUnit: string;
+  suggestedFactor?: number;
   onConfirm: (factor: number, saveForFuture: boolean) => Promise<void>;
   onSkip: () => void;
 }
@@ -28,12 +29,20 @@ export function UnitConversionPromptDialog({
   itemName,
   fromUnit,
   toUnit,
+  suggestedFactor,
   onConfirm,
   onSkip,
 }: UnitConversionPromptDialogProps) {
-  const [factor, setFactor] = useState('');
+  const [factor, setFactor] = useState(suggestedFactor?.toString() ?? '');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSwapped, setIsSwapped] = useState(false);
+
+  // Update factor when suggestedFactor changes
+  useEffect(() => {
+    if (suggestedFactor !== undefined) {
+      setFactor(suggestedFactor.toString());
+    }
+  }, [suggestedFactor]);
 
   // Display units based on swap state
   const displayFromUnit = isSwapped ? toUnit : fromUnit;
@@ -110,6 +119,11 @@ export function UnitConversionPromptDialog({
               />
               <span className="text-muted-foreground">{displayToUnit}</span>
             </div>
+            {suggestedFactor && !isSwapped && (
+              <p className="text-xs text-muted-foreground">
+                Standard conversion: 1 {fromUnit} = {suggestedFactor} {toUnit}
+              </p>
+            )}
           </div>
         </div>
 

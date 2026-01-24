@@ -71,6 +71,35 @@ install_deps() {
   fi
 }
 
+# Helper: check for ffmpeg (required for video thumbnails)
+check_ffmpeg() {
+  if ! command -v ffmpeg &> /dev/null; then
+    echo -e "${YELLOW}ffmpeg is not installed. Video thumbnails will not work.${NC}"
+
+    # Check if brew is available (macOS)
+    if command -v brew &> /dev/null; then
+      echo -e "${BLUE}Would you like to install ffmpeg via Homebrew? [Y/n]${NC}"
+      read -r response
+      if [[ ! "$response" =~ ^([nN])$ ]]; then
+        echo -e "${BLUE}Installing ffmpeg...${NC}"
+        brew install ffmpeg
+        echo -e "${GREEN}ffmpeg installed.${NC}"
+      fi
+    # Check if apt is available (Debian/Ubuntu)
+    elif command -v apt-get &> /dev/null; then
+      echo -e "${BLUE}Would you like to install ffmpeg via apt? [Y/n]${NC}"
+      read -r response
+      if [[ ! "$response" =~ ^([nN])$ ]]; then
+        echo -e "${BLUE}Installing ffmpeg...${NC}"
+        sudo apt-get update && sudo apt-get install -y ffmpeg
+        echo -e "${GREEN}ffmpeg installed.${NC}"
+      fi
+    else
+      echo -e "${YELLOW}Please install ffmpeg manually for video thumbnail support.${NC}"
+    fi
+  fi
+}
+
 # Helper: kill existing dev processes to avoid port conflicts
 cleanup_processes() {
   # Kill any existing tsx/node processes for backend
@@ -108,6 +137,7 @@ case "${1:-help}" in
         start_infra
         setup_backend_env
         install_deps
+        check_ffmpeg
         run_migrations
 
         echo ""
@@ -134,6 +164,7 @@ case "${1:-help}" in
         if [ ! -d "$BACKEND_DIR/node_modules" ]; then
           (cd "$BACKEND_DIR" && npm install)
         fi
+        check_ffmpeg
         run_migrations
 
         echo ""

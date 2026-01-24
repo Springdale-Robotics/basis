@@ -25,6 +25,10 @@ export interface HouseholdSettings {
     smartHome: boolean;
     nas: boolean;
   };
+  storage?: {
+    limitGb?: number | null; // null = use system default
+    warnAtPercent?: number; // e.g., 80 (future enhancement)
+  };
   defaultHiddenPages?: string[];
   mealPlan?: {
     autoShoppingList: boolean;

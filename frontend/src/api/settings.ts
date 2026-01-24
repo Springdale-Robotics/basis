@@ -27,6 +27,23 @@ export interface FeatureSettings {
   files: boolean;
 }
 
+export interface StorageSettings {
+  limitGb: number | null;
+  warnAtPercent: number;
+}
+
+export interface StorageSettingsResponse {
+  storage: StorageSettings;
+  systemDefaultGb: number | null;
+  diskCapacityGb: number | null;
+  currentUsageBytes: number;
+}
+
+export interface UpdateStorageSettingsRequest {
+  limitGb?: number | null;
+  warnAtPercent?: number;
+}
+
 export const settingsApi = {
   getHouseholdSettings: () =>
     apiGet<HouseholdSettings>('/settings/household'),
@@ -48,4 +65,10 @@ export const settingsApi = {
 
   updateFeatures: (data: Partial<FeatureSettings>) =>
     apiPatch<FeatureSettings>('/settings/features', data),
+
+  getStorageSettings: () =>
+    apiGet<StorageSettingsResponse>('/settings/storage'),
+
+  updateStorageSettings: (data: UpdateStorageSettingsRequest) =>
+    apiPatch<{ storage: StorageSettings }>('/settings/storage', data),
 };

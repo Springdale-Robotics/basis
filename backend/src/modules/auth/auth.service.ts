@@ -2,13 +2,13 @@ import argon2 from 'argon2';
 import { randomBytes } from 'crypto';
 import { db } from '../../config/database.js';
 import { redis } from '../../config/redis.js';
-import { users, sessions, households } from '../../db/schema/index.js';
+import { users, sessions, households, memberInvites } from '../../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
 import { config } from '../../config/index.js';
 import { Errors } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
-import type { LoginInput, RegisterInput } from './auth.schema.js';
-import type { User, Session, Household } from '../../db/schema/index.js';
+import type { LoginInput, RegisterInput, RegisterWithInviteInput } from './auth.schema.js';
+import type { User, Session, Household, MemberInvite } from '../../db/schema/index.js';
 
 export interface AuthResult {
   user: Omit<User, 'passwordHash'>;
@@ -268,4 +268,126 @@ export async function changePassword(
     .update(users)
     .set({ passwordHash, updatedAt: new Date() })
     .where(eq(users.id, userId));
+}
+
+export type InviteValidationError = 'NOT_FOUND' | 'EXPIRED' | 'USED' | 'REVOKED';
+
+export interface InviteValidationResult {
+  valid: boolean;
+  invite?: MemberInvite & { household: Household };
+  error?: InviteValidationError;
+}
+
+export async function validateInviteCode(code: string): Promise<InviteValidationResult> {
+  const invite = await db.query.memberInvites.findFirst({
+    where: eq(memberInvites.inviteCode, code),
+  });
+
+  if (!invite) {
+    return { valid: false, error: 'NOT_FOUND' };
+  }
+
+  if (invite.status === 'revoked') {
+    return { valid: false, error: 'REVOKED' };
+  }
+
+  if (invite.status === 'accepted') {
+    return { valid: false, error: 'USED' };
+  }
+
+  if (invite.expiresAt < new Date()) {
+    // Auto-update status to expired if not already
+    if (invite.status === 'pending') {
+      await db
+        .update(memberInvites)
+        .set({ status: 'expired' })
+        .where(eq(memberInvites.id, invite.id));
+    }
+    return { valid: false, error: 'EXPIRED' };
+  }
+
+  const household = await db.query.households.findFirst({
+    where: eq(households.id, invite.householdId),
+  });
+
+  if (!household) {
+    return { valid: false, error: 'NOT_FOUND' };
+  }
+
+  return {
+    valid: true,
+    invite: { ...invite, household },
+  };
+}
+
+export async function registerWithInvite(
+  input: RegisterWithInviteInput,
+  ipAddress?: string,
+  userAgent?: string
+): Promise<AuthResult> {
+  const { inviteCode, email, password, displayName } = input;
+
+  // Validate invite
+  const validation = await validateInviteCode(inviteCode);
+  if (!validation.valid || !validation.invite) {
+    const errorMessages: Record<InviteValidationError, string> = {
+      NOT_FOUND: 'Invite not found',
+      EXPIRED: 'This invite has expired',
+      USED: 'This invite has already been used',
+      REVOKED: 'This invite has been revoked',
+    };
+    throw Errors.validation(errorMessages[validation.error!]);
+  }
+
+  const invite = validation.invite;
+  const household = invite.household;
+
+  // Check if email already exists in household
+  const existingUser = await db.query.users.findFirst({
+    where: and(
+      eq(users.householdId, household.id),
+      eq(users.email, email.toLowerCase())
+    ),
+  });
+
+  if (existingUser) {
+    throw Errors.duplicate('email');
+  }
+
+  // Hash password
+  const passwordHash = await argon2.hash(password);
+
+  // Create user with invite's role
+  const [user] = await db
+    .insert(users)
+    .values({
+      householdId: household.id,
+      email: email.toLowerCase(),
+      passwordHash,
+      displayName,
+      role: invite.role,
+    })
+    .returning();
+
+  // Mark invite as accepted
+  await db
+    .update(memberInvites)
+    .set({
+      status: 'accepted',
+      acceptedAt: new Date(),
+    })
+    .where(eq(memberInvites.id, invite.id));
+
+  // Create session
+  const session = await createSession(user.id, undefined, ipAddress, userAgent);
+
+  const { passwordHash: _, ...userWithoutPassword } = user;
+
+  logger.info({ userId: user.id, inviteId: invite.id }, 'User registered via invite');
+
+  return {
+    user: userWithoutPassword,
+    session,
+    household,
+  };
 }

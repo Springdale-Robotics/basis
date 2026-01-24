@@ -13,6 +13,7 @@ import { LoginPage } from './pages/auth/LoginPage';
 import { RegisterPage } from './pages/auth/RegisterPage';
 import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage';
 import { ResetPasswordPage } from './pages/auth/ResetPasswordPage';
+import { JoinPage } from './pages/auth/JoinPage';
 
 // Setup
 import { SetupPage } from './pages/setup/SetupPage';
@@ -31,6 +32,10 @@ import { RewardsPage } from './pages/tasks/RewardsPage';
 import { ListsPage } from './pages/lists/ListsPage';
 import { ListDetailPage } from './pages/lists/ListDetailPage';
 import { FilesPage } from './pages/files/FilesPage';
+import { PhotosPage } from './pages/photos/PhotosPage';
+import { VideosPage } from './pages/videos/VideosPage';
+import { MoviesPage } from './pages/movies/MoviesPage';
+import { MusicPage } from './pages/music/MusicPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 
 export function App() {
@@ -44,6 +49,7 @@ export function App() {
                 {/* Public routes */}
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/register" element={<RegisterPage />} />
+                <Route path="/join/:inviteCode" element={<JoinPage />} />
                 <Route path="/forgot-password" element={<ForgotPasswordPage />} />
                 <Route path="/reset-password" element={<ResetPasswordPage />} />
                 <Route path="/setup" element={<SetupPage />} />
@@ -83,6 +89,16 @@ export function App() {
 
                   {/* Files */}
                   <Route path="files/*" element={<FilesPage />} />
+
+                  {/* Media */}
+                  <Route path="photos" element={<PhotosPage />} />
+                  <Route path="videos" element={<VideosPage />} />
+                  <Route path="movies" element={<MoviesPage />} />
+                  <Route path="movies/:id" element={<MoviesPage />} />
+                  <Route path="tv/:id" element={<MoviesPage />} />
+                  <Route path="music" element={<MusicPage />} />
+                  <Route path="music/albums/:id" element={<MusicPage />} />
+                  <Route path="music/artists/:id" element={<MusicPage />} />
 
                   {/* Settings */}
                   <Route path="settings/*" element={<SettingsPage />} />

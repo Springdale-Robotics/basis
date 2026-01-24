@@ -4,6 +4,8 @@ import { db } from '../../config/database.js';
 import { lists, listItems } from '../../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
+import { requireListAccess, requireListsAccess } from '../../middleware/permission.middleware.js';
+import { setResourceDefaults } from '../../services/permission.service.js';
 import { Errors } from '../../lib/errors.js';
 import { listTypeSchema, hexColorSchema } from '../../lib/validators.js';
 
@@ -24,7 +26,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
   // List all lists
   app.get(
     '/',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireListsAccess('view')] },
     async (request) => {
       const listList = await db.query.lists.findMany({
         where: eq(lists.householdId, request.user!.householdId),
@@ -38,7 +40,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
   // Create list
   app.post(
     '/',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireListsAccess('edit')] },
     async (request) => {
       const input = createListSchema.parse(request.body);
 
@@ -54,6 +56,9 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
         })
         .returning();
 
+      // Set default permissions for the new list
+      await setResourceDefaults('list', list.id, request.user!.id, request.user!.householdId);
+
       return { success: true, data: { list } };
     }
   );
@@ -61,7 +66,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
   // Get list with items
   app.get<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireListAccess('view')] },
     async (request) => {
       const list = await db.query.lists.findFirst({
         where: and(
@@ -84,7 +89,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
   // Update list
   app.patch<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireListAccess('edit')] },
     async (request) => {
       const input = createListSchema.partial().parse(request.body);
 
@@ -108,7 +113,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
   // Delete list
   app.delete<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireListAccess('admin')] },
     async (request) => {
       await db
         .delete(lists)

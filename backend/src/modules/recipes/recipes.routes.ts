@@ -12,17 +12,24 @@ import {
 } from '../../db/schema/index.js';
 import { eq, and, sql, gte, lte, asc, isNotNull } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
+import { requireRecipesAccess, requireMealPlanAccess } from '../../middleware/permission.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { mealTypeSchema } from '../../lib/validators.js';
 import {
   createImportSession,
   processImportSession,
+  processUrlImportSession,
   getImportSession,
   updateIngredientMatches,
   confirmImportSession,
   cancelImportSession,
   parseRecipeText,
+  parseRecipeTextWithConfidence,
+  rematchIngredients,
 } from './recipe-import.service.js';
+import { parseRecipeFromUrl } from './url-parser.service.js';
+import { processRecipeImage, fetchImageFromUrl } from './recipe-image.service.js';
+import { findConversionChain, normalizeUnit } from '../../lib/unit-conversions.js';
 import { matchSingleIngredient } from './ingredient-matching.service.js';
 import type { UnitConversion } from '../../db/schema/inventory.js';
 import { emitCookingDeduction } from '../../websocket/events.js';
@@ -70,7 +77,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
   // List recipes with optional search/filter
   app.get(
     '/',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireRecipesAccess('view')] },
     async (request) => {
       const { search, tags, page = '1', limit = '20' } = request.query as any;
 
@@ -115,7 +122,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
   // Create recipe
   app.post(
     '/',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireRecipesAccess('edit')] },
     async (request) => {
       const input = createRecipeSchema.parse(request.body);
       const { ingredients, ...recipeData } = input;
@@ -142,6 +149,8 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           }))
         );
       }
+
+      // No per-item permissions for recipes - feature-level only
 
       return { success: true, data: { recipe } };
     }
@@ -263,7 +272,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
   // Get recipe by ID with ingredients
   app.get<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireRecipesAccess('view')] },
     async (request) => {
       const recipe = await db.query.recipes.findFirst({
         where: and(
@@ -276,18 +285,30 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.notFound('Recipe');
       }
 
-      const ingredients = await db.query.recipeIngredients.findMany({
-        where: eq(recipeIngredients.recipeId, recipe.id),
-      });
+      // Get ingredients with linked inventory item names
+      const ingredientRows = await db
+        .select({
+          id: recipeIngredients.id,
+          recipeId: recipeIngredients.recipeId,
+          inventoryItemId: recipeIngredients.inventoryItemId,
+          name: recipeIngredients.name,
+          quantity: recipeIngredients.quantity,
+          unit: recipeIngredients.unit,
+          notes: recipeIngredients.notes,
+          linkedItemName: inventoryItems.name,
+        })
+        .from(recipeIngredients)
+        .leftJoin(inventoryItems, eq(recipeIngredients.inventoryItemId, inventoryItems.id))
+        .where(eq(recipeIngredients.recipeId, recipe.id));
 
-      return { success: true, data: { recipe, ingredients } };
+      return { success: true, data: { recipe, ingredients: ingredientRows } };
     }
   );
 
   // Update recipe
   app.patch<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireRecipesAccess('edit')] },
     async (request) => {
       const input = updateRecipeSchema.parse(request.body);
       const { ingredients, ...recipeData } = input;
@@ -332,7 +353,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
   // Delete recipe
   app.delete<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireRecipesAccess('admin')] },
     async (request) => {
       await db
         .delete(recipes)
@@ -344,6 +365,110 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         );
 
       return { success: true, data: { message: 'Recipe deleted' } };
+    }
+  );
+
+  // Upload recipe image (multipart file or URL)
+  app.post<{ Params: { id: string } }>(
+    '/:id/image',
+    { preHandler: [authMiddleware, requireRecipesAccess('edit')] },
+    async (request) => {
+      // Verify recipe exists and belongs to household
+      const recipe = await db.query.recipes.findFirst({
+        where: and(
+          eq(recipes.id, request.params.id),
+          eq(recipes.householdId, request.user!.householdId)
+        ),
+      });
+
+      if (!recipe) {
+        throw Errors.notFound('Recipe');
+      }
+
+      let imageBuffer: Buffer;
+
+      // Check if this is a multipart request
+      const contentType = request.headers['content-type'] || '';
+      if (contentType.includes('multipart/form-data')) {
+        // Handle file upload
+        const data = await request.file();
+        if (!data) {
+          throw Errors.badRequest('No file uploaded');
+        }
+        imageBuffer = await data.toBuffer();
+      } else {
+        // Handle JSON request with imageUrl
+        const schema = z.object({
+          imageUrl: z.string().url(),
+        });
+        const { imageUrl } = schema.parse(request.body);
+
+        try {
+          imageBuffer = await fetchImageFromUrl(imageUrl);
+        } catch (error) {
+          throw Errors.badRequest(error instanceof Error ? error.message : 'Failed to fetch image from URL');
+        }
+      }
+
+      // Process the image
+      try {
+        const processed = await processRecipeImage(imageBuffer);
+
+        // Update the recipe with the processed image
+        const [updated] = await db
+          .update(recipes)
+          .set({
+            imageData: processed.data,
+            imageMimeType: processed.mimeType,
+            imageWidth: processed.width,
+            imageHeight: processed.height,
+            updatedAt: new Date(),
+          })
+          .where(eq(recipes.id, request.params.id))
+          .returning();
+
+        return {
+          success: true,
+          data: {
+            imageData: processed.data,
+            imageMimeType: processed.mimeType,
+            imageWidth: processed.width,
+            imageHeight: processed.height,
+          },
+        };
+      } catch (error) {
+        throw Errors.badRequest(error instanceof Error ? error.message : 'Failed to process image');
+      }
+    }
+  );
+
+  // Delete recipe image
+  app.delete<{ Params: { id: string } }>(
+    '/:id/image',
+    { preHandler: [authMiddleware, requireRecipesAccess('edit')] },
+    async (request) => {
+      const [updated] = await db
+        .update(recipes)
+        .set({
+          imageData: null,
+          imageMimeType: null,
+          imageWidth: null,
+          imageHeight: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(recipes.id, request.params.id),
+            eq(recipes.householdId, request.user!.householdId)
+          )
+        )
+        .returning();
+
+      if (!updated) {
+        throw Errors.notFound('Recipe');
+      }
+
+      return { success: true, data: { message: 'Recipe image deleted' } };
     }
   );
 
@@ -498,13 +623,31 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
 
             // Handle unit conversion if needed
             let convertedRemaining = remaining;
-            if (ingredient.unit && stock.unit && ingredient.unit !== stock.unit) {
+            if (ingredient.unit && stock.unit && normalizeUnit(ingredient.unit) !== normalizeUnit(stock.unit)) {
               const conversions = (item.unitConversions as UnitConversion[]) || [];
-              const conversion = conversions.find(
-                c => c.fromUnit === ingredient.unit && c.toUnit === stock.unit
+
+              // 1. Try item-specific conversion first
+              const itemConversion = conversions.find(
+                c => normalizeUnit(c.fromUnit) === normalizeUnit(ingredient.unit!) &&
+                     normalizeUnit(c.toUnit) === normalizeUnit(stock.unit!)
               );
-              if (conversion) {
-                convertedRemaining = remaining * conversion.factor;
+              if (itemConversion) {
+                convertedRemaining = remaining * itemConversion.factor;
+              } else {
+                // 2. Try reverse item-specific conversion
+                const reverseConversion = conversions.find(
+                  c => normalizeUnit(c.fromUnit) === normalizeUnit(stock.unit!) &&
+                       normalizeUnit(c.toUnit) === normalizeUnit(ingredient.unit!)
+                );
+                if (reverseConversion) {
+                  convertedRemaining = remaining / reverseConversion.factor;
+                } else {
+                  // 3. Fall back to global standard conversions
+                  const globalFactor = findConversionChain(ingredient.unit!, stock.unit!);
+                  if (globalFactor !== null) {
+                    convertedRemaining = remaining * globalFactor;
+                  }
+                }
               }
             }
 
@@ -573,15 +716,67 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
 
   // ===== RECIPE IMPORT =====
 
+  // Preview URL parsing without creating session
+  app.post(
+    '/import/parse-url',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const schema = z.object({
+        url: z.string().url(),
+      });
+
+      const { url } = schema.parse(request.body);
+
+      try {
+        const result = await parseRecipeFromUrl(url);
+        return {
+          success: true,
+          data: {
+            parsedRecipe: result.parsedRecipe,
+            parseMethod: result.parseMethod,
+            confidence: result.confidence,
+            warnings: result.warnings,
+          },
+        };
+      } catch (error) {
+        throw Errors.badRequest(error instanceof Error ? error.message : 'Failed to parse URL');
+      }
+    }
+  );
+
+  // Preview text parsing without creating session
+  app.post(
+    '/import/parse-text',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const schema = z.object({
+        text: z.string().min(1),
+      });
+
+      const { text } = schema.parse(request.body);
+
+      const result = parseRecipeTextWithConfidence(text);
+      return {
+        success: true,
+        data: {
+          parsedRecipe: result.recipe,
+          parseMethod: 'text',
+          confidence: result.confidence,
+          warnings: result.warnings,
+        },
+      };
+    }
+  );
+
   // Start import session
   app.post(
     '/import/start',
     { preHandler: [authMiddleware, requireMember()] },
     async (request) => {
       const schema = z.object({
-        sourceType: z.enum(['url', 'image', 'pdf']),
-        sourceData: z.string(), // URL or base64 encoded content
-        rawText: z.string().optional(), // For pre-extracted text
+        sourceType: z.enum(['url', 'image', 'pdf', 'text']),
+        sourceData: z.string(), // URL or base64 encoded content or text
+        rawText: z.string().optional(), // For pre-extracted text (legacy)
       });
 
       const { sourceType, sourceData, rawText } = schema.parse(request.body);
@@ -593,9 +788,11 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         sourceData
       );
 
-      // If raw text is provided, process immediately
-      if (rawText) {
-        await processImportSession(sessionId, rawText, request.user!.householdId);
+      // Process based on source type
+      if (sourceType === 'url') {
+        await processUrlImportSession(sessionId, sourceData, request.user!.householdId);
+      } else if (rawText || sourceType === 'text') {
+        await processImportSession(sessionId, rawText || sourceData, request.user!.householdId, 'text');
       }
 
       return { success: true, data: { sessionId } };
@@ -679,6 +876,20 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       );
 
       return { success: true, data: { message: 'Import cancelled' } };
+    }
+  );
+
+  // Re-match ingredients after creating new items
+  app.post<{ Params: { sessionId: string } }>(
+    '/import/:sessionId/rematch',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const matches = await rematchIngredients(
+        request.params.sessionId,
+        request.user!.householdId
+      );
+
+      return { success: true, data: { matches } };
     }
   );
 
@@ -811,7 +1022,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
   // Meal plans
   app.get(
     '/meal-plans',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireMealPlanAccess('view')] },
     async (request) => {
       const { start, end } = z
         .object({
@@ -842,7 +1053,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
 
   app.post(
     '/meal-plans',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireMealPlanAccess('edit')] },
     async (request) => {
       const input = createMealPlanSchema.parse(request.body);
 
@@ -877,7 +1088,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete<{ Params: { id: string } }>(
     '/meal-plans/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireMealPlanAccess('edit')] },
     async (request) => {
       await db
         .delete(mealPlans)
