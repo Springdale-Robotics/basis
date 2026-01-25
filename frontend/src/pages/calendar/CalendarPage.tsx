@@ -27,6 +27,8 @@ import {
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/useToast';
+import { useTheme } from '@/hooks/useTheme';
+import { getColorForIndex } from '@/lib/theme-presets';
 import type { EventFormData } from '@/types/forms';
 import type { CalendarEvent, Calendar as CalendarType } from '@/types/models';
 
@@ -48,6 +50,7 @@ export function CalendarPage() {
   const [pendingFormData, setPendingFormData] = useState<EventFormData | null>(null);
   const queryClient = useQueryClient();
   const searchRef = useRef<CalendarSearchRef>(null);
+  const { colorPalette } = useTheme();
 
   const startDate = getStartDate(currentDate, viewMode);
   const endDate = getEndDate(currentDate, viewMode);
@@ -76,7 +79,7 @@ export function CalendarPage() {
 
   // Calendar CRUD mutations
   const createCalendarMutation = useMutation({
-    mutationFn: (data: { name: string; color: string; type: 'individual' | 'group' }) =>
+    mutationFn: (data: { name: string; colorIndex: number; type: 'individual' | 'group' }) =>
       calendarsApi.create(data),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['calendars'] });
@@ -95,8 +98,8 @@ export function CalendarPage() {
   });
 
   const updateCalendarMutation = useMutation({
-    mutationFn: (data: { id: string; name: string; color: string }) =>
-      calendarsApi.update(data.id, { name: data.name, color: data.color }),
+    mutationFn: (data: { id: string; name: string; colorIndex: number }) =>
+      calendarsApi.update(data.id, { name: data.name, colorIndex: data.colorIndex }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['calendars'] });
       setCalendarFormOpen(false);
@@ -149,9 +152,9 @@ export function CalendarPage() {
     setCalendarFormOpen(true);
   };
 
-  const handleCalendarFormSubmit = (data: { name: string; color: string; type: 'individual' | 'group' }) => {
+  const handleCalendarFormSubmit = (data: { name: string; colorIndex: number; type: 'individual' | 'group' }) => {
     if (selectedCalendar) {
-      updateCalendarMutation.mutate({ id: selectedCalendar.id, name: data.name, color: data.color });
+      updateCalendarMutation.mutate({ id: selectedCalendar.id, name: data.name, colorIndex: data.colorIndex });
     } else {
       createCalendarMutation.mutate(data);
     }
@@ -373,6 +376,15 @@ export function CalendarPage() {
   const myCalendars = calendars.filter((cal) => !cal.syncProvider);
   const syncedCalendars = calendars.filter((cal) => cal.syncProvider);
 
+  // Helper to resolve calendar color from colorIndex with fallback to hex color
+  const getCalendarColor = (calendar: CalendarType): string => {
+    // Use colorIndex if available, otherwise fall back to color hex
+    if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
+      return getColorForIndex(colorPalette, calendar.colorIndex);
+    }
+    return calendar.color || '#4A90D9';
+  };
+
   // Filter events by visible calendars
   const filteredEvents = (events?.events || []).filter((event) =>
     visibleCalendars.includes(event.calendarId)
@@ -453,7 +465,9 @@ export function CalendarPage() {
                       {myCalendars.length === 0 ? (
                         <p className="text-sm text-muted-foreground py-2">No calendars yet</p>
                       ) : (
-                        myCalendars.map((calendar) => (
+                        myCalendars.map((calendar) => {
+                          const calColor = getCalendarColor(calendar);
+                          return (
                           <div
                             key={calendar.id}
                             className="flex items-center justify-between group rounded-lg px-2 py-2 hover:bg-muted transition-colors"
@@ -464,9 +478,9 @@ export function CalendarPage() {
                                 onCheckedChange={() => handleToggleCalendar(calendar.id)}
                                 className="shrink-0 rounded-md"
                                 style={{
-                                  borderColor: calendar.color,
+                                  borderColor: calColor,
                                   backgroundColor: visibleCalendars.includes(calendar.id)
-                                    ? calendar.color
+                                    ? calColor
                                     : 'transparent',
                                 }}
                               />
@@ -488,7 +502,8 @@ export function CalendarPage() {
                               <Settings className="h-3.5 w-3.5" />
                             </Button>
                           </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   </div>
@@ -502,7 +517,9 @@ export function CalendarPage() {
                           Synced
                         </h3>
                         <div className="space-y-1">
-                          {syncedCalendars.map((calendar) => (
+                          {syncedCalendars.map((calendar) => {
+                            const calColor = getCalendarColor(calendar);
+                            return (
                             <div
                               key={calendar.id}
                               className="flex items-center justify-between group rounded-lg px-2 py-2 hover:bg-muted transition-colors"
@@ -513,9 +530,9 @@ export function CalendarPage() {
                                   onCheckedChange={() => handleToggleCalendar(calendar.id)}
                                   className="shrink-0 rounded-md"
                                   style={{
-                                    borderColor: calendar.color,
+                                    borderColor: calColor,
                                     backgroundColor: visibleCalendars.includes(calendar.id)
-                                      ? calendar.color
+                                      ? calColor
                                       : 'transparent',
                                   }}
                                 />
@@ -544,7 +561,8 @@ export function CalendarPage() {
                                 <Settings className="h-3.5 w-3.5" />
                               </Button>
                             </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     </>
@@ -682,6 +700,7 @@ export function CalendarPage() {
               currentDate={currentDate}
               events={filteredEvents}
               calendars={calendars}
+              colorPalette={colorPalette}
               onEventClick={handleEventClick}
               onSlotDoubleClick={handleSlotDoubleClick}
             />
@@ -690,6 +709,7 @@ export function CalendarPage() {
               currentDate={currentDate}
               events={filteredEvents}
               calendars={calendars}
+              colorPalette={colorPalette}
               onEventClick={handleEventClick}
               onSlotDoubleClick={handleSlotDoubleClick}
             />
@@ -698,6 +718,7 @@ export function CalendarPage() {
               currentDate={currentDate}
               events={filteredEvents}
               calendars={calendars}
+              colorPalette={colorPalette}
               onEventClick={handleEventClick}
               onSlotDoubleClick={handleSlotDoubleClick}
             />
@@ -760,19 +781,24 @@ function MonthView({
   currentDate,
   events,
   calendars,
+  colorPalette,
   onEventClick,
   onSlotDoubleClick,
 }: {
   currentDate: Date;
   events: CalendarEvent[];
   calendars: CalendarType[];
+  colorPalette: string;
   onEventClick: (event: CalendarEvent) => void;
   onSlotDoubleClick: (date: Date) => void;
 }) {
   const getEventColor = (event: CalendarEvent) => {
     if (event.color) return event.color;
     const calendar = calendars.find((c) => c.id === event.calendarId);
-    return calendar?.color || '#f66951'; // Default to Skylight coral
+    if (calendar?.colorIndex !== undefined && calendar.colorIndex >= 0) {
+      return getColorForIndex(colorPalette as import('@/lib/theme-presets').ColorPalette, calendar.colorIndex);
+    }
+    return calendar?.color || '#4A90D9';
   };
   const daysInMonth = new Date(
     currentDate.getFullYear(),
@@ -911,19 +937,24 @@ function WeekView({
   currentDate,
   events,
   calendars,
+  colorPalette,
   onEventClick,
   onSlotDoubleClick,
 }: {
   currentDate: Date;
   events: CalendarEvent[];
   calendars: CalendarType[];
+  colorPalette: string;
   onEventClick: (event: CalendarEvent) => void;
   onSlotDoubleClick: (date: Date) => void;
 }) {
   const getEventColor = (event: CalendarEvent) => {
     if (event.color) return event.color;
     const calendar = calendars.find((c) => c.id === event.calendarId);
-    return calendar?.color || '#f66951'; // Default to Skylight coral
+    if (calendar?.colorIndex !== undefined && calendar.colorIndex >= 0) {
+      return getColorForIndex(colorPalette as import('@/lib/theme-presets').ColorPalette, calendar.colorIndex);
+    }
+    return calendar?.color || '#4A90D9';
   };
   const startOfWeek = new Date(currentDate);
   startOfWeek.setDate(currentDate.getDate() - currentDate.getDay());
@@ -1109,19 +1140,24 @@ function DayView({
   currentDate,
   events,
   calendars,
+  colorPalette,
   onEventClick,
   onSlotDoubleClick,
 }: {
   currentDate: Date;
   events: CalendarEvent[];
   calendars: CalendarType[];
+  colorPalette: string;
   onEventClick: (event: CalendarEvent) => void;
   onSlotDoubleClick: (date: Date) => void;
 }) {
   const getEventColor = (event: CalendarEvent) => {
     if (event.color) return event.color;
     const calendar = calendars.find((c) => c.id === event.calendarId);
-    return calendar?.color || '#f66951'; // Default to Skylight coral
+    if (calendar?.colorIndex !== undefined && calendar.colorIndex >= 0) {
+      return getColorForIndex(colorPalette as import('@/lib/theme-presets').ColorPalette, calendar.colorIndex);
+    }
+    return calendar?.color || '#4A90D9';
   };
 
   const hours = Array.from({ length: 24 }, (_, i) => i);

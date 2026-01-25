@@ -113,6 +113,7 @@ export interface Calendar {
   ownerId?: string;
   name: string;
   color: string;
+  colorIndex: number;
   pattern?: string;
   type: 'individual' | 'group' | 'synced';
   isDefault: boolean;

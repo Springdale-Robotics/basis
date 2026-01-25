@@ -5,6 +5,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/hooks/useTheme';
+import { getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
 import type { Calendar } from '@/types/models';
 import type { SharedCalendar } from '@/api/calendars';
 
@@ -27,8 +29,17 @@ export function CalendarSidebar({
   onEditCalendar,
   onShareCalendar,
 }: CalendarSidebarProps) {
+  const { colorPalette } = useTheme();
   const myCalendars = calendars.filter((cal) => !cal.syncProvider);
   const syncedCalendars = calendars.filter((cal) => cal.syncProvider);
+
+  // Helper to get calendar color from colorIndex
+  const getCalendarColor = (calendar: Calendar | SharedCalendar): string => {
+    if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
+      return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
+    }
+    return calendar.color || '#4A90D9';
+  };
 
   return (
     <TooltipProvider>
@@ -54,6 +65,7 @@ export function CalendarSidebar({
                     <CalendarItem
                       key={calendar.id}
                       calendar={calendar}
+                      calendarColor={getCalendarColor(calendar)}
                       isVisible={visibleCalendars.includes(calendar.id)}
                       onToggle={() => onToggleCalendar(calendar.id)}
                       onEdit={() => onEditCalendar(calendar)}
@@ -76,6 +88,7 @@ export function CalendarSidebar({
                       <CalendarItem
                         key={calendar.id}
                         calendar={calendar}
+                        calendarColor={getCalendarColor(calendar)}
                         isVisible={visibleCalendars.includes(calendar.id)}
                         onToggle={() => onToggleCalendar(calendar.id)}
                         onEdit={() => onEditCalendar(calendar)}
@@ -101,6 +114,7 @@ export function CalendarSidebar({
                       <CalendarItem
                         key={calendar.id}
                         calendar={calendar}
+                        calendarColor={getCalendarColor(calendar)}
                         isVisible={visibleCalendars.includes(calendar.id)}
                         onToggle={() => onToggleCalendar(calendar.id)}
                         onEdit={() => onEditCalendar(calendar)}
@@ -121,6 +135,7 @@ export function CalendarSidebar({
 
 interface CalendarItemProps {
   calendar: Calendar;
+  calendarColor: string;
   isVisible: boolean;
   onToggle: () => void;
   onEdit: () => void;
@@ -132,6 +147,7 @@ interface CalendarItemProps {
 
 function CalendarItem({
   calendar,
+  calendarColor,
   isVisible,
   onToggle,
   onEdit,
@@ -193,8 +209,8 @@ function CalendarItem({
           onCheckedChange={onToggle}
           className="shrink-0"
           style={{
-            borderColor: calendar.color,
-            backgroundColor: isVisible ? calendar.color : 'transparent',
+            borderColor: calendarColor,
+            backgroundColor: isVisible ? calendarColor : 'transparent',
           }}
         />
         <span className={cn('text-sm truncate', !isVisible && 'text-muted-foreground')}>

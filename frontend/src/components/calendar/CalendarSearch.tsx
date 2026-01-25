@@ -39,6 +39,8 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { calendarsApi } from '@/api/calendars';
 import type { Calendar as CalendarType, CalendarEvent } from '@/types/models';
+import { useTheme } from '@/hooks/useTheme';
+import { getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
 import { cn } from '@/lib/utils';
 
 interface CalendarSearchProps {
@@ -58,6 +60,7 @@ export const CalendarSearch = forwardRef<CalendarSearchRef, CalendarSearchProps>
   const [startDate, setStartDate] = useState<Date | undefined>();
   const [endDate, setEndDate] = useState<Date | undefined>();
   const [showFilters, setShowFilters] = useState(false);
+  const { colorPalette } = useTheme();
 
   // Expose open method via ref
   useImperativeHandle(ref, () => ({
@@ -125,7 +128,18 @@ export const CalendarSearch = forwardRef<CalendarSearchRef, CalendarSearchProps>
 
   const getCalendarColor = (calendarId: string) => {
     const calendar = calendars.find((c) => c.id === calendarId);
-    return calendar?.color || '#6366f1';
+    if (calendar?.colorIndex !== undefined && calendar.colorIndex >= 0) {
+      return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
+    }
+    return calendar?.color || '#4A90D9';
+  };
+
+  // Helper for calendar objects
+  const getCalendarColorFromObj = (calendar: CalendarType) => {
+    if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
+      return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
+    }
+    return calendar.color || '#4A90D9';
   };
 
   return (
@@ -207,7 +221,7 @@ export const CalendarSearch = forwardRef<CalendarSearchRef, CalendarSearchProps>
                       />
                       <div
                         className="w-3 h-3 rounded-full"
-                        style={{ backgroundColor: calendar.color }}
+                        style={{ backgroundColor: getCalendarColorFromObj(calendar) }}
                       />
                       <span className="text-sm">{calendar.name}</span>
                     </label>
@@ -280,7 +294,7 @@ export const CalendarSearch = forwardRef<CalendarSearchRef, CalendarSearchProps>
                   <Badge key={id} variant="secondary" className="gap-1">
                     <div
                       className="w-2 h-2 rounded-full"
-                      style={{ backgroundColor: calendar.color }}
+                      style={{ backgroundColor: getCalendarColorFromObj(calendar) }}
                     />
                     {calendar.name}
                     <button

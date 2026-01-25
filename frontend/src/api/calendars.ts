@@ -11,6 +11,7 @@ import type {
 export interface CreateCalendarRequest {
   name: string;
   color?: string;
+  colorIndex?: number;
   pattern?: string;
   type?: 'group' | 'individual';
 }
@@ -18,6 +19,7 @@ export interface CreateCalendarRequest {
 export interface UpdateCalendarRequest {
   name?: string;
   color?: string;
+  colorIndex?: number;
   pattern?: string;
 }
 

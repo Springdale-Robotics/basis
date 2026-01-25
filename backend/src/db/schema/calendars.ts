@@ -25,6 +25,7 @@ export const calendars = pgTable('calendars', {
   ownerId: uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
   name: varchar('name', { length: 255 }).notNull(),
   color: varchar('color', { length: 7 }).notNull().default('#3B82F6'),
+  colorIndex: integer('color_index').default(0).notNull(),
   pattern: varchar('pattern', { length: 50 }).default('solid'),
   type: calendarTypeEnum('type').notNull().default('individual'),
   isDefault: boolean('is_default').default(false).notNull(),

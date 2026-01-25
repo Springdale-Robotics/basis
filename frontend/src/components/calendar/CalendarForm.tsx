@@ -46,11 +46,12 @@ import { calendarsApi, type PermissionLevel } from '@/api/calendars';
 import type { Calendar } from '@/types/models';
 import { toast } from '@/hooks/useToast';
 import { useTheme } from '@/hooks/useTheme';
-import { COLOR_PALETTES } from '@/lib/theme-presets';
+import { useCalendarColor } from '@/hooks/useCalendarColor';
+import { COLOR_PALETTES, getColorForIndex } from '@/lib/theme-presets';
 
 interface CalendarFormData {
   name: string;
-  color: string;
+  colorIndex: number;
   type: 'individual' | 'group';
 }
 
@@ -101,18 +102,19 @@ export function CalendarForm({
     defaultValues: calendar
       ? {
           name: calendar.name,
-          color: calendar.color,
+          colorIndex: calendar.colorIndex ?? 0,
           type: calendar.type === 'synced' ? 'group' : calendar.type,
         }
       : {
           name: '',
-          color: colorOptions[0].value,
+          colorIndex: 0,
           type: 'group',
         },
   });
 
-  const selectedColor = watch('color');
+  const selectedColorIndex = watch('colorIndex');
   const selectedType = watch('type');
+  const selectedColor = getColorForIndex(colorPalette, selectedColorIndex);
 
   // Fetch connected households for sharing
   const { data: householdsData } = useQuery({
@@ -192,18 +194,18 @@ export function CalendarForm({
       if (calendar) {
         reset({
           name: calendar.name,
-          color: calendar.color,
+          colorIndex: calendar.colorIndex ?? 0,
           type: calendar.type === 'synced' ? 'group' : calendar.type,
         });
       } else {
         reset({
           name: '',
-          color: colorOptions[0].value,
+          colorIndex: 0,
           type: 'group',
         });
       }
     }
-  }, [open, calendar, reset, colorOptions]);
+  }, [open, calendar, reset]);
 
   const handleFormSubmit = (data: CalendarFormData) => {
     onSubmit(data);
@@ -280,8 +282,8 @@ export function CalendarForm({
                   <div className="space-y-2">
                     <Label htmlFor="color">Color</Label>
                     <Select
-                      value={selectedColor}
-                      onValueChange={(value) => setValue('color', value)}
+                      value={selectedColorIndex.toString()}
+                      onValueChange={(value) => setValue('colorIndex', parseInt(value, 10))}
                     >
                       <SelectTrigger>
                         <SelectValue>
@@ -290,13 +292,13 @@ export function CalendarForm({
                               className="w-4 h-4 rounded-full"
                               style={{ backgroundColor: selectedColor }}
                             />
-                            {colorOptions.find((c) => c.value === selectedColor)?.label || 'Select color'}
+                            {colorOptions[selectedColorIndex]?.label || 'Select color'}
                           </div>
                         </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
-                        {colorOptions.map((color) => (
-                          <SelectItem key={color.value} value={color.value}>
+                        {colorOptions.map((color, index) => (
+                          <SelectItem key={index} value={index.toString()}>
                             <div className="flex items-center gap-2">
                               <div
                                 className="w-4 h-4 rounded-full"
@@ -578,8 +580,8 @@ export function CalendarForm({
               <div className="space-y-2">
                 <Label htmlFor="color">Color</Label>
                 <Select
-                  value={selectedColor}
-                  onValueChange={(value) => setValue('color', value)}
+                  value={selectedColorIndex.toString()}
+                  onValueChange={(value) => setValue('colorIndex', parseInt(value, 10))}
                 >
                   <SelectTrigger>
                     <SelectValue>
@@ -588,13 +590,13 @@ export function CalendarForm({
                           className="w-4 h-4 rounded-full"
                           style={{ backgroundColor: selectedColor }}
                         />
-                        {colorOptions.find((c) => c.value === selectedColor)?.label || 'Select color'}
+                        {colorOptions[selectedColorIndex]?.label || 'Select color'}
                       </div>
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    {colorOptions.map((color) => (
-                      <SelectItem key={color.value} value={color.value}>
+                    {colorOptions.map((color, index) => (
+                      <SelectItem key={index} value={index.toString()}>
                         <div className="flex items-center gap-2">
                           <div
                             className="w-4 h-4 rounded-full"

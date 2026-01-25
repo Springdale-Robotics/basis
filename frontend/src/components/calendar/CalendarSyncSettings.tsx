@@ -39,6 +39,8 @@ import { calendarsApi } from '@/api/calendars';
 import type { Calendar } from '@/types/models';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from '@/hooks/useToast';
+import { useTheme } from '@/hooks/useTheme';
+import { getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
 
 interface CalendarSyncSettingsProps {
   calendars: Calendar[];
@@ -48,6 +50,15 @@ export function CalendarSyncSettings({ calendars }: CalendarSyncSettingsProps) {
   const queryClient = useQueryClient();
   const [selectCalendarOpen, setSelectCalendarOpen] = useState(false);
   const [selectedGoogleCalendar, setSelectedGoogleCalendar] = useState<string>('');
+  const { colorPalette } = useTheme();
+
+  // Helper to get calendar color from colorIndex
+  const getCalendarColor = (calendar: Calendar): string => {
+    if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
+      return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
+    }
+    return calendar.color || '#4A90D9';
+  };
   const [calendarName, setCalendarName] = useState('');
   const [calendarColor, setCalendarColor] = useState('#4285F4');
 
@@ -250,7 +261,7 @@ export function CalendarSyncSettings({ calendars }: CalendarSyncSettingsProps) {
                         <div className="flex items-center gap-3">
                           <div
                             className="w-3 h-3 rounded-full"
-                            style={{ backgroundColor: calendar.color }}
+                            style={{ backgroundColor: getCalendarColor(calendar) }}
                           />
                           <div>
                             <div className="font-medium">{calendar.name}</div>

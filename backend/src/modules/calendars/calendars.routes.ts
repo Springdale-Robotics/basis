@@ -34,6 +34,7 @@ import {
 const createCalendarSchema = z.object({
   name: z.string().min(1).max(255),
   color: hexColorSchema.default('#3B82F6'),
+  colorIndex: z.number().int().min(0).max(11).default(0),
   pattern: z.string().max(50).default('solid'),
   type: calendarTypeSchema.default('individual'),
 });
@@ -41,6 +42,7 @@ const createCalendarSchema = z.object({
 const updateCalendarSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   color: hexColorSchema.optional(),
+  colorIndex: z.number().int().min(0).max(11).optional(),
   pattern: z.string().max(50).optional(),
 });
 
@@ -157,6 +159,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
           ownerId: input.type === 'individual' ? request.user!.id : null,
           name: input.name,
           color: input.color,
+          colorIndex: input.colorIndex,
           pattern: input.pattern,
           type: input.type,
         })

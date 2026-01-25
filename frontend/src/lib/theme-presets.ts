@@ -532,76 +532,148 @@ export const THEME_PRESETS: Record<string, ThemePreset> = {
 
 export type ThemePresetId = keyof typeof THEME_PRESETS;
 
+// Color palette configuration interface
+export interface ColorPaletteConfig {
+  name: string;
+  type: 'standard' | 'monochromatic';
+  colors: Array<{ value: string; label: string }>;
+}
+
 // Color palettes for calendars and other multi-color features (hex format)
-export const COLOR_PALETTES = {
+// Standard palettes have positionally consistent color types:
+// 0=Blue, 1=Green, 2=Red/Coral, 3=Yellow, 4=Purple, 5=Pink, 6=Teal, 7=Orange, 8=Brown, 9=Lime, 10=Indigo, 11=Slate
+export const COLOR_PALETTES: Record<string, ColorPaletteConfig> = {
   default: {
     name: 'Default',
+    type: 'standard',
     colors: [
-      { value: '#f66951', label: 'Coral' },
       { value: '#4A90D9', label: 'Blue' },
       { value: '#50C878', label: 'Green' },
+      { value: '#f66951', label: 'Coral' },
       { value: '#FFD700', label: 'Yellow' },
       { value: '#9B59B6', label: 'Purple' },
       { value: '#E91E63', label: 'Pink' },
       { value: '#00BCD4', label: 'Teal' },
       { value: '#FF9800', label: 'Orange' },
+      { value: '#8B5A2B', label: 'Brown' },
+      { value: '#8BC34A', label: 'Lime' },
+      { value: '#3F51B5', label: 'Indigo' },
+      { value: '#607D8B', label: 'Slate' },
     ],
   },
   pastel: {
     name: 'Pastel',
+    type: 'standard',
     colors: [
-      { value: '#FFB5A7', label: 'Blush' },
       { value: '#A2D2FF', label: 'Sky' },
       { value: '#B5E48C', label: 'Mint' },
+      { value: '#FFB5A7', label: 'Blush' },
       { value: '#FDFFB6', label: 'Cream' },
       { value: '#CDB4DB', label: 'Lavender' },
       { value: '#FFC8DD', label: 'Rose' },
       { value: '#99D98C', label: 'Sage' },
       { value: '#FFCFD2', label: 'Peach' },
+      { value: '#D4A373', label: 'Tan' },
+      { value: '#C1E1A3', label: 'Spring' },
+      { value: '#B8C0FF', label: 'Periwinkle' },
+      { value: '#E0E1DD', label: 'Mist' },
     ],
   },
   vibrant: {
     name: 'Vibrant',
+    type: 'standard',
     colors: [
-      { value: '#FF006E', label: 'Magenta' },
       { value: '#3A86FF', label: 'Azure' },
       { value: '#06D6A0', label: 'Emerald' },
+      { value: '#FF006E', label: 'Magenta' },
       { value: '#FFBE0B', label: 'Amber' },
       { value: '#8338EC', label: 'Violet' },
-      { value: '#FB5607', label: 'Tangerine' },
+      { value: '#F72585', label: 'Fuchsia' },
       { value: '#00F5D4', label: 'Cyan' },
-      { value: '#FF595E', label: 'Coral' },
+      { value: '#FB5607', label: 'Tangerine' },
+      { value: '#C77B58', label: 'Terracotta' },
+      { value: '#97FF00', label: 'Neon' },
+      { value: '#5E60CE', label: 'Iris' },
+      { value: '#6C757D', label: 'Steel' },
     ],
   },
   earth: {
     name: 'Earth',
+    type: 'standard',
     colors: [
-      { value: '#BC6C25', label: 'Sienna' },
+      { value: '#5C7C9A', label: 'Slate Blue' },
       { value: '#606C38', label: 'Olive' },
-      { value: '#283618', label: 'Forest' },
+      { value: '#BC6C25', label: 'Sienna' },
       { value: '#DDA15E', label: 'Sand' },
+      { value: '#7C5C6B', label: 'Mauve' },
+      { value: '#CB997E', label: 'Clay' },
+      { value: '#283618', label: 'Forest' },
       { value: '#9C6644', label: 'Umber' },
       { value: '#6B705C', label: 'Moss' },
       { value: '#A68A64', label: 'Khaki' },
-      { value: '#CB997E', label: 'Clay' },
+      { value: '#354F52', label: 'Pine' },
+      { value: '#3D405B', label: 'Charcoal' },
     ],
   },
-  ocean: {
-    name: 'Ocean',
+  monochrome: {
+    name: 'Monochrome',
+    type: 'monochromatic',
     colors: [
-      { value: '#03045E', label: 'Abyss' },
-      { value: '#0077B6', label: 'Marine' },
-      { value: '#00B4D8', label: 'Surf' },
-      { value: '#48CAE4', label: 'Aqua' },
-      { value: '#90E0EF', label: 'Sky' },
-      { value: '#023E8A', label: 'Navy' },
-      { value: '#0096C7', label: 'Cerulean' },
-      { value: '#CAF0F8', label: 'Foam' },
+      { value: '#F8F9FA', label: 'White' },
+      { value: '#E9ECEF', label: 'Lightest' },
+      { value: '#DEE2E6', label: 'Lighter' },
+      { value: '#CED4DA', label: 'Light' },
+      { value: '#ADB5BD', label: 'Medium Light' },
+      { value: '#868E96', label: 'Medium' },
+      { value: '#6C757D', label: 'Medium Dark' },
+      { value: '#495057', label: 'Dark' },
+      { value: '#343A40', label: 'Darker' },
+      { value: '#212529', label: 'Darkest' },
+      { value: '#1A1D20', label: 'Near Black' },
+      { value: '#0D0F10', label: 'Black' },
     ],
   },
-} as const;
+  oceanBlue: {
+    name: 'Ocean Blues',
+    type: 'monochromatic',
+    colors: [
+      { value: '#CAF0F8', label: 'Foam' },
+      { value: '#ADE8F4', label: 'Pale' },
+      { value: '#90E0EF', label: 'Light' },
+      { value: '#48CAE4', label: 'Aqua' },
+      { value: '#00B4D8', label: 'Surf' },
+      { value: '#0096C7', label: 'Cerulean' },
+      { value: '#0077B6', label: 'Marine' },
+      { value: '#023E8A', label: 'Navy' },
+      { value: '#03045E', label: 'Abyss' },
+      { value: '#012A4A', label: 'Midnight' },
+      { value: '#001D3D', label: 'Deep' },
+      { value: '#001233', label: 'Depths' },
+    ],
+  },
+};
 
 export type ColorPalette = keyof typeof COLOR_PALETTES;
+
+// Helper function to get color hex value by index from a palette
+export function getColorForIndex(palette: ColorPalette, index: number): string {
+  const paletteConfig = COLOR_PALETTES[palette];
+  if (!paletteConfig) {
+    return COLOR_PALETTES.default.colors[0].value;
+  }
+  const normalizedIndex = Math.max(0, Math.min(index, paletteConfig.colors.length - 1));
+  return paletteConfig.colors[normalizedIndex]?.value ?? paletteConfig.colors[0].value;
+}
+
+// Helper function to get color label by index from a palette
+export function getColorLabelForIndex(palette: ColorPalette, index: number): string {
+  const paletteConfig = COLOR_PALETTES[palette];
+  if (!paletteConfig) {
+    return COLOR_PALETTES.default.colors[0].label;
+  }
+  const normalizedIndex = Math.max(0, Math.min(index, paletteConfig.colors.length - 1));
+  return paletteConfig.colors[normalizedIndex]?.label ?? paletteConfig.colors[0].label;
+}
 
 export const THEME_DEFAULTS = {
   theme: 'system' as const,
@@ -633,3 +705,138 @@ export const THEME_COLOR_CATEGORIES = {
     'destructive', 'destructiveForeground',
   ] as const,
 };
+
+// Human-readable labels for color keys
+export const COLOR_LABELS: Record<keyof ThemeColors, string> = {
+  background: 'Background',
+  foreground: 'Text',
+  card: 'Card',
+  cardForeground: 'Card Text',
+  popover: 'Popover',
+  popoverForeground: 'Popover Text',
+  primary: 'Primary',
+  primaryForeground: 'Primary Text',
+  secondary: 'Secondary',
+  secondaryForeground: 'Secondary Text',
+  muted: 'Muted',
+  mutedForeground: 'Muted Text',
+  accent: 'Accent',
+  accentForeground: 'Accent Text',
+  destructive: 'Destructive',
+  destructiveForeground: 'Destructive Text',
+  border: 'Border',
+  input: 'Input',
+  ring: 'Focus Ring',
+  success: 'Success',
+  successForeground: 'Success Text',
+  successMuted: 'Success Muted',
+  successMutedForeground: 'Success Muted Text',
+  warning: 'Warning',
+  warningForeground: 'Warning Text',
+  warningMuted: 'Warning Muted',
+  warningMutedForeground: 'Warning Muted Text',
+  error: 'Error',
+  errorForeground: 'Error Text',
+  errorMuted: 'Error Muted',
+  errorMutedForeground: 'Error Muted Text',
+  info: 'Info',
+  infoForeground: 'Info Text',
+  infoMuted: 'Info Muted',
+  infoMutedForeground: 'Info Muted Text',
+};
+
+// Basic colors (always visible in editor)
+export const BASIC_COLORS: (keyof ThemeColors)[] = [
+  'background',
+  'foreground',
+  'primary',
+  'secondary',
+  'accent',
+  'muted',
+  'border',
+];
+
+// Advanced colors (collapsible in editor)
+export const ADVANCED_COLORS = {
+  surfaces: ['card', 'cardForeground', 'popover', 'popoverForeground', 'input', 'ring'] as (keyof ThemeColors)[],
+  success: ['success', 'successForeground', 'successMuted', 'successMutedForeground'] as (keyof ThemeColors)[],
+  warning: ['warning', 'warningForeground', 'warningMuted', 'warningMutedForeground'] as (keyof ThemeColors)[],
+  error: ['error', 'errorForeground', 'errorMuted', 'errorMutedForeground'] as (keyof ThemeColors)[],
+  info: ['info', 'infoForeground', 'infoMuted', 'infoMutedForeground'] as (keyof ThemeColors)[],
+  destructive: ['destructive', 'destructiveForeground'] as (keyof ThemeColors)[],
+  foregrounds: ['primaryForeground', 'secondaryForeground', 'mutedForeground', 'accentForeground'] as (keyof ThemeColors)[],
+};
+
+// HSL string "260 40% 98%" to hex "#faf8ff"
+export function hslStringToHex(hsl: string): string {
+  const parts = hsl.split(' ');
+  if (parts.length !== 3) return '#000000';
+
+  const h = parseFloat(parts[0]);
+  const s = parseFloat(parts[1].replace('%', '')) / 100;
+  const l = parseFloat(parts[2].replace('%', '')) / 100;
+
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+
+  let r = 0, g = 0, b = 0;
+
+  if (h >= 0 && h < 60) {
+    r = c; g = x; b = 0;
+  } else if (h >= 60 && h < 120) {
+    r = x; g = c; b = 0;
+  } else if (h >= 120 && h < 180) {
+    r = 0; g = c; b = x;
+  } else if (h >= 180 && h < 240) {
+    r = 0; g = x; b = c;
+  } else if (h >= 240 && h < 300) {
+    r = x; g = 0; b = c;
+  } else if (h >= 300 && h < 360) {
+    r = c; g = 0; b = x;
+  }
+
+  const toHex = (n: number) => {
+    const hex = Math.round((n + m) * 255).toString(16);
+    return hex.length === 1 ? '0' + hex : hex;
+  };
+
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+// Hex "#faf8ff" to HSL string "260 40% 98%"
+export function hexToHslString(hex: string): string {
+  // Remove # if present
+  hex = hex.replace(/^#/, '');
+
+  // Parse RGB values
+  const r = parseInt(hex.slice(0, 2), 16) / 255;
+  const g = parseInt(hex.slice(2, 4), 16) / 255;
+  const b = parseInt(hex.slice(4, 6), 16) / 255;
+
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+
+  let h = 0;
+  let s = 0;
+
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+
+    switch (max) {
+      case r:
+        h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+        break;
+      case g:
+        h = ((b - r) / d + 2) * 60;
+        break;
+      case b:
+        h = ((r - g) / d + 4) * 60;
+        break;
+    }
+  }
+
+  return `${Math.round(h)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`;
+}

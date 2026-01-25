@@ -32,6 +32,8 @@ import { Badge } from '@/components/ui/badge';
 import { calendarsApi } from '@/api/calendars';
 import type { CalendarEvent, Calendar as CalendarType, RsvpStatus, EventAttendee } from '@/types/models';
 import { useAuth } from '@/providers/AuthProvider';
+import { useTheme } from '@/hooks/useTheme';
+import { getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
 import { cn } from '@/lib/utils';
 
 interface EventDetailProps {
@@ -73,6 +75,16 @@ export function EventDetail({
 }: EventDetailProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const { colorPalette } = useTheme();
+
+  // Resolve calendar color from colorIndex with fallback to hex
+  const getCalendarColor = () => {
+    if (calendar?.colorIndex !== undefined && calendar.colorIndex >= 0) {
+      return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
+    }
+    return calendar?.color || '#4A90D9';
+  };
+  const calColor = getCalendarColor();
 
   // Fetch event details with attendees
   const { data: eventDetails } = useQuery({
@@ -168,7 +180,7 @@ export function EventDetail({
         {/* Header with colored bar */}
         <div
           className="h-2 rounded-t-lg"
-          style={{ backgroundColor: event.color || calendar?.color || '#6366f1' }}
+          style={{ backgroundColor: event.color || calColor }}
         />
 
         <div className="p-6">
@@ -197,7 +209,7 @@ export function EventDetail({
                 <div className="flex items-center gap-2">
                   <div
                     className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: calendar.color }}
+                    style={{ backgroundColor: calColor }}
                   />
                   <span className="text-sm">{calendar.name}</span>
                 </div>

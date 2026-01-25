@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
-import { useThemeStore } from '@/stores/themeStore';
+import { useThemeStore, type CustomTheme } from '@/stores/themeStore';
 import {
   THEME_PRESETS,
   colorKeyToVar,
@@ -18,7 +18,7 @@ interface ThemeProviderProps {
 
 interface ThemeProviderState {
   theme: Theme;
-  presetId: ThemePresetId;
+  presetId: ThemePresetId | string;
   colorPalette: ColorPalette;
   fontSize: number;
   borderRadius: number;
@@ -26,15 +26,20 @@ interface ThemeProviderState {
     light?: Partial<ThemeColors>;
     dark?: Partial<ThemeColors>;
   };
+  customThemes: Record<string, CustomTheme>;
   resolvedTheme: 'light' | 'dark';
   setTheme: (theme: Theme) => void;
-  setPresetId: (presetId: ThemePresetId) => void;
+  setPresetId: (presetId: ThemePresetId | string) => void;
   setColorPalette: (colorPalette: ColorPalette) => void;
   setFontSize: (fontSize: number) => void;
   setBorderRadius: (borderRadius: number) => void;
   setCustomColor: (mode: 'light' | 'dark', key: keyof ThemeColors, value: string) => void;
   clearCustomColors: () => void;
   resetToDefaults: () => void;
+  saveCustomTheme: (name: string, basePresetId: string, light: ThemeColors, dark: ThemeColors) => string;
+  updateCustomTheme: (id: string, updates: Partial<Omit<CustomTheme, 'id' | 'createdAt'>>) => void;
+  deleteCustomTheme: (id: string) => void;
+  getActiveThemeColors: () => { light: ThemeColors; dark: ThemeColors } | null;
 }
 
 const ThemeProviderContext = createContext<ThemeProviderState | undefined>(undefined);
@@ -51,6 +56,7 @@ export function ThemeProvider({
     fontSize,
     borderRadius,
     customColors,
+    customThemes,
     setTheme,
     setPresetId,
     setColorPalette,
@@ -59,7 +65,31 @@ export function ThemeProvider({
     setCustomColor,
     clearCustomColors,
     resetToDefaults,
+    saveCustomTheme,
+    updateCustomTheme,
+    deleteCustomTheme,
   } = useThemeStore();
+
+  // Helper to get theme colors (either from preset or custom theme)
+  const getThemeColorsById = (id: string): { light: ThemeColors; dark: ThemeColors } | null => {
+    if (THEME_PRESETS[id]) {
+      return {
+        light: THEME_PRESETS[id].light,
+        dark: THEME_PRESETS[id].dark,
+      };
+    }
+    if (customThemes[id]) {
+      return {
+        light: customThemes[id].light,
+        dark: customThemes[id].dark,
+      };
+    }
+    return null;
+  };
+
+  const getActiveThemeColors = (): { light: ThemeColors; dark: ThemeColors } | null => {
+    return getThemeColorsById(presetId);
+  };
 
   // Compute resolved theme
   const resolvedTheme = useMemo(() => {
@@ -106,17 +136,17 @@ export function ThemeProvider({
   // Apply all theme colors as CSS variables
   useEffect(() => {
     const root = document.documentElement;
-    const preset = THEME_PRESETS[presetId];
+    const themeColors = getThemeColorsById(presetId);
 
-    if (!preset) return;
+    if (!themeColors) return;
 
     // Determine which color mode to use
     const colorMode = theme === 'system'
       ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
       : theme;
 
-    // Get base colors from preset
-    const baseColors = preset[colorMode];
+    // Get base colors from preset or custom theme
+    const baseColors = themeColors[colorMode];
 
     // Merge with custom colors
     const mergedColors = {
@@ -133,7 +163,7 @@ export function ThemeProvider({
     // Apply font size and border radius
     root.style.fontSize = `${fontSize}px`;
     root.style.setProperty('--radius', `${borderRadius}rem`);
-  }, [presetId, theme, customColors, fontSize, borderRadius]);
+  }, [presetId, theme, customColors, customThemes, fontSize, borderRadius]);
 
   // Update colors when system theme changes
   useEffect(() => {
@@ -142,11 +172,11 @@ export function ThemeProvider({
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const handleChange = () => {
       const root = document.documentElement;
-      const preset = THEME_PRESETS[presetId];
-      if (!preset) return;
+      const themeColors = getThemeColorsById(presetId);
+      if (!themeColors) return;
 
       const colorMode = mediaQuery.matches ? 'dark' : 'light';
-      const baseColors = preset[colorMode];
+      const baseColors = themeColors[colorMode];
       const mergedColors = {
         ...baseColors,
         ...(customColors[colorMode] || {}),
@@ -160,7 +190,7 @@ export function ThemeProvider({
 
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);
-  }, [theme, presetId, customColors]);
+  }, [theme, presetId, customColors, customThemes]);
 
   const value = {
     theme,
@@ -169,6 +199,7 @@ export function ThemeProvider({
     fontSize,
     borderRadius,
     customColors,
+    customThemes,
     resolvedTheme,
     setTheme,
     setPresetId,
@@ -178,6 +209,10 @@ export function ThemeProvider({
     setCustomColor,
     clearCustomColors,
     resetToDefaults,
+    saveCustomTheme,
+    updateCustomTheme,
+    deleteCustomTheme,
+    getActiveThemeColors,
   };
 
   return (

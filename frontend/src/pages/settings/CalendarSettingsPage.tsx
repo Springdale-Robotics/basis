@@ -15,6 +15,7 @@ import {
   Globe,
   Settings,
   ChevronRight,
+  Palette,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -47,12 +48,26 @@ import { calendarsApi } from '@/api/calendars';
 import type { Calendar } from '@/types/models';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from '@/hooks/useToast';
+import { useTheme } from '@/hooks/useTheme';
+import { COLOR_PALETTES, getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
 import { CalendarSharingDialog } from '@/components/calendar/CalendarSharingDialog';
 import { CalendarPublicLinkCard } from '@/components/calendar/CalendarPublicLinkCard';
+import { cn } from '@/lib/utils';
+
+const colorPaletteEntries = Object.entries(COLOR_PALETTES) as [ColorPalette, (typeof COLOR_PALETTES)[ColorPalette]][];
 
 export function CalendarSettingsPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { colorPalette, setColorPalette } = useTheme();
+
+  // Helper to get calendar color from colorIndex
+  const getCalendarColor = (calendar: Calendar): string => {
+    if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
+      return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
+    }
+    return calendar.color || '#4A90D9';
+  };
 
   // Dialog states
   const [googleSelectOpen, setGoogleSelectOpen] = useState(false);
@@ -303,6 +318,51 @@ export function CalendarSettingsPage() {
         </Card>
       )}
 
+      {/* Color Palette */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Palette className="h-5 w-5" />
+            Calendar Color Palette
+          </CardTitle>
+          <CardDescription>
+            Choose a color palette for your calendars. Switching palettes updates all calendar colors automatically.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {colorPaletteEntries.map(([id, palette]) => (
+              <button
+                key={id}
+                onClick={() => setColorPalette(id)}
+                className={cn(
+                  'flex w-full items-center gap-3 rounded-lg border p-3 transition-colors text-left',
+                  colorPalette === id
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:bg-muted'
+                )}
+              >
+                <div className="flex gap-1 flex-wrap">
+                  {palette.colors.map((color, i) => (
+                    <div
+                      key={i}
+                      className="h-6 w-6 rounded-full border border-border/50"
+                      style={{ backgroundColor: color.value }}
+                    />
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{palette.name}</span>
+                  <Badge variant="outline" className="text-xs">
+                    {palette.type === 'monochromatic' ? 'Monochromatic' : 'Standard'}
+                  </Badge>
+                </div>
+              </button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Connected Calendars */}
       <Card>
         <CardHeader>
@@ -329,6 +389,7 @@ export function CalendarSettingsPage() {
                 <SyncedCalendarItem
                   key={calendar.id}
                   calendar={calendar}
+                  calendarColor={getCalendarColor(calendar)}
                   onSync={() => syncMutation.mutate(calendar.id)}
                   onDisconnect={() => disconnectMutation.mutate(calendar.id)}
                   onManage={() => setManageCalendar(calendar)}
@@ -442,7 +503,7 @@ export function CalendarSettingsPage() {
                   <div className="flex items-center gap-3">
                     <div
                       className="w-4 h-4 rounded-full"
-                      style={{ backgroundColor: calendar.color }}
+                      style={{ backgroundColor: getCalendarColor(calendar) }}
                     />
                     <div>
                       <span className="font-medium">{calendar.name}</span>
@@ -497,7 +558,7 @@ export function CalendarSettingsPage() {
                 <a href={calendarsApi.getExportUrl(calendar.id)} download>
                   <div
                     className="w-2 h-2 rounded-full mr-2"
-                    style={{ backgroundColor: calendar.color }}
+                    style={{ backgroundColor: getCalendarColor(calendar) }}
                   />
                   {calendar.name}
                 </a>
@@ -824,6 +885,7 @@ export function CalendarSettingsPage() {
 
 function SyncedCalendarItem({
   calendar,
+  calendarColor,
   onSync,
   onDisconnect,
   onManage,
@@ -831,6 +893,7 @@ function SyncedCalendarItem({
   isDisconnecting,
 }: {
   calendar: Calendar;
+  calendarColor: string;
   onSync: () => void;
   onDisconnect: () => void;
   onManage?: () => void;
@@ -856,7 +919,7 @@ function SyncedCalendarItem({
       <div className="flex items-center gap-3">
         <div
           className="w-4 h-4 rounded-full"
-          style={{ backgroundColor: calendar.color }}
+          style={{ backgroundColor: calendarColor }}
         />
         <div>
           <div className="flex items-center gap-2">

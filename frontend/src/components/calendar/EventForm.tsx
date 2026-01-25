@@ -28,6 +28,8 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { eventSchema, type EventFormData } from '@/types/forms';
 import type { CalendarEvent, Calendar } from '@/types/models';
+import { useTheme } from '@/hooks/useTheme';
+import { getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
 import {
   RecurrenceEditor,
   type RecurrenceOptions,
@@ -75,6 +77,15 @@ export function EventForm({
     interval: 1,
     endType: 'never',
   });
+  const { colorPalette } = useTheme();
+
+  // Helper to get calendar color from colorIndex
+  const getCalendarColor = (calendar: Calendar): string => {
+    if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
+      return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
+    }
+    return calendar.color || '#4A90D9';
+  };
 
   const {
     register,
@@ -347,7 +358,7 @@ export function EventForm({
                       <div className="flex items-center gap-2">
                         <div
                           className="w-3 h-3 rounded-full"
-                          style={{ backgroundColor: calendar.color }}
+                          style={{ backgroundColor: getCalendarColor(calendar) }}
                         />
                         {calendar.name}
                       </div>
