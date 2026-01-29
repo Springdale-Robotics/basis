@@ -81,3 +81,7 @@ vite.config.ts.timestamp-*
 
 # Plan files (development notes)
 plan/
+
+# LLM models (large binary files)
+models/
+*.gguf

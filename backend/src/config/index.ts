@@ -62,6 +62,22 @@ const envSchema = z.object({
   // Development
   DISABLE_RATE_LIMIT: z.coerce.boolean().default(false),
   DISABLE_CSRF: z.coerce.boolean().default(false),
+
+  // Ollama connection (used by VLM-LLM service)
+  OLLAMA_HOST: z.string().default('http://localhost:11434'),
+
+  // VLM + LLM Service (two-stage pipeline)
+  VLM_LLM_SERVICE_URL: z.string().default('http://localhost:8000'),
+  VLM_LLM_TIMEOUT_MS: z.coerce.number().default(180000), // 3 minutes for CPU mode
+  OLLAMA_VLM_MODEL: z.string().default('llava:7b'),      // Vision model for reading images
+  OLLAMA_LLM_MODEL: z.string().default('qwen2.5:7b'),    // Text model for structuring
+
+  // Image parsing configuration
+  IMAGE_PARSE_PROVIDER: z.enum(['vlm-llm', 'auto']).default('auto'),
+  IMAGE_PARSE_TIMEOUT_MS: z.coerce.number().default(180000), // 3 minutes for CPU processing
+  IMAGE_PARSE_MAX_SIZE_MB: z.coerce.number().default(10),
+  IMAGE_PARSE_SESSION_TTL_HOURS: z.coerce.number().default(24),
+  IMAGE_PARSE_REQUIRE_AI: z.coerce.boolean().default(false),
 });
 
 export type Config = z.infer<typeof envSchema>;

@@ -1,12 +1,20 @@
-import { Link } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, ListTodo, FileText, Bell } from 'lucide-react';
+import { Plus, ListTodo, FileText, Bell, Camera, ChevronDown } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/EmptyState';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { ImageParseDialog } from '@/components/image-parse';
 import { listsApi } from '@/api/lists';
 import { cn } from '@/lib/utils';
 
@@ -17,10 +25,20 @@ const typeIcons = {
 };
 
 export function ListsPage() {
+  const [imageParseOpen, setImageParseOpen] = useState(false);
+  const navigate = useNavigate();
+
   const { data: lists, isLoading } = useQuery({
     queryKey: ['lists'],
     queryFn: listsApi.list,
   });
+
+  const handleImageParseSuccess = (type: string, createdIds: string[]) => {
+    // Navigate to the first created list
+    if (createdIds.length > 0) {
+      navigate(`/lists/${createdIds[0]}`);
+    }
+  };
 
   return (
     <div>
@@ -28,11 +46,33 @@ export function ListsPage() {
         title="Lists"
         description="Manage your lists and reminders"
         actions={
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            New List
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                New List
+                <ChevronDown className="ml-2 h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Manually
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setImageParseOpen(true)}>
+                <Camera className="mr-2 h-4 w-4" />
+                From Image
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         }
+      />
+
+      <ImageParseDialog
+        open={imageParseOpen}
+        onOpenChange={setImageParseOpen}
+        defaultType="list"
+        onSuccess={handleImageParseSuccess}
       />
 
       {isLoading ? (
@@ -47,10 +87,16 @@ export function ListsPage() {
           title="No lists yet"
           description="Create your first list to get organized"
           action={
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              New List
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setImageParseOpen(true)}>
+                <Camera className="mr-2 h-4 w-4" />
+                From Image
+              </Button>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                New List
+              </Button>
+            </div>
           }
         />
       ) : (

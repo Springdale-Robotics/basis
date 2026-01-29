@@ -40,6 +40,7 @@ import { moviesRoutes } from './modules/movies/movies.routes.js';
 import { musicRoutes } from './modules/music/music.routes.js';
 import { groupsRoutes } from './modules/groups/groups.routes.js';
 import { permissionsRoutes } from './modules/permissions/permissions.routes.js';
+import { imageParseRoutes } from './modules/image-parse/image-parse.routes.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -165,6 +166,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Groups and permissions
   await app.register(groupsRoutes, { prefix: '/api/v1/groups' });
   await app.register(permissionsRoutes, { prefix: '/api/v1/permissions' });
+
+  // Image parsing
+  await app.register(imageParseRoutes, { prefix: '/api/v1/image-parse' });
 
   return app;
 }

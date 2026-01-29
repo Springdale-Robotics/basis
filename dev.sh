@@ -55,6 +55,12 @@ NODE_ENV=development
 CORS_ORIGINS=http://localhost:5173
 LOG_LEVEL=debug
 STORAGE_PATH=./storage
+# Image parsing (VLM-LLM two-stage pipeline)
+IMAGE_PARSE_PROVIDER=auto
+VLM_LLM_SERVICE_URL=http://localhost:8000
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_VLM_MODEL=llava:7b
+OLLAMA_LLM_MODEL=qwen2.5:7b
 EOF
   fi
 }
@@ -110,14 +116,83 @@ cleanup_processes() {
   # Kill anything on our dev ports
   lsof -ti:3000 | xargs kill -9 2>/dev/null || true
   lsof -ti:5173 | xargs kill -9 2>/dev/null || true
+  lsof -ti:8000 | xargs kill -9 2>/dev/null || true
   sleep 1
 }
 
-# Helper: start infrastructure (postgres + redis)
+# Helper: clean up unused Docker resources
+cleanup_docker() {
+  echo -e "${BLUE}Cleaning up unused Docker resources...${NC}"
+  # Remove stopped containers
+  docker container prune -f 2>/dev/null || true
+  # Remove dangling images
+  docker image prune -f 2>/dev/null || true
+  # Remove build cache
+  docker builder prune -f 2>/dev/null || true
+}
+
+# Helper: start infrastructure (postgres + redis + ollama)
 start_infra() {
-  echo -e "${BLUE}Starting PostgreSQL and Redis...${NC}"
-  (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml up -d postgres redis)
+  echo -e "${BLUE}Starting PostgreSQL, Redis, and Ollama...${NC}"
+  (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml up -d postgres redis ollama)
   sleep 3
+}
+
+# Helper: start VLM-LLM service (uses Ollama for both VLM and LLM)
+start_vlm_llm() {
+  echo -e "${BLUE}Starting VLM-LLM service...${NC}"
+  (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml up -d vlm-llm)
+}
+
+# Helper: check VLM-LLM service health
+check_vlm_llm_health() {
+  if docker ps --format '{{.Names}}' | grep -q 'homemanager-vlm-llm-dev'; then
+    echo -e "${BLUE}Waiting for VLM-LLM service...${NC}"
+    local max_attempts=30
+    local attempt=0
+    while [ $attempt -lt $max_attempts ]; do
+      if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+        echo -e "${GREEN}VLM-LLM service ready!${NC}"
+        return 0
+      fi
+      attempt=$((attempt + 1))
+      sleep 2
+    done
+    echo -e "${YELLOW}VLM-LLM service not responding, will use Ollama fallback.${NC}"
+  fi
+}
+
+# Helper: check and pull Ollama models for VLM-LLM pipeline
+check_ollama_models() {
+  if command -v docker &> /dev/null; then
+    # Check if Ollama container is running
+    if docker ps --format '{{.Names}}' | grep -q 'homemanager-ollama-dev'; then
+      echo -e "${BLUE}Checking AI models for VLM-LLM pipeline...${NC}"
+
+      # Pull VLM model (llava:7b) for GPU image understanding
+      if ! docker exec homemanager-ollama-dev ollama list 2>/dev/null | grep -q 'llava:7b'; then
+        echo -e "${YELLOW}Downloading VLM model (llava:7b) - this may take a few minutes...${NC}"
+        docker exec homemanager-ollama-dev ollama pull llava:7b
+        echo -e "${GREEN}VLM model ready!${NC}"
+      fi
+
+      # Pull CPU fallback VLM model (moondream) for systems without GPU
+      if ! docker exec homemanager-ollama-dev ollama list 2>/dev/null | grep -q 'moondream'; then
+        echo -e "${YELLOW}Downloading CPU fallback model (moondream)...${NC}"
+        docker exec homemanager-ollama-dev ollama pull moondream
+        echo -e "${GREEN}CPU fallback model ready!${NC}"
+      fi
+
+      # Pull LLM model (qwen2.5:7b) for text structuring
+      if ! docker exec homemanager-ollama-dev ollama list 2>/dev/null | grep -q 'qwen2.5:7b'; then
+        echo -e "${YELLOW}Downloading LLM model (qwen2.5:7b) - this may take a few minutes...${NC}"
+        docker exec homemanager-ollama-dev ollama pull qwen2.5:7b
+        echo -e "${GREEN}LLM model ready!${NC}"
+      fi
+
+      echo -e "${GREEN}AI models ready!${NC}"
+    fi
+  fi
 }
 
 # Helper: run migrations
@@ -138,6 +213,8 @@ case "${1:-help}" in
         setup_backend_env
         install_deps
         check_ffmpeg
+        start_vlm_llm
+        check_ollama_models
         run_migrations
 
         echo ""
@@ -165,6 +242,8 @@ case "${1:-help}" in
           (cd "$BACKEND_DIR" && npm install)
         fi
         check_ffmpeg
+        start_vlm_llm
+        check_ollama_models
         run_migrations
 
         echo ""
@@ -231,6 +310,8 @@ EOF
     lsof -ti:3000 | xargs kill -9 2>/dev/null || true
     lsof -ti:5173 | xargs kill -9 2>/dev/null || true
     lsof -ti:5174 | xargs kill -9 2>/dev/null || true
+    lsof -ti:8000 | xargs kill -9 2>/dev/null || true
+    cleanup_docker
     echo -e "${GREEN}Stopped.${NC}"
     ;;
 
@@ -247,7 +328,13 @@ EOF
     ;;
 
   logs)
-    (cd "$BACKEND_DIR" && $COMPOSE logs -f ${2:-backend})
+    # Use dev compose file for dev services, production for backend
+    if [ -n "$2" ]; then
+      (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml logs -f "$2")
+    else
+      echo "Usage: ./dev.sh logs <service>"
+      echo "Available services: postgres, redis, ollama, vlm-llm, pgadmin, redis-commander"
+    fi
     ;;
 
   db)
@@ -326,6 +413,70 @@ EOF
     fi
     ;;
 
+  vlm-llm)
+    # VLM-LLM service management
+    case "${2:-help}" in
+      start)
+        echo -e "${BLUE}Starting VLM-LLM service...${NC}"
+        (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml up -d vlm-llm)
+        check_vlm_llm_health
+        ;;
+      stop)
+        echo -e "${BLUE}Stopping VLM-LLM service...${NC}"
+        (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml stop vlm-llm)
+        ;;
+      build)
+        echo -e "${BLUE}Building VLM-LLM service...${NC}"
+        (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml build vlm-llm)
+        ;;
+      rebuild)
+        echo -e "${BLUE}Rebuilding VLM-LLM service...${NC}"
+        (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml up -d --build --no-deps vlm-llm)
+        ;;
+      logs)
+        (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml logs -f vlm-llm)
+        ;;
+      status)
+        if curl -s http://localhost:8000/health 2>/dev/null; then
+          echo ""
+        else
+          echo -e "${RED}VLM-LLM service not responding${NC}"
+        fi
+        ;;
+      pull-models)
+        echo -e "${BLUE}Pulling VLM and LLM models...${NC}"
+        check_ollama_models
+        ;;
+      preload)
+        echo -e "${BLUE}Preloading AI models into memory...${NC}"
+        echo -e "${YELLOW}This takes ~80 seconds on CPU...${NC}"
+        docker exec homemanager-ollama-dev ollama run llava:7b "hello" > /dev/null 2>&1
+        echo -e "${GREEN}llava:7b loaded!${NC}"
+        ;;
+      *)
+        echo -e "${BLUE}VLM-LLM Service Commands${NC}"
+        echo ""
+        echo -e "  ${GREEN}vlm-llm start${NC}          Start the VLM-LLM service"
+        echo -e "  ${GREEN}vlm-llm stop${NC}           Stop the VLM-LLM service"
+        echo -e "  ${GREEN}vlm-llm build${NC}          Build the Docker image"
+        echo -e "  ${GREEN}vlm-llm rebuild${NC}        Rebuild and restart"
+        echo -e "  ${GREEN}vlm-llm logs${NC}           View service logs"
+        echo -e "  ${GREEN}vlm-llm status${NC}         Check service health"
+        echo -e "  ${GREEN}vlm-llm pull-models${NC}    Pull llava:7b and qwen2.5:7b models"
+        ;;
+    esac
+    ;;
+
+  prune)
+    echo -e "${YELLOW}This will remove ALL unused Docker resources including volumes. Continue? [y/N]${NC}"
+    read -r response
+    if [[ "$response" =~ ^([yY])$ ]]; then
+      echo -e "${BLUE}Performing full Docker cleanup...${NC}"
+      docker system prune -af --volumes
+      echo -e "${GREEN}Full cleanup complete.${NC}"
+    fi
+    ;;
+
   help|*)
     echo -e "${BLUE}HomeManager Development Helper${NC}"
     echo ""
@@ -348,14 +499,22 @@ EOF
     echo -e "  ${GREEN}db studio${NC}            Open Drizzle Studio (visual DB browser)"
     echo -e "  ${GREEN}db reset${NC}             Delete all data (confirms first)"
     echo ""
+    echo -e "${YELLOW}VLM-LLM Service:${NC}"
+    echo -e "  ${GREEN}vlm-llm start${NC}        Start the VLM-LLM service"
+    echo -e "  ${GREEN}vlm-llm stop${NC}         Stop the VLM-LLM service"
+    echo -e "  ${GREEN}vlm-llm logs${NC}         View VLM-LLM logs"
+    echo -e "  ${GREEN}vlm-llm status${NC}       Check service health"
+    echo -e "  ${GREEN}vlm-llm pull-models${NC}  Pull llava:7b and qwen2.5:7b models"
+    echo ""
     echo -e "${YELLOW}Other:${NC}"
-    echo -e "  ${GREEN}logs [service]${NC}       Tail logs (default: backend)"
+    echo -e "  ${GREEN}logs <service>${NC}       Tail logs (postgres, redis, ollama, vlm-llm)"
     echo -e "  ${GREEN}redis${NC}                Open Redis CLI"
     echo -e "  ${GREEN}test${NC}                 Run all tests"
     echo -e "  ${GREEN}test backend${NC}         Run backend tests"
     echo -e "  ${GREEN}test frontend${NC}        Run frontend tests"
     echo -e "  ${GREEN}install${NC}              Install all npm dependencies"
     echo -e "  ${GREEN}clean${NC}                Remove everything (confirms first)"
+    echo -e "  ${GREEN}prune${NC}                Full Docker cleanup including volumes (confirms first)"
     echo -e "  ${GREEN}help${NC}                 Show this help"
     echo ""
     echo -e "${YELLOW}Examples:${NC}"

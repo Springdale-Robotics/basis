@@ -104,6 +104,19 @@ export const mediaQueue = new Queue('media', {
   },
 });
 
+export const imageParseQueue = new Queue('image-parse', {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 50,
+    removeOnFail: 100,
+    attempts: 2,
+    backoff: {
+      type: 'exponential',
+      delay: 2000,
+    },
+  },
+});
+
 // Job type definitions
 export interface NotificationJobData {
   type: 'low_stock' | 'expiring_soon' | 'leftover_expiring' | 'task_due' | 'sync_error' | 'custom';
@@ -155,6 +168,11 @@ export interface MediaJobData {
   householdId: string;
   storagePath: string;
   mimeType: string;
+}
+
+export interface ImageParseJobData {
+  sessionId: string;
+  householdId: string;
 }
 
 // Initialize workers
@@ -305,7 +323,25 @@ export async function initializeWorkers(): Promise<void> {
     logger.error({ jobId: job?.id, type: job?.data.type, error }, 'Media job failed');
   });
 
-  workers = [notificationWorker, syncWorker, backupWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, mediaWorker];
+  // Image parse worker
+  const imageParseWorker = new Worker(
+    'image-parse',
+    async (job: Job<ImageParseJobData>) => {
+      const { processImageParseJob } = await import('./image-parse.worker.js');
+      return processImageParseJob(job);
+    },
+    { connection: redis, concurrency: 2 }
+  );
+
+  imageParseWorker.on('completed', (job) => {
+    logger.info({ jobId: job.id, sessionId: job.data.sessionId }, 'Image parse job completed');
+  });
+
+  imageParseWorker.on('failed', (job, error) => {
+    logger.error({ jobId: job?.id, sessionId: job?.data.sessionId, error }, 'Image parse job failed');
+  });
+
+  workers = [notificationWorker, syncWorker, backupWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, mediaWorker, imageParseWorker];
   logger.info('Background workers initialized');
 }
 
@@ -388,6 +424,7 @@ export async function shutdownWorkers(): Promise<void> {
   await calendarReminderQueue.close();
   await calendarSyncQueue.close();
   await mediaQueue.close();
+  await imageParseQueue.close();
 
   logger.info('All workers shut down');
 }
@@ -433,6 +470,13 @@ export async function queueCalendarSync(calendarId: string, householdId: string)
 export async function queueMediaJob(data: MediaJobData): Promise<void> {
   await mediaQueue.add(data.type, data, {
     jobId: `media:${data.type}:${data.fileId}`,
+  });
+}
+
+// Helper to queue image parse job
+export async function queueImageParse(data: ImageParseJobData): Promise<void> {
+  await imageParseQueue.add('parse', data, {
+    jobId: `image-parse-${data.sessionId}`,
   });
 }
 

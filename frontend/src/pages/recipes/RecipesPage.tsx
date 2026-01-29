@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Grid, List, Search, Clock, Users, Upload } from 'lucide-react';
+import { Plus, Grid, List, Search, Clock, Users, Upload, Camera } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { RecipeForm, type RecipeImageChange } from '@/components/recipes/RecipeForm';
 import { ImportRecipeDialog } from './ImportRecipeDialog';
+import { ImageParseDialog } from '@/components/image-parse';
 import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
 import type { Recipe } from '@/types/models';
@@ -25,6 +26,7 @@ export function RecipesPage() {
   const [search, setSearch] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [imageParseOpen, setImageParseOpen] = useState(false);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
@@ -90,6 +92,10 @@ export function RecipesPage() {
         description="Your recipe collection"
         actions={
           <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setImageParseOpen(true)}>
+              <Camera className="mr-2 h-4 w-4" />
+              Scan Image
+            </Button>
             <Button variant="outline" onClick={() => setImportOpen(true)}>
               <Upload className="mr-2 h-4 w-4" />
               Import
@@ -169,6 +175,17 @@ export function RecipesPage() {
         open={importOpen}
         onOpenChange={setImportOpen}
         onSuccess={(recipeId) => navigate(`/recipes/${recipeId}`)}
+      />
+
+      <ImageParseDialog
+        open={imageParseOpen}
+        onOpenChange={setImageParseOpen}
+        defaultType="recipe"
+        onSuccess={(type, createdIds) => {
+          if (createdIds.length > 0) {
+            navigate(`/recipes/${createdIds[0]}`);
+          }
+        }}
       />
     </div>
   );

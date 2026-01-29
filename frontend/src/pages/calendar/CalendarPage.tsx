@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ChevronLeft, ChevronRight, Keyboard, CalendarDays, PanelLeftClose, PanelLeft } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, Keyboard, CalendarDays, PanelLeftClose, PanelLeft, Camera } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -13,6 +13,7 @@ import { EditRecurringEventDialog, type RecurrenceEditScope } from '@/components
 import { DeleteRecurringEventDialog, type RecurrenceDeleteScope } from '@/components/calendar/DeleteRecurringEventDialog';
 import { CalendarSearch, CalendarSearchRef } from '@/components/calendar/CalendarSearch';
 import { EditGate } from '@/components/permissions';
+import { ImageParseDialog } from '@/components/image-parse';
 import { useCalendarShortcuts, KEYBOARD_SHORTCUTS } from '@/hooks/useCalendarShortcuts';
 import { calendarsApi } from '@/api/calendars';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -48,6 +49,7 @@ export function CalendarPage() {
   const [editRecurringDialogOpen, setEditRecurringDialogOpen] = useState(false);
   const [deleteRecurringDialogOpen, setDeleteRecurringDialogOpen] = useState(false);
   const [pendingFormData, setPendingFormData] = useState<EventFormData | null>(null);
+  const [imageParseOpen, setImageParseOpen] = useState(false);
   const queryClient = useQueryClient();
   const searchRef = useRef<CalendarSearchRef>(null);
   const { colorPalette } = useTheme();
@@ -629,6 +631,10 @@ export function CalendarPage() {
                 }}
               />
               <EditGate feature="calendars">
+                <Button variant="outline" onClick={() => setImageParseOpen(true)}>
+                  <Camera className="mr-2 h-4 w-4" />
+                  Scan
+                </Button>
                 <Button onClick={() => setFormOpen(true)}>
                   <Plus className="mr-2 h-4 w-4" />
                   Add Event
@@ -772,6 +778,15 @@ export function CalendarPage() {
         onOpenChange={setDeleteRecurringDialogOpen}
         onConfirm={handleDeleteRecurringConfirm}
         eventTitle={selectedEvent?.title}
+      />
+
+      <ImageParseDialog
+        open={imageParseOpen}
+        onOpenChange={setImageParseOpen}
+        defaultType="calendar_event"
+        onSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ['events'] });
+        }}
       />
     </div>
   );
