@@ -103,11 +103,18 @@ class VLMService:
 
         # Default prompt for text extraction
         if prompt is None:
-            prompt = """Extract all text from this image exactly as written.
-Include every word, number, and symbol you can see.
-Preserve the original formatting and layout as much as possible.
-Do not interpret or restructure - just transcribe what you see.
-If the text appears to be a list, recipe, or calendar, maintain its structure."""
+            prompt = """Transcribe ONLY the text visible in this image.
+
+Rules:
+- Write EXACTLY what you see, nothing more
+- Include all words, numbers, and symbols visible in the image
+- Preserve the original layout and formatting
+- STOP immediately when you have transcribed all visible text
+- Do NOT add explanations, interpretations, or any text not in the image
+- Do NOT continue, expand, or invent additional content
+- If the image shows a partial recipe/list, transcribe only what is visible
+
+Output the transcription and nothing else."""
 
         # Handle data URL format if present
         if "," in image_base64:
@@ -122,8 +129,10 @@ If the text appears to be a list, recipe, or calendar, maintain its structure.""
                     "images": [image_base64],
                     "stream": False,
                     "options": {
-                        "temperature": 0.1,  # Low temperature for accurate extraction
-                        "num_predict": 2048,
+                        "temperature": 0.1,  # Low temperature for mostly deterministic output
+                        "num_predict": 2048,  # Allow longer output for full recipes
+                        "top_p": 0.9,
+                        "repeat_penalty": 1.0,  # Don't penalize repetition - recipes have many similar measurements
                     }
                 }
             )

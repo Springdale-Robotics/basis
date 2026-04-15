@@ -59,7 +59,7 @@ services:
 
   # Ollama for local AI vision processing (VLM-LLM pipeline)
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.5.7
     container_name: homemanager-ollama-dev
     ports:
       - "11434:11434"
@@ -76,14 +76,16 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-    # Uncomment for GPU support (NVIDIA):
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #         - count: 1
-    #           capabilities: [gpu]
+    # GPU support (NVIDIA) - uncomment when Ollama GPU bug is fixed
+    # Note: Ollama 0.15.x has a llama-sampling.cpp assertion bug with llava on GPU
+    # Using 0.5.7 which is more stable for vision models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   # VLM + LLM service for image parsing (two-stage pipeline)
   # Stage 1: llava:7b reads images (handles handwriting, stylized fonts)
@@ -94,10 +96,10 @@ services:
       dockerfile: Dockerfile
     container_name: homemanager-vlm-llm-dev
     ports:
-      - "8000:8000"
+      - "8010:8000"
     environment:
       - OLLAMA_HOST=http://ollama:11434
-      - VLM_MODEL=llava:7b
+      - VLM_MODEL=minicpm-v
       - VLM_MODEL_CPU=moondream
       - LLM_MODEL=qwen2.5:7b
     depends_on:

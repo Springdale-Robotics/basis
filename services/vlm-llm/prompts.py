@@ -3,6 +3,7 @@ Extraction prompt templates for VLM + LLM two-stage pipeline.
 
 Stage 1 (VLM): Simple prompt to extract raw text from image
 Stage 2 (LLM): Detailed prompts to structure and normalize text into JSON
+Stage 3 (Optional): Verification prompts for self-correction loop
 """
 
 from typing import Literal
@@ -11,14 +12,114 @@ ContentType = Literal["list", "recipe", "calendar_event", "mixed", "unknown"]
 
 
 # =============================================================================
+# EXTRACTION MODES
+# =============================================================================
+
+ExtractionMode = Literal["fast", "accurate", "thorough"]
+
+
+# =============================================================================
 # VLM PROMPTS (Stage 1 - Vision Model)
 # =============================================================================
 
-VLM_TEXT_EXTRACTION_PROMPT = """Extract all text from this image exactly as written.
-Include every word, number, and symbol you can see.
-Preserve the original formatting and layout as much as possible.
-Do not interpret or restructure - just transcribe what you see.
-If the text appears to be a list, recipe, or calendar, maintain its structure."""
+VLM_TEXT_EXTRACTION_PROMPT = """This is a handwritten recipe card. I need you to transcribe it very carefully.
+
+CRITICAL: Pay close attention to FRACTIONS. Handwritten fractions can be tricky to read.
+Common recipe fractions:
+- 1/4 (one quarter) = 0.25
+- 1/2 (one half) = 0.5
+- 3/4 (three quarters) = 0.75
+- 1/3 (one third)
+- 2/3 (two thirds)
+- 1 1/2 (one and a half) = 1.5
+
+Now transcribe the recipe:
+1. Recipe title at the top
+2. All ingredients with their EXACT quantities and units (C. = cup, tsp = teaspoon)
+3. The oven temperature
+4. Any instructions
+
+Focus on accuracy of the numbers and fractions."""
+
+
+# Alternative prompts for multi-pass extraction
+VLM_QUANTITY_FOCUSED_PROMPT = """Focus on the INGREDIENTS section of this recipe.
+
+For EACH ingredient, list:
+- The exact quantity (number, fraction, or range)
+- The unit of measurement (cups, tablespoons, teaspoons, ounces, etc.)
+- The ingredient name
+- Any notes (chopped, melted, room temperature, etc.)
+
+Format each as: [quantity] [unit] [ingredient] ([notes if any])
+
+Read carefully. Some quantities may be written in unusual ways:
+- Fractions like 1/2, 1/4, 3/4
+- Mixed numbers like 1 1/2
+- Ranges like "2-3"
+- "a pinch", "to taste", "as needed"
+
+List every single ingredient. Do not skip any."""
+
+
+VLM_SECTION_BY_SECTION_PROMPT = """Read this recipe image in sections.
+
+SECTION 1 - TITLE:
+What is the recipe called? Look at the top or header.
+
+SECTION 2 - METADATA:
+- Prep time?
+- Cook time?
+- Servings?
+- Oven temperature?
+
+SECTION 3 - INGREDIENTS:
+List each ingredient on its own line with quantity and unit.
+
+SECTION 4 - INSTRUCTIONS:
+List each step of the cooking process.
+
+Read ALL text in each section. Be thorough."""
+
+
+# =============================================================================
+# VERIFICATION PROMPTS (Self-Correction Loop)
+# =============================================================================
+
+VLM_VERIFICATION_PROMPT = """I previously extracted this from the recipe image:
+
+{extracted_text}
+
+Look at the image again carefully. Check for:
+
+1. MISSING INGREDIENTS - Are there any ingredients in the image that I didn't list?
+2. WRONG QUANTITIES - Are any measurements incorrect (e.g., "1 cup" should be "2 cups")?
+3. MISREAD ITEMS - Did I misread any ingredient names?
+4. MISSING INSTRUCTIONS - Are there any cooking steps I missed?
+
+If you find errors, list them as:
+CORRECTIONS:
+- [what was wrong] -> [what it should be]
+
+If everything looks correct, respond with only: VERIFIED"""
+
+
+VLM_INGREDIENTS_VERIFICATION_PROMPT = """I extracted these ingredients from the recipe:
+
+{ingredients_list}
+
+Look at the INGREDIENTS section of the image again.
+
+For each ingredient in the image:
+1. Is it in my list? If not, add it.
+2. Is the quantity correct? If not, correct it.
+3. Is the unit correct? If not, correct it.
+
+List any corrections needed:
+CORRECTIONS:
+- [original] -> [corrected]
+
+Or if all ingredients are correct, respond: VERIFIED"""
 
 
 # =============================================================================
@@ -84,45 +185,31 @@ Rules:
 
 
 def _build_recipe_prompt(raw_text: str) -> str:
-    return f"""You are a recipe parser. Given raw text extracted from a recipe image, output a structured JSON object.
+    return f"""Parse this recipe text into JSON. Output ONLY valid JSON, no explanation.
 
 Raw text:
 {raw_text}
 
-Output JSON with this exact structure:
+Output this JSON structure:
 {{
   "type": "recipe",
   "confidence": 0.9,
-  "title": "Recipe name",
-  "description": "Brief description or null",
-  "prepTimeMinutes": null,
-  "cookTimeMinutes": null,
-  "servings": null,
+  "title": "Recipe Name Here",
+  "ovenTempF": 375,
   "ingredients": [
-    {{"name": "ingredient", "quantity": 1.0, "unit": "cup", "notes": null, "confidence": 0.9}}
+    {{"name": "butter", "quantity": 0.5, "unit": "cup"}},
+    {{"name": "flour", "quantity": 1.5, "unit": "cup"}}
   ],
-  "instructions": ["Step 1...", "Step 2..."]
+  "instructions": ["Step 1", "Step 2"]
 }}
 
-Normalize all units:
-- "c." or "C" -> "cup"
-- "T" or "Tbsp" or "tablespoon" -> "tbsp"
-- "t" or "tsp" or "teaspoon" -> "tsp"
-- "oz" or "ounce" -> "oz"
-- "lb" or "pound" -> "lb"
-- "g" or "gram" -> "g"
-- "ml" or "milliliter" -> "ml"
-- "l" or "liter" -> "l"
+RULES:
+- ovenTempF: Look for "375°F", "350 degrees", "oven" + number. Extract the number. If "375°F" is mentioned, ovenTempF should be 375.
+- Convert fractions: 1/2=0.5, 1/4=0.25, 3/4=0.75, 1 1/2=1.5
+- Normalize units: C.=cup, tsp.=tsp, Tbsp.=tbsp
+- Include ALL ingredients from the text
 
-Convert fractions to decimals:
-- "1/2" -> 0.5
-- "1/3" -> 0.33
-- "1/4" -> 0.25
-- "3/4" -> 0.75
-- "1/8" -> 0.125
-
-Parse times like "30 min", "1 hour", "1.5 hrs" into minutes.
-Output only valid JSON, no explanation."""
+Start your response with {{ and end with }}. No other text."""
 
 
 def _build_calendar_prompt(raw_text: str) -> str:
@@ -305,3 +392,108 @@ def detect_content_type(text: str) -> tuple[ContentType, float, str]:
         return ("calendar_event", confidence, f"Calendar patterns detected: {scores['calendar_event']} matches")
 
     return ("list", confidence, f"List patterns detected: {scores['list']} matches")
+
+
+# =============================================================================
+# VERIFICATION UTILITIES
+# =============================================================================
+
+def parse_verification_response(response: str) -> tuple[bool, list[dict]]:
+    """
+    Parse a verification response to extract corrections.
+
+    Args:
+        response: Raw response from VLM verification prompt
+
+    Returns:
+        Tuple of (is_verified, corrections)
+        - is_verified: True if response indicates no corrections needed
+        - corrections: List of {original, corrected} dicts
+    """
+    import re
+
+    response_clean = response.strip().upper()
+
+    # Check if verified
+    if response_clean == "VERIFIED" or "VERIFIED" in response_clean and "CORRECTION" not in response_clean:
+        return True, []
+
+    # Parse corrections
+    corrections = []
+    correction_pattern = r'-\s*([^->]+?)\s*->\s*(.+)'
+
+    for match in re.finditer(correction_pattern, response, re.MULTILINE):
+        original = match.group(1).strip()
+        corrected = match.group(2).strip()
+        if original and corrected:
+            corrections.append({
+                "original": original,
+                "corrected": corrected,
+            })
+
+    return False, corrections
+
+
+def apply_text_corrections(original_text: str, corrections: list[dict]) -> str:
+    """
+    Apply corrections to the original extracted text.
+
+    Args:
+        original_text: Original VLM extraction
+        corrections: List of {original, corrected} dicts
+
+    Returns:
+        Corrected text
+    """
+    corrected_text = original_text
+
+    for correction in corrections:
+        original = correction.get("original", "")
+        corrected = correction.get("corrected", "")
+
+        if original and corrected:
+            # Try case-insensitive replacement
+            import re
+            pattern = re.escape(original)
+            corrected_text = re.sub(pattern, corrected, corrected_text, flags=re.IGNORECASE)
+
+    return corrected_text
+
+
+def format_ingredients_for_verification(structured_data: dict) -> str:
+    """
+    Format structured ingredients for verification prompt.
+
+    Args:
+        structured_data: Structured recipe data with ingredients list
+
+    Returns:
+        Formatted string of ingredients
+    """
+    ingredients = structured_data.get("ingredients", [])
+    if not ingredients:
+        return "No ingredients extracted."
+
+    lines = []
+    for ing in ingredients:
+        if isinstance(ing, dict):
+            quantity = ing.get("quantity", "")
+            unit = ing.get("unit", "")
+            name = ing.get("name", "")
+            notes = ing.get("notes", "")
+
+            parts = []
+            if quantity:
+                parts.append(str(quantity))
+            if unit:
+                parts.append(unit)
+            if name:
+                parts.append(name)
+            if notes:
+                parts.append(f"({notes})")
+
+            lines.append("- " + " ".join(parts))
+        else:
+            lines.append(f"- {ing}")
+
+    return "\n".join(lines)
