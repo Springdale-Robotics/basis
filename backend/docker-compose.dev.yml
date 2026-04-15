@@ -96,7 +96,7 @@ services:
       dockerfile: Dockerfile
     container_name: homemanager-vlm-llm-dev
     ports:
-      - "8010:8000"
+      - "${VLM_LLM_PORT:-8000}:8000"
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - VLM_MODEL=minicpm-v

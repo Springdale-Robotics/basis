@@ -1134,7 +1134,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
-  // Parse ingredient lines with CRF (or regex fallback)
+  // Parse ingredient lines with CRF
   app.post(
     '/ingredients/parse',
     { preHandler: [authMiddleware] },
@@ -1144,35 +1144,19 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       });
       const { lines } = schema.parse(request.body);
 
-      // Try CRF first
-      try {
-        const { parseIngredientsWithCRF } = await import('../../services/crf-ingredient-parser.js');
-        const crfResults = await parseIngredientsWithCRF(lines);
-        if (crfResults) {
-          return {
-            success: true,
-            data: {
-              ingredients: crfResults.map((r) => ({
-                name: r.name,
-                quantity: r.quantity,
-                unit: r.unit,
-                notes: r.notes,
-              })),
-              parser: 'crf',
-            },
-          };
-        }
-      } catch {
-        // CRF unavailable
-      }
+      const { parseIngredientsWithCRF } = await import('../../services/crf-ingredient-parser.js');
+      const crfResults = await parseIngredientsWithCRF(lines);
 
-      // Regex fallback
-      const { parseIngredientLine } = await import('./recipe-import.service.js');
       return {
         success: true,
         data: {
-          ingredients: lines.map(line => parseIngredientLine(line)),
-          parser: 'regex',
+          ingredients: crfResults.map((r) => ({
+            name: r.name,
+            quantity: r.quantity,
+            unit: r.unit,
+            notes: r.notes,
+          })),
+          parser: 'crf',
         },
       };
     }

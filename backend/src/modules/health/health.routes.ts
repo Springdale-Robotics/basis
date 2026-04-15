@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { checkDatabaseConnection } from '../../config/database.js';
 import { checkRedisConnection } from '../../config/redis.js';
+import { isCRFParserAvailable } from '../../services/crf-ingredient-parser.js';
 import { authMiddleware, requireAdmin } from '../../middleware/auth.middleware.js';
 import { getCircuitBreakerStatus } from '../../lib/circuit-breaker.js';
 import { getMetrics } from '../../lib/metrics.js';
@@ -47,7 +48,15 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
       latency_ms: Date.now() - redisStart,
     };
 
-    const allOk = dbOk && redisOk;
+    // Check CRF ingredient parser
+    const crfStart = Date.now();
+    const crfOk = await isCRFParserAvailable();
+    checks.crf_parser = {
+      status: crfOk ? 'up' : 'down',
+      latency_ms: Date.now() - crfStart,
+    };
+
+    const allOk = dbOk && redisOk && crfOk;
 
     if (!allOk) {
       reply.status(503);

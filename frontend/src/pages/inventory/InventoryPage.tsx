@@ -842,15 +842,29 @@ export function InventoryPage() {
             </p>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               {item.category && <span>{item.category}</span>}
-              {displayExpiry && (
-                <>
-                  {item.category && <span>·</span>}
-                  <span className="flex items-center gap-0.5">
-                    <Clock className="h-3 w-3" />
-                    Expires {formatDate(displayExpiry)}
-                  </span>
-                </>
-              )}
+              {displayExpiry && (() => {
+                const daysLeft = getDaysUntilExpiry(displayExpiry);
+                const relativeText = daysLeft < 0
+                  ? `(${Math.abs(daysLeft)}d ago)`
+                  : daysLeft === 0
+                  ? '(today)'
+                  : daysLeft === 1
+                  ? '(tomorrow)'
+                  : `(in ${daysLeft}d)`;
+                return (
+                  <>
+                    {item.category && <span>·</span>}
+                    <span className={cn(
+                      'flex items-center gap-0.5',
+                      daysLeft < 0 && 'text-destructive',
+                      daysLeft >= 0 && daysLeft <= 7 && 'text-orange-500'
+                    )}>
+                      <Clock className="h-3 w-3" />
+                      Expires {formatDate(displayExpiry)} {relativeText}
+                    </span>
+                  </>
+                );
+              })()}
               {!displayExpiry && item.defaultShelfLifeDays && (
                 <>
                   {item.category && <span>·</span>}

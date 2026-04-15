@@ -72,21 +72,13 @@ const IDENTITY_DESCRIPTORS = new Set([
 export async function simplifyIngredientNames(
   parsedNames: string[]
 ): Promise<string[]> {
-  // Try CRF parser first — it strips preparation words (chopped, diced, etc.)
   const crfResults = await parseIngredientsWithCRF(parsedNames);
 
-  if (crfResults) {
-    return crfResults.map((r, i) => {
-      let name = r.name || parsedNames[i];
-      // CRF strips prep but keeps identity descriptors — strip those too
-      name = stripIdentityDescriptors(name);
-      return singularize(toTitleCase(name));
-    });
-  }
-
-  // Fallback: strip identity descriptors without CRF
-  return parsedNames.map(name => {
-    return singularize(toTitleCase(stripIdentityDescriptors(name)));
+  return crfResults.map((r, i) => {
+    let name = r.name || parsedNames[i];
+    // CRF strips prep but keeps identity descriptors — strip those too
+    name = stripIdentityDescriptors(name);
+    return singularize(toTitleCase(name));
   });
 }
 

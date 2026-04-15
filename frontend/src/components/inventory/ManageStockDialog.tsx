@@ -392,11 +392,26 @@ export function ManageStockDialog({
                               <span className="font-mono">
                                 {parseFloat(String(entry.quantity)).toFixed(1)} {entry.unit || item.defaultUnit}
                               </span>
-                              {entry.expiryDate && (
-                                <span>
-                                  Expires: {formatDate(entry.expiryDate)}
-                                </span>
-                              )}
+                              {entry.expiryDate && (() => {
+                                const [y, m, d] = entry.expiryDate.split('T')[0].split('-').map(Number);
+                                const expiry = new Date(y, m - 1, d);
+                                const today = new Date();
+                                today.setHours(0, 0, 0, 0);
+                                const daysLeft = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                                const relativeText = daysLeft < 0
+                                  ? `(${Math.abs(daysLeft)}d ago)`
+                                  : daysLeft === 0 ? '(today)'
+                                  : daysLeft === 1 ? '(tomorrow)'
+                                  : `(in ${daysLeft}d)`;
+                                return (
+                                  <span className={cn(
+                                    daysLeft < 0 && 'text-destructive',
+                                    daysLeft >= 0 && daysLeft <= 7 && 'text-orange-500'
+                                  )}>
+                                    Expires: {formatDate(entry.expiryDate)} {relativeText}
+                                  </span>
+                                );
+                              })()}
                             </div>
                           </div>
                           <div className="flex items-center gap-1">

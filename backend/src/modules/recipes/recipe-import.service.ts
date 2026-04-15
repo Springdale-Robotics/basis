@@ -670,48 +670,43 @@ export async function processImportSession(
     // CRF enhancement: re-parse ingredient lines with NLP model for better accuracy
     // Extract raw ingredient lines from the original text for CRF processing
     if (parsedRecipe.ingredients && parsedRecipe.ingredients.length > 0) {
-      try {
-        const { parseIngredientsWithCRF } = await import('../../services/crf-ingredient-parser.js');
+      const { parseIngredientsWithCRF } = await import('../../services/crf-ingredient-parser.js');
 
-        // Re-extract raw ingredient lines from original text
-        // Find the ingredients section using same patterns as parseRecipeText
-        const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-        const rawIngredientLines: string[] = [];
-        let inIngredients = false;
+      // Re-extract raw ingredient lines from original text
+      // Find the ingredients section using same patterns as parseRecipeText
+      const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      const rawIngredientLines: string[] = [];
+      let inIngredients = false;
 
-        for (const line of lines) {
-          const lower = line.toLowerCase();
-          if (/^ingredients?$/i.test(lower) || /^what you'?ll need$/i.test(lower)) {
-            inIngredients = true;
-            continue;
-          }
-          if (inIngredients && (/^instructions?$/i.test(lower) || /^directions?$/i.test(lower) || /^method$/i.test(lower) || /^steps?$/i.test(lower))) {
-            break;
-          }
-          if (inIngredients && line.length > 0) {
-            // Skip group headers like "For the sauce:"
-            if (/^for\s+/i.test(line) || /^[A-Z][^:]*:\s*$/.test(line)) continue;
-            rawIngredientLines.push(line.replace(/^[-•*]\s*/, ''));
-          }
+      for (const line of lines) {
+        const lower = line.toLowerCase();
+        if (/^ingredients?$/i.test(lower) || /^what you'?ll need$/i.test(lower)) {
+          inIngredients = true;
+          continue;
         }
-
-        // If we found raw lines, parse them with CRF
-        if (rawIngredientLines.length > 0) {
-          const crfResults = await parseIngredientsWithCRF(rawIngredientLines);
-          if (crfResults && crfResults.length > 0) {
-            parsedRecipe.ingredients = crfResults.map(r => ({
-              name: r.name,
-              quantity: r.quantity ?? undefined,
-              unit: r.unit ?? undefined,
-              notes: r.notes ?? undefined,
-            }));
-            finalParseMethod = 'crf';
-            confidence = Math.max(confidence, 0.75);
-          }
+        if (inIngredients && (/^instructions?$/i.test(lower) || /^directions?$/i.test(lower) || /^method$/i.test(lower) || /^steps?$/i.test(lower))) {
+          break;
         }
-      } catch (err) {
-        // CRF service not available — continue with regex results
-        console.debug('[Recipe Import] CRF parser unavailable, using regex results');
+        if (inIngredients && line.length > 0) {
+          // Skip group headers like "For the sauce:"
+          if (/^for\s+/i.test(line) || /^[A-Z][^:]*:\s*$/.test(line)) continue;
+          rawIngredientLines.push(line.replace(/^[-•*]\s*/, ''));
+        }
+      }
+
+      // If we found raw lines, parse them with CRF
+      if (rawIngredientLines.length > 0) {
+        const crfResults = await parseIngredientsWithCRF(rawIngredientLines);
+        if (crfResults.length > 0) {
+          parsedRecipe.ingredients = crfResults.map(r => ({
+            name: r.name,
+            quantity: r.quantity ?? undefined,
+            unit: r.unit ?? undefined,
+            notes: r.notes ?? undefined,
+          }));
+          finalParseMethod = 'crf';
+          confidence = Math.max(confidence, 0.75);
+        }
       }
     }
 
@@ -773,33 +768,32 @@ export async function processUrlImportSession(
   // Parse the URL
   const result = await parseRecipeFromUrl(url);
 
-  // Try CRF enhancement on URL-parsed ingredients
+  // CRF enhancement on URL-parsed ingredients
   // JSON-LD ingredient strings are perfect CRF input (e.g., "4 boneless, skinless chicken breasts")
   if (result.parsedRecipe.ingredients && result.parsedRecipe.ingredients.length > 0) {
-    try {
-      const { parseIngredientsWithCRF } = await import('../../services/crf-ingredient-parser.js');
-      // Reconstruct original strings for CRF (URL parser already has clean ingredient text)
-      const rawLines = result.parsedRecipe.ingredients.map(ing => {
-        const parts = [];
-        if (ing.quantity) parts.push(String(ing.quantity));
-        if (ing.unit) parts.push(ing.unit);
-        parts.push(ing.name);
-        if (ing.notes) parts.push(ing.notes);
-        return parts.join(' ');
-      });
+    const { parseIngredientsWithCRF } = await import('../../services/crf-ingredient-parser.js');
+    // Reconstruct strings for CRF — exclude notes (parenthetical/prep info)
+    // to avoid polluting the ingredient name (e.g., "about 3 chicken breasts"
+    // from "(about 3 chicken breasts)" would otherwise get merged into the name)
+    const rawLines = result.parsedRecipe.ingredients.map(ing => {
+      const parts = [];
+      if (ing.quantity) parts.push(String(ing.quantity));
+      if (ing.unit) parts.push(ing.unit);
+      parts.push(ing.name);
+      return parts.join(' ');
+    });
 
-      const crfResults = await parseIngredientsWithCRF(rawLines);
-      if (crfResults && crfResults.length > 0) {
-        result.parsedRecipe.ingredients = crfResults.map(r => ({
-          name: r.name,
-          quantity: r.quantity ?? undefined,
-          unit: r.unit ?? undefined,
-          notes: r.notes ?? undefined,
-        }));
-        (result as any).parseMethod = 'crf';
-      }
-    } catch {
-      // CRF not available, continue with regex-parsed ingredients
+    const crfResults = await parseIngredientsWithCRF(rawLines);
+    if (crfResults.length > 0) {
+      const originalIngredients = result.parsedRecipe.ingredients!;
+      result.parsedRecipe.ingredients = crfResults.map((r, i) => ({
+        name: r.name,
+        quantity: r.quantity ?? undefined,
+        unit: r.unit ?? undefined,
+        // Merge: prefer CRF notes, fall back to original notes from URL parser
+        notes: r.notes ?? originalIngredients[i]?.notes ?? undefined,
+      }));
+      (result as any).parseMethod = 'crf';
     }
   }
 
