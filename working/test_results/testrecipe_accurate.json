@@ -1,0 +1,102 @@
+{
+  "raw_text": "TITLE: Peanut Butter Cookies\n\nINGREDIENTS:\n- 1 cup butter\n- 2 cups peanuts, chopped\n- 3 eggs\n- 1 teaspoon baking powder\n- 1 teaspoon salt\n- 4 cups flour\n- 1/2 cup white sugar\n- 1/2 cup brown sugar\n- 1 tablespoon vanilla extract\n\nINSTRUCTIONS:\nCream butter and peanuts. Add eggs, one at a time, beating well after each addition. Stir in baking powder, salt, flour, sugars, and vanilla extract until dough forms. Chill dough for about an hour or more. Preheat oven to 350 degrees F (175 degrees C). Roll out dough on floured surface into small balls. Place them two inches apart on a cookie sheet lined with parchment paper. Bake in preheated oven for 8-10 minutes, or until golden brown. Remove from oven and let cool on wire rack before serving.\n\nTEMPERATURE: 350 degrees F (175 degrees C)",
+  "detected_type": "recipe",
+  "structured": {
+    "type": "recipe",
+    "confidence": 0.9,
+    "title": "Peanut Butter Cookies",
+    "description": null,
+    "prepTimeMinutes": null,
+    "cookTimeMinutes": null,
+    "servings": null,
+    "ovenTempF": 350,
+    "ovenTempC": 175,
+    "ingredients": [
+      {
+        "name": "butter",
+        "quantity": 1.0,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "peanuts",
+        "quantity": 2.0,
+        "unit": "cups",
+        "notes": "chopped",
+        "confidence": 0.9
+      },
+      {
+        "name": "eggs",
+        "quantity": 3.0,
+        "unit": null,
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "baking powder",
+        "quantity": 1.0,
+        "unit": "teaspoon",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "salt",
+        "quantity": 1.0,
+        "unit": "teaspoon",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "flour",
+        "quantity": 4.0,
+        "unit": "cups",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "white sugar",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "brown sugar",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "vanilla extract",
+        "quantity": 1.0,
+        "unit": "tablespoon",
+        "notes": null,
+        "confidence": 0.9
+      }
+    ],
+    "instructions": [
+      "Cream butter and peanuts.",
+      "Add eggs, one at a time, beating well after each addition.",
+      "Stir in baking powder, salt, flour, sugars, and vanilla extract until dough forms.",
+      "Chill dough for about an hour or more.",
+      "Preheat oven to 350 degrees F (175 degrees C).",
+      "Roll out dough on floured surface into small balls.",
+      "Place them two inches apart on a cookie sheet lined with parchment paper.",
+      "Bake in preheated oven for 8-10 minutes, or until golden brown.",
+      "Remove from oven and let cool on wire rack before serving."
+    ]
+  },
+  "confidence": 0.95,
+  "vlm_processing_ms": 16921,
+  "llm_processing_ms": 24452,
+  "total_processing_ms": 41623,
+  "extraction_mode": "accurate",
+  "preprocessing_applied": true,
+  "preprocessing_ms": 247,
+  "verification_applied": true,
+  "verification_corrections": 1,
+  "pass_count": 1,
+  "_client_time_ms": 41631
+}

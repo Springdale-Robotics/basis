@@ -142,13 +142,15 @@ export function FixIncompleteItemDialog({
       setIsSubmitting(true);
       try {
         await onSave(currentItem.id, updates);
-        // After save, the item will be removed from incompleteItems when query refetches
-        // The next item will automatically become the first remaining item
+        // Move to next item immediately (don't wait for query refetch)
+        setSkippedIds(prev => new Set([...prev, currentItem.id]));
       } finally {
         setIsSubmitting(false);
       }
+    } else {
+      // Nothing to update — just move to next
+      setSkippedIds(prev => new Set([...prev, currentItem.id]));
     }
-    // Dialog closes automatically via useEffect when remainingCount becomes 0
   };
 
   const handleSkip = () => {

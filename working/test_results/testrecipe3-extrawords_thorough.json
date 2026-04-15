@@ -1,0 +1,80 @@
+{
+  "raw_text": "TITLE: Ice Cream Recipe from the Kitchen of 13 Bodega\n\nINGREDIENTS:\n- 4 cups heavy cream\n- 2 cups whole milk\n- 6 egg yolks\n- 1 cup sugar\n- 1 tsp vanilla extract\n- 1/8 tsp salt\n- 1/2 cup chocolate chips (optional)\n\nINSTRUCTIONS:\n[all cooking steps]\n\nTEMPERATURE: [oven temp if shown]\n\nNote: The image shows a handwritten recipe card with the text \"There's ice cream in my kitchen\" at the top. It lists ingredients such as heavy cream, whole milk, egg yolks, sugar, vanilla extract, and salt. There is also an optional ingredient of chocolate chips. The instructions are not fully visible due to the angle and size of the text on the card.",
+  "detected_type": "recipe",
+  "structured": {
+    "type": "recipe",
+    "confidence": 0.9,
+    "title": "Ice Cream Recipe from the Kitchen of 13 Bodega",
+    "description": null,
+    "prepTimeMinutes": null,
+    "cookTimeMinutes": null,
+    "servings": null,
+    "ovenTempF": null,
+    "ovenTempC": null,
+    "ingredients": [
+      {
+        "name": "heavy cream",
+        "quantity": 4.0,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "whole milk",
+        "quantity": 2.0,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "egg yolks",
+        "quantity": 6.0,
+        "unit": null,
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "sugar",
+        "quantity": 1.0,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "vanilla extract",
+        "quantity": 1.0,
+        "unit": "tsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "salt",
+        "quantity": 0.125,
+        "unit": "tsp",
+        "notes": "1/8 tsp",
+        "confidence": 0.9
+      },
+      {
+        "name": "chocolate chips",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": "optional",
+        "confidence": 0.9
+      }
+    ],
+    "instructions": [
+      "all cooking steps"
+    ]
+  },
+  "confidence": 0.95,
+  "vlm_processing_ms": 43466,
+  "llm_processing_ms": 19292,
+  "total_processing_ms": 63075,
+  "extraction_mode": "thorough",
+  "preprocessing_applied": true,
+  "preprocessing_ms": 314,
+  "verification_applied": true,
+  "verification_corrections": 1,
+  "pass_count": 3,
+  "_client_time_ms": 63108
+}

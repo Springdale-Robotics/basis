@@ -1,0 +1,98 @@
+{
+  "raw_text": "TITLE: Kate's Bars\n\nINGREDIENTS:\n- 1 cup rolled oats\n- 1/2 cup brown sugar\n- 1/4 cup honey\n- 1/3 cup peanut butter\n- 1 tsp baking powder\n- 1/8 tsp salt\n- 1 egg\n- 1 tsp vanilla extract\n- 1/2 cup chocolate chips (optional)\n\nINSTRUCTIONS:\n1. Preheat oven to 350 degrees Fahrenheit. Grease a 9x9 inch baking dish with cooking spray or butter.\n2. In a large mixing bowl, combine the oats, brown sugar, honey, peanut butter, baking powder and salt until well mixed.\n3. Add in the egg and vanilla extract, stirring until fully combined. If using chocolate chips, fold them into the mixture at this point.\n4. Press the mixture evenly into the prepared baking dish, making sure to press it down firmly so that it is compacted.\n5. Bake for 20-25 minutes or until golden brown on top and edges are slightly crispy. Remove from oven and let cool in pan for about 10 minutes before cutting into squares. Enjoy!\n\nTEMPERATURE: Not specified in the image provided.",
+  "detected_type": "recipe",
+  "structured": {
+    "type": "recipe",
+    "confidence": 0.9,
+    "title": "Kate's Bars",
+    "description": null,
+    "prepTimeMinutes": null,
+    "cookTimeMinutes": null,
+    "servings": null,
+    "ovenTempF": 350,
+    "ovenTempC": null,
+    "ingredients": [
+      {
+        "name": "rolled oats",
+        "quantity": 1.0,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "brown sugar",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "honey",
+        "quantity": 0.25,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "peanut butter",
+        "quantity": 0.33,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "baking powder",
+        "quantity": 1.0,
+        "unit": "tsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "salt",
+        "quantity": 0.125,
+        "unit": "tsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "egg",
+        "quantity": 1.0,
+        "unit": null,
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "vanilla extract",
+        "quantity": 1.0,
+        "unit": "tsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "chocolate chips",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": "optional",
+        "confidence": 0.9
+      }
+    ],
+    "instructions": [
+      "Preheat oven to 350 degrees Fahrenheit. Grease a 9x9 inch baking dish with cooking spray or butter.",
+      "In a large mixing bowl, combine the oats, brown sugar, honey, peanut butter, baking powder and salt until well mixed.",
+      "Add in the egg and vanilla extract, stirring until fully combined. If using chocolate chips, fold them into the mixture at this point.",
+      "Press the mixture evenly into the prepared baking dish, making sure to press it down firmly so that it is compacted.",
+      "Bake for 20-25 minutes or until golden brown on top and edges are slightly crispy. Remove from oven and let cool in pan for about 10 minutes before cutting into squares. Enjoy!"
+    ]
+  },
+  "confidence": 0.95,
+  "vlm_processing_ms": 17904,
+  "llm_processing_ms": 25688,
+  "total_processing_ms": 43922,
+  "extraction_mode": "accurate",
+  "preprocessing_applied": true,
+  "preprocessing_ms": 326,
+  "verification_applied": true,
+  "verification_corrections": 1,
+  "pass_count": 1,
+  "_client_time_ms": 43937
+}

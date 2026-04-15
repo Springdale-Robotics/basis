@@ -129,6 +129,7 @@ export function InventoryPage() {
   const { isAdvanced } = useInventoryTier();
   const { categories } = useCategories();
   const [search, setSearch] = useState('');
+  const [expiringFilter, setExpiringFilter] = useState(false);
   const [selectedArea, setSelectedArea] = useState<string | undefined>();
   const [areaFormOpen, setAreaFormOpen] = useState(false);
   const [editingArea, setEditingArea] = useState<StorageArea | null>(null);
@@ -262,14 +263,31 @@ export function InventoryPage() {
   }, [areas]);
 
   // Apply search filter to items
+  // Build set of expiring item IDs for the filter
+  const expiringItemIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (expiringItems?.expiring) {
+      for (const se of expiringItems.expiring) {
+        const itemId = se.itemId || se.inventoryItemId || (se.item as any)?.id;
+        if (itemId) ids.add(itemId);
+      }
+    }
+    return ids;
+  }, [expiringItems]);
+
   const filteredItems = useMemo(() => {
-    const allItems = items?.items || [];
-    if (!search.trim()) return allItems;
-    return allItems.filter((item) =>
-      fuzzyMatch(item.name, search) ||
-      (item.category && fuzzyMatch(item.category, search))
-    );
-  }, [items, search]);
+    let allItems = items?.items || [];
+    if (search.trim()) {
+      allItems = allItems.filter((item) =>
+        fuzzyMatch(item.name, search) ||
+        (item.category && fuzzyMatch(item.category, search))
+      );
+    }
+    if (expiringFilter) {
+      allItems = allItems.filter((item) => expiringItemIds.has(item.id));
+    }
+    return allItems;
+  }, [items, search, expiringFilter, expiringItemIds]);
 
   // Apply search filter to leftovers
   const filteredLeftovers = useMemo(() => {
@@ -772,7 +790,8 @@ export function InventoryPage() {
   const isLoading = areasLoading || itemsLoading || stockLoading;
 
   // Alert counts
-  const expiringCount = (expiringItems?.expiring?.length || 0) + (expiringLeftoversData?.leftovers?.length || 0);
+  const expiringItemCount = expiringItems?.expiring?.length || 0;
+  const expiringCount = expiringItemCount + (expiringLeftoversData?.leftovers?.length || 0);
   const lowStockCount = isAdvanced ? (lowStockItems?.lowStock?.length || 0) : 0;
   const totalAlerts = expiringCount + lowStockCount;
 
@@ -1203,101 +1222,43 @@ export function InventoryPage() {
 
   // Render alerts section
   const renderAlerts = () => {
-    if (totalAlerts === 0 && incompleteItems.length === 0) return null;
+    if (lowStockCount === 0 && incompleteItems.length === 0) return null;
 
     return (
-      <div className="mb-6 space-y-3">
-        {/* Expiring + Low stock in a compact row */}
-        {totalAlerts > 0 && (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {expiringCount > 0 && (
-              <Card className="border-warning/30 bg-warning-muted">
-                <CardContent className="flex items-center gap-3 p-3">
-                  <AlertTriangle className="h-5 w-5 text-warning shrink-0" />
-                  <div className="min-w-0">
-                    <p className="font-medium text-sm text-warning-muted-foreground">
-                      {expiringCount} item{expiringCount !== 1 ? 's' : ''} expiring soon
-                    </p>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {expiringItems?.expiring?.slice(0, 3).map((se) => {
-                        const days = se.expiryDate ? getDaysUntilExpiry(se.expiryDate) : null;
-                        return (
-                          <Badge
-                            key={se.id}
-                            variant={days !== null ? getExpiryBadgeVariant(days) : 'secondary'}
-                            className="text-xs cursor-pointer hover:opacity-80"
-                            onClick={() => { if (se.item) handleEditItem(se.item as InventoryItem); }}
-                          >
-                            {se.item?.name || 'Unknown'}
-                            {days !== null && ` (${days <= 0 ? 'expired' : `${days}d`})`}
-                          </Badge>
-                        );
-                      })}
-                      {expiringLeftoversData?.leftovers?.slice(0, 2).map((lo) => (
-                        <Badge
-                          key={lo.id}
-                          variant="destructive"
-                          className="text-xs cursor-pointer hover:opacity-80"
-                          onClick={() => {
-                            setEditingLeftover(lo);
-                            setLeftoverFormOpen(true);
-                          }}
-                        >
-                          {lo.name} (leftover)
-                        </Badge>
-                      ))}
-                      {expiringCount > 5 && (
-                        <Badge variant="outline" className="text-xs">+{expiringCount - 5} more</Badge>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-            {lowStockCount > 0 && (
-              <Card className="border-info/30 bg-info-muted">
-                <CardContent className="flex items-center gap-3 p-3">
-                  <RefreshCcw className="h-5 w-5 text-info shrink-0" />
-                  <div className="min-w-0">
-                    <p className="font-medium text-sm text-info-muted-foreground">
-                      {lowStockCount} item{lowStockCount !== 1 ? 's' : ''} running low
-                    </p>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {lowStockItems?.lowStock?.slice(0, 4).map((entry) => (
-                        <Badge
-                          key={entry.item.id}
-                          variant="outline"
-                          className="text-xs cursor-pointer hover:bg-primary hover:text-primary-foreground"
-                          onClick={() => addToShoppingListMutation.mutate(entry.item.id)}
-                        >
-                          <ShoppingCart className="h-3 w-3 mr-1" />
-                          {entry.item.name}
-                        </Badge>
-                      ))}
-                      {lowStockCount > 4 && (
-                        <Badge variant="outline" className="text-xs">+{lowStockCount - 4} more</Badge>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+      <div className="mb-4 space-y-2">
+        {lowStockCount > 0 && (
+          <div className="flex items-start gap-2 rounded-lg border border-info/30 bg-info-muted px-3 py-2">
+            <RefreshCcw className="h-4 w-4 text-info shrink-0 mt-0.5" />
+            <div className="text-sm text-info-muted-foreground">
+              <span className="font-medium">{lowStockCount} running low:</span>{' '}
+              {lowStockItems?.lowStock?.slice(0, 4).map((entry, i) => (
+                <span key={entry.item.id}>
+                  {i > 0 && ', '}
+                  <button
+                    type="button"
+                    className="underline underline-offset-2 hover:text-foreground transition-colors"
+                    onClick={() => addToShoppingListMutation.mutate(entry.item.id)}
+                  >
+                    {entry.item.name}
+                  </button>
+                </span>
+              ))}
+              {lowStockCount > 4 && `, +${lowStockCount - 4} more`}
+            </div>
           </div>
         )}
 
         {/* Incomplete items */}
         {incompleteItems.length > 0 && (
-          <Alert>
-            <AlertTriangle className="h-4 w-4" />
-            <AlertDescription className="flex items-center justify-between">
-              <span>
-                {incompleteItems.length} item{incompleteItems.length !== 1 ? 's' : ''} need attention (missing category, unit, or storage area)
-              </span>
-              <Button size="sm" onClick={() => setFixIncompleteDialogOpen(true)}>
-                Fix Items
-              </Button>
-            </AlertDescription>
-          </Alert>
+          <div className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2">
+            <div className="flex items-center gap-2 text-sm">
+              <AlertTriangle className="h-4 w-4 text-muted-foreground shrink-0" />
+              <span>{incompleteItems.length} item{incompleteItems.length !== 1 ? 's' : ''} need attention</span>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => setFixIncompleteDialogOpen(true)}>
+              Fix Items
+            </Button>
+          </div>
         )}
       </div>
     );
@@ -1363,13 +1324,24 @@ export function InventoryPage() {
 
       {renderAlerts()}
 
-      <div className="mb-4">
+      <div className="mb-4 flex items-center gap-2">
         <SearchInput
           value={search}
           onChange={setSearch}
           placeholder="Search items and leftovers..."
           className="max-w-md"
         />
+        {expiringItemCount > 0 && (
+          <Button
+            variant={expiringFilter ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setExpiringFilter(!expiringFilter)}
+            className={!expiringFilter ? 'border-warning/50 text-warning hover:bg-warning/10 hover:text-warning' : ''}
+          >
+            <AlertTriangle className="mr-1.5 h-3.5 w-3.5" />
+            Expiring ({expiringItemCount})
+          </Button>
+        )}
       </div>
 
       <Tabs defaultValue="by-location">

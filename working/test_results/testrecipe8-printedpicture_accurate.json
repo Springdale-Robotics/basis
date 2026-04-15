@@ -1,0 +1,160 @@
+{
+  "raw_text": "TITLE: BAY SHRIMP STUFFED PEPPERS\n\nINGREDIENTS:\n- 1 lb shrimp, peeled and deveined\n- 2 tbsp olive oil\n- 3 cloves garlic, minced\n- 1/4 cup chopped onion\n- 1 tsp dried thyme\n- 1 tsp dried oregano\n- Salt and pepper to taste\n- 1 lb ground beef (80% lean)\n- 2 tbsp tomato paste\n- 1/4 cup breadcrumbs\n- 1 egg, beaten\n- 1/4 cup grated Parmesan cheese\n- 1 tsp dried basil\n- 1/2 tsp garlic powder\n- 1/4 tsp onion powder\n- 1/8 tsp cayenne pepper (optional)\n- 3 bell peppers, halved lengthwise and seeded\n\nINSTRUCTIONS:\n1. Preheat oven to 375\u00b0F. Line a baking sheet with parchment paper or aluminum foil. Set aside.\n2. In a large skillet over medium heat, add the olive oil, garlic, onion, thyme, and oregano. Cook until fragrant, about 1-2 minutes. Season shrimp with salt and pepper to taste. Add shrimp to the skillet and cook for 3-4 minutes or until they turn pink. Remove from heat and set aside to cool slightly.\n3. In a large mixing bowl, combine ground beef, tomato paste, breadcrumbs, beaten egg, Parmesan cheese, basil, garlic powder, onion powder, cayenne pepper (if using), salt, and pepper. Mix until well combined.\n4. Stuff each bell pepper halve with the meat mixture, pressing firmly to compact it. Place stuffed peppers onto prepared baking sheet. Bake for 25-30 minutes or until the peppers are tender and the filling is cooked through. Remove from oven and let cool slightly before serving.\n\nTEMPERATURE: 375\u00b0F (190\u00b0C)\n\nImportant: Read ALL ingredients completely. Do not stop early. Do not summarize.",
+  "detected_type": "recipe",
+  "structured": {
+    "type": "recipe",
+    "confidence": 0.9,
+    "title": "BAY SHRIMP STUFFED PEPPERS",
+    "description": null,
+    "prepTimeMinutes": null,
+    "cookTimeMinutes": null,
+    "servings": null,
+    "ovenTempF": 375,
+    "ovenTempC": 190,
+    "ingredients": [
+      {
+        "name": "shrimp",
+        "quantity": 1.0,
+        "unit": "lb",
+        "notes": "peeled and deveined",
+        "confidence": 0.9
+      },
+      {
+        "name": "olive oil",
+        "quantity": 2.0,
+        "unit": "tbsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "garlic",
+        "quantity": 3.0,
+        "unit": "cloves",
+        "notes": "minced",
+        "confidence": 0.9
+      },
+      {
+        "name": "onion",
+        "quantity": 0.25,
+        "unit": "cup",
+        "notes": "chopped",
+        "confidence": 0.9
+      },
+      {
+        "name": "thyme",
+        "quantity": 1.0,
+        "unit": "tsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "oregano",
+        "quantity": 1.0,
+        "unit": "tsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "salt",
+        "quantity": null,
+        "unit": null,
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "pepper",
+        "quantity": null,
+        "unit": null,
+        "notes": "to taste",
+        "confidence": 0.9
+      },
+      {
+        "name": "ground beef",
+        "quantity": 1.0,
+        "unit": "lb",
+        "notes": "80% lean",
+        "confidence": 0.9
+      },
+      {
+        "name": "tomato paste",
+        "quantity": 2.0,
+        "unit": "tbsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "breadcrumbs",
+        "quantity": 0.25,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "egg",
+        "quantity": 1.0,
+        "unit": null,
+        "notes": "beaten",
+        "confidence": 0.9
+      },
+      {
+        "name": "Parmesan cheese",
+        "quantity": 0.25,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "basil",
+        "quantity": 1.0,
+        "unit": "tsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "garlic powder",
+        "quantity": 0.5,
+        "unit": "tsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "onion powder",
+        "quantity": 0.25,
+        "unit": "tsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "cayenne pepper",
+        "quantity": 0.125,
+        "unit": "tsp",
+        "notes": "optional",
+        "confidence": 0.9
+      },
+      {
+        "name": "bell peppers",
+        "quantity": 3.0,
+        "unit": null,
+        "notes": "halved lengthwise and seeded",
+        "confidence": 0.9
+      }
+    ],
+    "instructions": [
+      "Preheat oven to 375\u00b0F. Line a baking sheet with parchment paper or aluminum foil. Set aside.",
+      "In a large skillet over medium heat, add the olive oil, garlic, onion, thyme, and oregano. Cook until fragrant, about 1-2 minutes. Season shrimp with salt and pepper to taste. Add shrimp to the skillet and cook for 3-4 minutes or until they turn pink. Remove from heat and set aside to cool slightly.",
+      "In a large mixing bowl, combine ground beef, tomato paste, breadcrumbs, beaten egg, Parmesan cheese, basil, garlic powder, onion powder, cayenne pepper (if using), salt, and pepper. Mix until well combined.",
+      "Stuff each bell pepper halve with the meat mixture, pressing firmly to compact it. Place stuffed peppers onto prepared baking sheet. Bake for 25-30 minutes or until the peppers are tender and the filling is cooked through. Remove from oven and let cool slightly before serving."
+    ]
+  },
+  "confidence": 0.95,
+  "vlm_processing_ms": 22926,
+  "llm_processing_ms": 36766,
+  "total_processing_ms": 59998,
+  "extraction_mode": "accurate",
+  "preprocessing_applied": true,
+  "preprocessing_ms": 300,
+  "verification_applied": true,
+  "verification_corrections": 1,
+  "pass_count": 1,
+  "_client_time_ms": 60016
+}

@@ -1,0 +1,182 @@
+{
+  "raw_text": "The image shows a handwritten recipe for Hamburger Helper, which is a brand name of a product that includes instant noodles and seasoning mixes to make hamburgers or other dishes. Here's the text from the recipe:\n\n```\nHAMBURGER HELPER FOR ADULTS\n1 can tomato soup\n2 cans chili beans\n1/4 cup chopped onions\n1 tsp minced garlic\n1 tbsp olive oil\n1 lb ground beef\n1/2 cup diced green peppers\n1/2 cup diced red peppers\n1/2 cup sliced mushrooms\n1/2 cup shredded cheddar cheese\n1/4 cup chopped parsley\n1 tsp dried basil\n1 tsp dried oregano\n1 tsp salt\n1 tsp pepper\n1 tbsp tomato paste\n1 can diced tomatoes\n1/2 cup water\n1/2 cup uncooked white rice\n1/2 cup grated Parmesan cheese\n1/4 cup chopped fresh parsley\n\nInstructions:\n- Preheat oven to 350 degrees.\n- In a large skillet, heat the olive oil over medium high heat. Add the ground beef and cook until browned. Drain off any excess fat.\n- Stir in the onions, garlic, green peppers, red peppers, mushrooms, minced parsley, basil, oregano, salt, pepper, tomato paste, diced tomatoes, water, and uncooked white rice. Bring to a boil over high heat.\n- Reduce the heat to low and simmer for 15 minutes or until the mixture thickens slightly. Stir in the grated Parmesan cheese and chopped fresh parsley.\n- Transfer the mixture to an oven safe baking dish. Cover with aluminum foil. Bake at 350 degrees for about 20 minutes, or until hot and bubbly. Remove from oven and let sit for a few minutes before serving. Enjoy!\n```\n\nPlease note that this is a transcription of the text visible in the image provided. The recipe includes specific quantities and measurements for each ingredient, as well as detailed instructions on how to prepare the dish.",
+  "detected_type": "recipe",
+  "structured": {
+    "type": "recipe",
+    "confidence": 0.9,
+    "title": "HAMBURGER HELPER FOR ADULTS",
+    "description": null,
+    "prepTimeMinutes": null,
+    "cookTimeMinutes": null,
+    "servings": null,
+    "ovenTempF": 350,
+    "ovenTempC": null,
+    "ingredients": [
+      {
+        "name": "can tomato soup",
+        "quantity": 1.0,
+        "unit": "can",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "cans chili beans",
+        "quantity": 2.0,
+        "unit": "can",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "cup chopped onions",
+        "quantity": 0.25,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "tsp minced garlic",
+        "quantity": 1.0,
+        "unit": "tsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "tbsp olive oil",
+        "quantity": 1.0,
+        "unit": "tbsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "lb ground beef",
+        "quantity": 1.0,
+        "unit": "lb",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "cup diced green peppers",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "cup diced red peppers",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "cup sliced mushrooms",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "cup shredded cheddar cheese",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "cup chopped parsley",
+        "quantity": 0.25,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "tsp dried basil",
+        "quantity": 1.0,
+        "unit": "tsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "tsp dried oregano",
+        "quantity": 1.0,
+        "unit": "tsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "tsp salt",
+        "quantity": 1.0,
+        "unit": "tsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "tsp pepper",
+        "quantity": 1.0,
+        "unit": "tsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "tbsp tomato paste",
+        "quantity": 1.0,
+        "unit": "tbsp",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "can diced tomatoes",
+        "quantity": 1.0,
+        "unit": "can",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "cup water",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "cup uncooked white rice",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "cup grated Parmesan cheese",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "cup chopped fresh parsley",
+        "quantity": 0.25,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      }
+    ],
+    "instructions": [
+      "- Preheat oven to 350 degrees.",
+      "- In a large skillet, heat the olive oil over medium high heat. Add the ground beef and cook until browned. Drain off any excess fat.",
+      "- Stir in the onions, garlic, green peppers, red peppers, mushrooms, minced parsley, basil, oregano, salt, pepper, tomato paste, diced tomatoes, water, and uncooked white rice. Bring to a boil over high heat.",
+      "- Reduce the heat to low and simmer for 15 minutes or until the mixture thickens slightly. Stir in the grated Parmesan cheese and chopped fresh parsley.",
+      "- Transfer the mixture to an oven safe baking dish. Cover with aluminum foil. Bake at 350 degrees for about 20 minutes, or until hot and bubbly. Remove from oven and let sit for a few minutes before serving. Enjoy!"
+    ]
+  },
+  "confidence": 0.95,
+  "vlm_processing_ms": 55584,
+  "llm_processing_ms": 35836,
+  "total_processing_ms": 91662,
+  "extraction_mode": "thorough",
+  "preprocessing_applied": true,
+  "preprocessing_ms": 239,
+  "verification_applied": true,
+  "verification_corrections": 9,
+  "pass_count": 3,
+  "_client_time_ms": 91668
+}

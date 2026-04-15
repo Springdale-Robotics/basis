@@ -1,0 +1,78 @@
+{
+  "raw_text": "TITLE: Creamy Homemade Mac and Cheese\n\nINGREDIENTS:\n- 1 pound elbow macaroni\n- 4 tablespoons unsalted butter, divided\n- 2 cups milk\n- 3 tablespoons all-purpose flour\n- 2 cups shredded cheddar cheese\n- Salt and pepper to taste\n\nINSTRUCTIONS:\n1. Preheat oven to 350\u00b0F (175\u00b0C).\n2. Cook macaroni according to package instructions until al dente; drain and set aside.\n3. In a large saucepan, melt 2 tablespoons of butter over medium heat. Add flour and whisk constantly for about 1 minute or until the mixture is smooth and bubbly.\n4. Slowly pour in milk while continuously stirring to prevent lumps from forming. Cook, stirring occasionally, until the mixture thickens and comes to a boil. Remove from heat and add cheddar cheese; whisk until melted and smooth. Season with salt and pepper to taste.\n5. Stir macaroni into saucepan and mix well to coat evenly. Transfer mixture to an 8x8 inch baking dish. Dot the top of the mac and cheese with remaining butter, cut into small pieces.\n6. Bake for about 20-25 minutes or until bubbly and golden brown on top. Remove from oven and let cool for a few minutes before serving. Enjoy!\n\nTEMPERATURE: N/A (not applicable)\n\nImportant: Read ALL ingredients completely. Do not stop early. Do not summarize.",
+  "detected_type": "recipe",
+  "structured": {
+    "type": "recipe",
+    "confidence": 0.9,
+    "title": "Creamy Homemade Mac and Cheese",
+    "description": null,
+    "prepTimeMinutes": null,
+    "cookTimeMinutes": null,
+    "servings": null,
+    "ovenTempF": 350,
+    "ovenTempC": 175,
+    "ingredients": [
+      {
+        "name": "elbow macaroni",
+        "quantity": 1.0,
+        "unit": "lb",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "unsalted butter",
+        "quantity": 4.0,
+        "unit": "tablespoon",
+        "notes": "divided",
+        "confidence": 0.9
+      },
+      {
+        "name": "milk",
+        "quantity": 2.0,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "all-purpose flour",
+        "quantity": 3.0,
+        "unit": "tablespoon",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "cheddar cheese",
+        "quantity": 2.0,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "salt and pepper",
+        "quantity": null,
+        "unit": null,
+        "notes": "to taste",
+        "confidence": 0.9
+      }
+    ],
+    "instructions": [
+      "Preheat oven to 350\u00b0F (175\u00b0C).",
+      "Cook macaroni according to package instructions until al dente; drain and set aside.",
+      "In a large saucepan, melt 2 tablespoons of butter over medium heat. Add flour and whisk constantly for about 1 minute or until the mixture is smooth and bubbly.",
+      "Slowly pour in milk while continuously stirring to prevent lumps from forming. Cook, stirring occasionally, until the mixture thickens and comes to a boil. Remove from heat and add cheddar cheese; whisk until melted and smooth. Season with salt and pepper to taste.",
+      "Stir macaroni into saucepan and mix well to coat evenly. Transfer mixture to an 8x8 inch baking dish. Dot the top of the mac and cheese with remaining butter, cut into small pieces.",
+      "Bake for about 20-25 minutes or until bubbly and golden brown on top. Remove from oven and let cool for a few minutes before serving. Enjoy!"
+    ]
+  },
+  "confidence": 0.95,
+  "vlm_processing_ms": 24732,
+  "llm_processing_ms": 23980,
+  "total_processing_ms": 49044,
+  "extraction_mode": "accurate",
+  "preprocessing_applied": true,
+  "preprocessing_ms": 328,
+  "verification_applied": true,
+  "verification_corrections": 4,
+  "pass_count": 1,
+  "_client_time_ms": 49057
+}

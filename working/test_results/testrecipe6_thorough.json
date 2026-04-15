@@ -1,0 +1,88 @@
+{
+  "raw_text": "TITLE: Chocolate Pie\n\nINGREDIENTS:\n- 1 cup flour\n- 2 tablespoons sugar\n- 3/4 teaspoon salt\n- 6 tablespoons butter, melted\n- 1 egg yolk\n- 1/2 cup milk\n- 1/2 cup chocolate chips\n- 1/2 cup pecans, chopped\n\nINSTRUCTIONS:\n1. Preheat oven to 350 degrees F (175 degrees C). Grease a pie dish with butter. In a medium bowl, combine flour, sugar and salt. Add melted butter and egg yolk; mix until dough forms. Press dough evenly into bottom of prepared pie dish. Bake in preheated oven for 20 minutes or until golden brown. Remove from oven and let cool completely.\n2. In a medium saucepan over low heat, combine milk and chocolate chips. Stir constantly until smooth. Add chopped pecans to the mixture; mix well. Pour filling into prepared pie crust. Bake in preheated oven for 30 minutes or until set. Remove from oven and let cool completely before serving.\n\nTEMPERATURE: 350 degrees F (175 degrees C)",
+  "detected_type": "recipe",
+  "structured": {
+    "type": "recipe",
+    "confidence": 0.9,
+    "title": "Chocolate Pie",
+    "description": null,
+    "prepTimeMinutes": null,
+    "cookTimeMinutes": null,
+    "servings": null,
+    "ovenTempF": 350,
+    "ovenTempC": 175,
+    "ingredients": [
+      {
+        "name": "flour",
+        "quantity": 1.0,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "sugar",
+        "quantity": 2.0,
+        "unit": "tablespoon",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "salt",
+        "quantity": 0.75,
+        "unit": "teaspoon",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "butter",
+        "quantity": 6.0,
+        "unit": "tablespoon",
+        "notes": "melted",
+        "confidence": 0.9
+      },
+      {
+        "name": "egg yolk",
+        "quantity": 1.0,
+        "unit": null,
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "milk",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "chocolate chips",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": null,
+        "confidence": 0.9
+      },
+      {
+        "name": "pecans",
+        "quantity": 0.5,
+        "unit": "cup",
+        "notes": "chopped",
+        "confidence": 0.9
+      }
+    ],
+    "instructions": [
+      "Preheat oven to 350 degrees F (175 degrees C). Grease a pie dish with butter. In a medium bowl, combine flour, sugar and salt. Add melted butter and egg yolk; mix until dough forms. Press dough evenly into bottom of prepared pie dish. Bake in preheated oven for 20 minutes or until golden brown. Remove from oven and let cool completely.",
+      "In a medium saucepan over low heat, combine milk and chocolate chips. Stir constantly until smooth. Add chopped pecans to the mixture; mix well. Pour filling into prepared pie crust. Bake in preheated oven for 30 minutes or until set. Remove from oven and let cool completely before serving."
+    ]
+  },
+  "confidence": 0.95,
+  "vlm_processing_ms": 34645,
+  "llm_processing_ms": 24767,
+  "total_processing_ms": 59877,
+  "extraction_mode": "thorough",
+  "preprocessing_applied": true,
+  "preprocessing_ms": 462,
+  "verification_applied": true,
+  "verification_corrections": 1,
+  "pass_count": 3,
+  "_client_time_ms": 59896
+}
