@@ -103,13 +103,13 @@ export function CookModePage() {
   // Merge recipe ingredients with the separately fetched ones that have inventoryItemId
   const ingredients = (recipeIngredients || recipe.ingredients || []).map((ing, idx) => ({
     id: ing.id || `ing-${idx}`,
-    // Use linked inventory item name if available, otherwise use parsed name
-    name: ing.linkedItemName || ing.name,
+    name: ing.name, // Use original recipe text, not linked item name
     amount: typeof ing.quantity === 'string' ? parseFloat(ing.quantity) : (ing.quantity || ing.amount || 0),
     unit: ing.unit || '',
     notes: ing.notes,
     optional: ing.optional ?? false,
     inventoryItemId: ing.inventoryItemId,
+    groupName: ing.groupName || null,
   }));
   const currentInstruction = instructions[currentStep];
   const effectiveTotalSteps = instructions.length || 1;
@@ -393,24 +393,39 @@ export function CookModePage() {
             <SheetTitle>Ingredients</SheetTitle>
           </SheetHeader>
           <div className="mt-4 overflow-y-auto">
-            <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {ingredients.map((ingredient) => (
-                <li
-                  key={ingredient.id}
-                  className="flex items-center gap-2 rounded-lg border p-3"
-                >
-                  <span className="font-medium">
-                    {ingredient.amount} {ingredient.unit}
-                  </span>
-                  <span className="text-muted-foreground">{ingredient.name}</span>
-                  {ingredient.optional && (
-                    <Badge variant="outline" className="ml-auto text-xs">
-                      Optional
-                    </Badge>
+            {(() => {
+              const groups = new Map<string, typeof ingredients>();
+              for (const ing of ingredients) {
+                const key = ing.groupName || '';
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key)!.push(ing);
+              }
+              return Array.from(groups.entries()).map(([groupName, groupIngs]) => (
+                <div key={groupName || '__default'} className="mb-4">
+                  {groupName && (
+                    <h4 className="text-sm font-medium text-muted-foreground mb-2">{groupName}</h4>
                   )}
-                </li>
-              ))}
-            </ul>
+                  <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {groupIngs.map((ingredient) => (
+                      <li
+                        key={ingredient.id}
+                        className="flex items-center gap-2 rounded-lg border p-3"
+                      >
+                        <span className="font-medium">
+                          {ingredient.amount} {ingredient.unit}
+                        </span>
+                        <span className="text-muted-foreground">{ingredient.name}</span>
+                        {ingredient.optional && (
+                          <Badge variant="outline" className="ml-auto text-xs">
+                            Optional
+                          </Badge>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ));
+            })()}
           </div>
         </SheetContent>
       </Sheet>

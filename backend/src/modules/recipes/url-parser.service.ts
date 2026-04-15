@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
 import type { ParsedRecipe, ParsedIngredient, IngredientGroup } from '../../db/schema/recipes.js';
+import { parseIngredientLine as parseIngredient } from './recipe-import.service.js';
 
 export type ParseMethod = 'json-ld' | 'recipe-clipper' | 'microdata' | 'heuristic';
 
@@ -194,7 +195,7 @@ async function tryRecipeClipper(html: string, sourceUrl: string, warnings: strin
           )
         : [],
       ingredients: Array.isArray(clipped.ingredients)
-        ? clipped.ingredients.map((i: string) => parseIngredientLine(i))
+        ? clipped.ingredients.map((i: string) => parseIngredient(i))
         : [],
       sourceUrl,
     };
@@ -249,7 +250,7 @@ function tryParseMicrodata($: cheerio.CheerioAPI, sourceUrl: string, warnings: s
       description: getName('description'),
       instructions: getAll('recipeInstructions')
         .flatMap(i => i.split('\n').filter(Boolean)),
-      ingredients: getAll('recipeIngredient').map(i => parseIngredientLine(i)),
+      ingredients: getAll('recipeIngredient').map(i => parseIngredient(i)),
       sourceUrl,
     };
 
@@ -302,7 +303,7 @@ function tryHeuristicParse($: cheerio.CheerioAPI, sourceUrl: string, warnings: s
       if (section.length) {
         const items = section.find('li, p').map((_, el) => $(el).text().trim()).get();
         if (items.length > 0) {
-          ingredients = items.filter(Boolean).map(i => parseIngredientLine(i));
+          ingredients = items.filter(Boolean).map(i => parseIngredient(i));
           break;
         }
       }
@@ -512,7 +513,7 @@ function parseIngredients(value: unknown): ParsedIngredient[] {
     return value
       .map((item) => {
         if (typeof item === 'string') {
-          return parseIngredientLine(item);
+          return parseIngredient(item);
         }
         return null;
       })
@@ -570,88 +571,7 @@ const UNITS = new Set([
   'stalk', 'stalks',
 ]);
 
-/**
- * Parse a single ingredient line
- */
-export function parseIngredientLine(line: string): ParsedIngredient {
-  let text = line.trim();
-
-  // Extract notes in parentheses
-  let notes: string | undefined;
-  const parenMatch = text.match(/\(([^)]+)\)/);
-  if (parenMatch) {
-    notes = parenMatch[1];
-    text = text.replace(/\([^)]+\)/, '').trim();
-  }
-
-  // Extract notes after comma
-  const commaIndex = text.indexOf(',');
-  if (commaIndex > -1) {
-    const afterComma = text.slice(commaIndex + 1).trim();
-    if (afterComma && !notes) {
-      notes = afterComma;
-    }
-    text = text.slice(0, commaIndex).trim();
-  }
-
-  // Convert Unicode fractions
-  for (const [frac, value] of Object.entries(UNICODE_FRACTIONS)) {
-    if (text.includes(frac)) {
-      // Check for mixed number like "1½"
-      const mixedMatch = text.match(new RegExp(`(\\d+)\\s*${frac}`));
-      if (mixedMatch) {
-        const whole = parseInt(mixedMatch[1]);
-        text = text.replace(new RegExp(`${mixedMatch[1]}\\s*${frac}`), (whole + value).toString());
-      } else {
-        text = text.replace(frac, value.toString());
-      }
-    }
-  }
-
-  // Regex patterns for parsing
-  const quantityUnitNamePattern = /^(\d+(?:[\/\.]\d+)?(?:\s*-\s*\d+(?:[\/\.]\d+)?)?)\s+([a-zA-Z]+\.?)?\s*(.+)$/i;
-  const quantityNamePattern = /^(\d+(?:[\/\.]\d+)?(?:\s*-\s*\d+(?:[\/\.]\d+)?)?)\s+(.+)$/i;
-
-  // Try to match quantity + unit + name
-  let match = text.match(quantityUnitNamePattern);
-  if (match) {
-    const [, quantityStr, unitStr, name] = match;
-    const unit = unitStr?.replace('.', '').toLowerCase();
-
-    if (unit && UNITS.has(unit)) {
-      return {
-        name: name.trim(),
-        quantity: parseQuantity(quantityStr),
-        unit: unit,
-        notes,
-      };
-    } else {
-      // Unit might be part of the name
-      return {
-        name: (unitStr ? unitStr + ' ' : '') + name.trim(),
-        quantity: parseQuantity(quantityStr),
-        notes,
-      };
-    }
-  }
-
-  // Try quantity + name (no unit)
-  match = text.match(quantityNamePattern);
-  if (match) {
-    const [, quantityStr, name] = match;
-    return {
-      name: name.trim(),
-      quantity: parseQuantity(quantityStr),
-      notes,
-    };
-  }
-
-  // Just return the text as the name
-  return {
-    name: text,
-    notes,
-  };
-}
+// parseIngredientLine is imported from recipe-import.service.ts as parseIngredient
 
 function parseQuantity(str: string): number {
   // Handle ranges - take the average

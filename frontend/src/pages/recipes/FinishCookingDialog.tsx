@@ -14,7 +14,9 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { recipesApi, type FinishCookingRequest } from '@/api/recipes';
+import { inventoryApi } from '@/api/inventory';
 import type { RecipeIngredient } from '@/types/models';
+import { useInventoryTier } from '@/hooks/useInventoryTier';
 
 interface FinishCookingDialogProps {
   open: boolean;
@@ -24,7 +26,7 @@ interface FinishCookingDialogProps {
   onComplete: () => void;
 }
 
-type DialogStep = 'confirm' | 'adjust';
+type DialogStep = 'confirm' | 'adjust' | 'basic-used';
 
 interface IngredientAdjustment {
   ingredientId: string;
@@ -43,33 +45,39 @@ export function FinishCookingDialog({
   ingredients,
   onComplete,
 }: FinishCookingDialogProps) {
+  const { isAdvanced } = useInventoryTier();
   const [step, setStep] = useState<DialogStep>('confirm');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [adjustments, setAdjustments] = useState<IngredientAdjustment[]>([]);
+  // Basic mode: which items did the user use up completely
+  const [usedUpItems, setUsedUpItems] = useState<Set<string>>(new Set());
 
-  // Initialize adjustments from ingredients
+  const inventoryIngredients = ingredients.filter(ing => ing.inventoryItemId);
+  const hasInventoryIngredients = inventoryIngredients.length > 0;
+
   const initializeAdjustments = () => {
     setAdjustments(
-      ingredients
-        .filter(ing => ing.inventoryItemId) // Only show ingredients linked to inventory
-        .map(ing => ({
-          ingredientId: ing.id,
-          name: ing.name,
-          originalAmount: ing.amount,
-          unit: ing.unit,
-          actualAmount: ing.amount,
-          skipped: false,
-          inventoryItemId: ing.inventoryItemId,
-        }))
+      inventoryIngredients.map(ing => ({
+        ingredientId: ing.id,
+        name: ing.name,
+        originalAmount: ing.amount,
+        unit: ing.unit,
+        actualAmount: ing.amount,
+        skipped: false,
+        inventoryItemId: ing.inventoryItemId,
+      }))
     );
+  };
+
+  const initializeUsedUp = () => {
+    // Default all items to "used up" (pre-checked)
+    setUsedUpItems(new Set(inventoryIngredients.map(ing => ing.inventoryItemId!)));
   };
 
   const handleYesUsedAll = async () => {
     setIsSubmitting(true);
     try {
-      await recipesApi.finishCooking(recipeId, {
-        deductInventory: true,
-      });
+      await recipesApi.finishCooking(recipeId, { deductInventory: true });
       onComplete();
     } catch (error) {
       console.error('Failed to finish cooking:', error);
@@ -84,7 +92,6 @@ export function FinishCookingDialog({
   };
 
   const handleDidntCook = () => {
-    // Just close without deducting anything
     onComplete();
   };
 
@@ -118,14 +125,42 @@ export function FinishCookingDialog({
     }
   };
 
+  // Basic mode: mark checked items as out of stock
+  const handleBasicFinish = async () => {
+    setIsSubmitting(true);
+    try {
+      await recipesApi.finishCooking(recipeId, { deductInventory: false });
+      // Mark used-up items as out of stock
+      for (const itemId of usedUpItems) {
+        try {
+          await inventoryApi.markOutOfStock(itemId);
+        } catch {
+          // Silently continue if one fails
+        }
+      }
+      onComplete();
+    } catch (error) {
+      console.error('Failed to finish cooking:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleClose = () => {
     setStep('confirm');
     setAdjustments([]);
+    setUsedUpItems(new Set());
     onOpenChange(false);
   };
 
-  // Check if there are any inventory-linked ingredients
-  const hasInventoryIngredients = ingredients.some(ing => ing.inventoryItemId);
+  const toggleUsedUp = (itemId: string) => {
+    setUsedUpItems(prev => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  };
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -135,14 +170,60 @@ export function FinishCookingDialog({
             <DialogHeader>
               <DialogTitle>Finish Cooking</DialogTitle>
               <DialogDescription>
-                {hasInventoryIngredients
+                {!isAdvanced
+                  ? "Nice work! Did you use up any ingredients?"
+                  : hasInventoryIngredients
                   ? "Did you use all the ingredients as listed in the recipe?"
                   : "Great job! Since no ingredients are linked to your inventory, there's nothing to deduct."}
               </DialogDescription>
             </DialogHeader>
 
             <DialogFooter className="flex-col gap-2 sm:flex-col">
-              {hasInventoryIngredients ? (
+              {!isAdvanced ? (
+                <>
+                  {hasInventoryIngredients && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        initializeUsedUp();
+                        setStep('basic-used');
+                      }}
+                      disabled={isSubmitting}
+                      className="w-full"
+                    >
+                      Yes, update my inventory
+                    </Button>
+                  )}
+                  <Button
+                    onClick={async () => {
+                      setIsSubmitting(true);
+                      try {
+                        await recipesApi.finishCooking(recipeId, { deductInventory: false });
+                        onComplete();
+                      } finally {
+                        setIsSubmitting(false);
+                      }
+                    }}
+                    disabled={isSubmitting}
+                    className="w-full"
+                  >
+                    {isSubmitting ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Check className="mr-2 h-4 w-4" />
+                    )}
+                    {hasInventoryIngredients ? 'No, just mark as done' : 'Done cooking'}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleDidntCook}
+                    disabled={isSubmitting}
+                    className="w-full text-muted-foreground"
+                  >
+                    I didn't actually make this
+                  </Button>
+                </>
+              ) : hasInventoryIngredients ? (
                 <>
                   <Button
                     onClick={handleYesUsedAll}
@@ -178,6 +259,57 @@ export function FinishCookingDialog({
                   Done
                 </Button>
               )}
+            </DialogFooter>
+          </>
+        ) : step === 'basic-used' ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>What did you use up?</DialogTitle>
+              <DialogDescription>
+                Check the items you've completely used up. They'll be removed from your inventory.
+              </DialogDescription>
+            </DialogHeader>
+
+            <ScrollArea className="max-h-[400px] pr-4">
+              <div className="space-y-2 py-4">
+                {inventoryIngredients.map(ing => (
+                  <div
+                    key={ing.id}
+                    className="flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50"
+                    onClick={() => ing.inventoryItemId && toggleUsedUp(ing.inventoryItemId)}
+                  >
+                    <Checkbox
+                      checked={usedUpItems.has(ing.inventoryItemId!)}
+                      onCheckedChange={() => ing.inventoryItemId && toggleUsedUp(ing.inventoryItemId)}
+                    />
+                    <div className="flex-1">
+                      <p className="font-medium">{ing.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {ing.amount} {ing.unit}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                variant="outline"
+                onClick={() => setStep('confirm')}
+                disabled={isSubmitting}
+              >
+                Back
+              </Button>
+              <Button
+                onClick={handleBasicFinish}
+                disabled={isSubmitting}
+              >
+                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {usedUpItems.size > 0
+                  ? `Remove ${usedUpItems.size} item${usedUpItems.size !== 1 ? 's' : ''} from inventory`
+                  : 'Done cooking'}
+              </Button>
             </DialogFooter>
           </>
         ) : (

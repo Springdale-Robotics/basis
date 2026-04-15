@@ -9,8 +9,9 @@ import {
   inventoryStock,
   inventoryItems,
   shoppingList,
+  households,
 } from '../../db/schema/index.js';
-import { eq, and, sql, gte, lte, asc, isNotNull } from 'drizzle-orm';
+import { eq, and, sql, gt, gte, lte, asc, isNotNull } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
 import { requireRecipesAccess, requireMealPlanAccess } from '../../middleware/permission.middleware.js';
 import { Errors } from '../../lib/errors.js';
@@ -29,9 +30,8 @@ import {
 } from './recipe-import.service.js';
 import { parseRecipeFromUrl } from './url-parser.service.js';
 import { processRecipeImage, fetchImageFromUrl } from './recipe-image.service.js';
-import { findConversionChain, normalizeUnit } from '../../lib/unit-conversions.js';
+import { convertWithDensity, normalizeUnit } from '../../lib/unit-conversions.js';
 import { matchSingleIngredient } from './ingredient-matching.service.js';
-import type { UnitConversion } from '../../db/schema/inventory.js';
 import { emitCookingDeduction } from '../../websocket/events.js';
 
 const createRecipeSchema = z.object({
@@ -269,6 +269,115 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
+  // Get ingredient availability for all recipes (for "Can make now" filter)
+  app.get(
+    '/availability',
+    { preHandler: [authMiddleware, requireRecipesAccess('view')] },
+    async (request) => {
+      // Get all recipe IDs and their ingredient counts
+      const allRecipeIngredientRows = await db
+        .select({
+          recipeId: recipeIngredients.recipeId,
+          inventoryItemId: recipeIngredients.inventoryItemId,
+        })
+        .from(recipeIngredients)
+        .innerJoin(recipes, eq(recipeIngredients.recipeId, recipes.id))
+        .where(eq(recipes.householdId, request.user!.householdId));
+
+      // Get all stocked item IDs
+      const stockEntries = await db
+        .select({ itemId: inventoryStock.itemId })
+        .from(inventoryStock)
+        .innerJoin(inventoryItems, eq(inventoryStock.itemId, inventoryItems.id))
+        .where(
+          and(
+            eq(inventoryItems.householdId, request.user!.householdId),
+            gt(inventoryStock.quantity, '0')
+          )
+        );
+      const stockedIds = new Set(stockEntries.map(e => e.itemId));
+
+      // Calculate per-recipe availability
+      const recipeAvailability: Record<string, { total: number; have: number }> = {};
+      for (const row of allRecipeIngredientRows) {
+        if (!recipeAvailability[row.recipeId]) {
+          recipeAvailability[row.recipeId] = { total: 0, have: 0 };
+        }
+        recipeAvailability[row.recipeId].total++;
+        if (row.inventoryItemId && stockedIds.has(row.inventoryItemId)) {
+          recipeAvailability[row.recipeId].have++;
+        }
+      }
+
+      return { success: true, data: { availability: recipeAvailability } };
+    }
+  );
+
+  // Suggest item names for unmatched ingredients (for quick catalog creation)
+  app.post(
+    '/ingredients/suggest-items',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const schema = z.object({
+        ingredientNames: z.array(z.string()),
+      });
+      const { ingredientNames } = schema.parse(request.body);
+
+      const { simplifyIngredientNames, detectCategory, findSimilarItemName } =
+        await import('../../services/ingredient-name-utils.js');
+
+      // Get existing item names for duplicate detection
+      const existingItems = await db.query.inventoryItems.findMany({
+        where: eq(inventoryItems.householdId, request.user!.householdId),
+        columns: { name: true },
+      });
+      const existingNames = existingItems.map(i => i.name);
+
+      // Simplify names using CRF
+      const simplifiedNames = await simplifyIngredientNames(ingredientNames);
+
+      // Build suggestions with category and duplicate warnings
+      const suggestions = ingredientNames.map((original, i) => {
+        const suggested = simplifiedNames[i];
+        const category = detectCategory(original) || detectCategory(suggested);
+        const similarTo = findSimilarItemName(suggested, existingNames);
+
+        return {
+          originalName: original,
+          suggestedName: suggested,
+          category: category || undefined,
+          similarExisting: similarTo || undefined,
+        };
+      });
+
+      return { success: true, data: { suggestions } };
+    }
+  );
+
+  // Link a recipe ingredient to an inventory item
+  app.patch<{ Params: { id: string; ingredientId: string } }>(
+    '/:id/ingredients/:ingredientId/link',
+    { preHandler: [authMiddleware, requireRecipesAccess('edit')] },
+    async (request) => {
+      const schema = z.object({
+        inventoryItemId: z.string().uuid().nullable(),
+      });
+      const { inventoryItemId } = schema.parse(request.body);
+
+      await db
+        .update(recipeIngredients)
+        .set({ inventoryItemId })
+        .where(
+          and(
+            eq(recipeIngredients.id, request.params.ingredientId),
+            eq(recipeIngredients.recipeId, request.params.id)
+          )
+        );
+
+      return { success: true, data: { message: 'Ingredient linked' } };
+    }
+  );
+
   // Get recipe by ID with ingredients
   app.get<{ Params: { id: string } }>(
     '/:id',
@@ -295,6 +404,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           quantity: recipeIngredients.quantity,
           unit: recipeIngredients.unit,
           notes: recipeIngredients.notes,
+          groupName: recipeIngredients.groupName,
           linkedItemName: inventoryItems.name,
         })
         .from(recipeIngredients)
@@ -498,6 +608,82 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
+  // Get recipe cost estimate from ingredient price history
+  app.get<{ Params: { id: string } }>(
+    '/:id/cost-estimate',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const recipe = await db.query.recipes.findFirst({
+        where: and(
+          eq(recipes.id, request.params.id),
+          eq(recipes.householdId, request.user!.householdId)
+        ),
+      });
+      if (!recipe) throw Errors.notFound('Recipe');
+
+      const ingredients = await db.query.recipeIngredients.findMany({
+        where: eq(recipeIngredients.recipeId, request.params.id),
+      });
+
+      let totalCost = 0;
+      let ingredientsWithPrice = 0;
+      let ingredientsWithoutPrice = 0;
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      for (const ing of ingredients) {
+        if (!ing.inventoryItemId) {
+          ingredientsWithoutPrice++;
+          continue;
+        }
+
+        // Get the most recent stock entry with a price for this item
+        const recentPricedStock = await db
+          .select()
+          .from(inventoryStock)
+          .where(and(
+            eq(inventoryStock.itemId, ing.inventoryItemId),
+            isNotNull(inventoryStock.pricePerUnit),
+            gte(inventoryStock.addedAt, thirtyDaysAgo),
+          ))
+          .orderBy(inventoryStock.addedAt)
+          .limit(1);
+
+        if (recentPricedStock.length > 0 && recentPricedStock[0].pricePerUnit) {
+          const pricePerUnit = parseFloat(recentPricedStock[0].pricePerUnit);
+          const qty = ing.quantity ? parseFloat(ing.quantity) : 1;
+          totalCost += pricePerUnit * qty;
+          ingredientsWithPrice++;
+        } else {
+          ingredientsWithoutPrice++;
+        }
+      }
+
+      const totalIngredients = ingredientsWithPrice + ingredientsWithoutPrice;
+      const completeness = totalIngredients > 0
+        ? ingredientsWithPrice / totalIngredients
+        : 0;
+
+      // Only show cost if most ingredients have prices (>= 60% coverage)
+      const showCost = completeness >= 0.6;
+      const servings = recipe.servings || 1;
+
+      return {
+        success: true,
+        data: {
+          totalCost: showCost ? Math.round(totalCost * 100) / 100 : null,
+          costPerServing: showCost ? Math.round((totalCost / servings) * 100) / 100 : null,
+          servings,
+          ingredientsWithPrice,
+          ingredientsWithoutPrice,
+          totalIngredients,
+          completeness: Math.round(completeness * 100),
+          sufficient: showCost,
+        },
+      };
+    }
+  );
+
   // Start cooking session
   app.post<{ Params: { id: string } }>(
     '/:id/cook',
@@ -545,6 +731,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
     async (request) => {
       const finishSchema = z.object({
         sessionId: z.string().uuid().optional(),
+        mealPlanId: z.string().uuid().optional(),
         deductInventory: z.boolean().default(true),
         adjustments: z.array(z.object({
           ingredientId: z.string().uuid(),
@@ -553,7 +740,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         })).optional(),
       });
 
-      const { sessionId, deductInventory, adjustments } = finishSchema.parse(request.body || {});
+      const { sessionId, mealPlanId, deductInventory, adjustments } = finishSchema.parse(request.body || {});
 
       const deductionWarnings: string[] = [];
       const deductedItems: Array<{ itemName: string; quantity: number; unit?: string }> = [];
@@ -624,30 +811,11 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
             // Handle unit conversion if needed
             let convertedRemaining = remaining;
             if (ingredient.unit && stock.unit && normalizeUnit(ingredient.unit) !== normalizeUnit(stock.unit)) {
-              const conversions = (item.unitConversions as UnitConversion[]) || [];
-
-              // 1. Try item-specific conversion first
-              const itemConversion = conversions.find(
-                c => normalizeUnit(c.fromUnit) === normalizeUnit(ingredient.unit!) &&
-                     normalizeUnit(c.toUnit) === normalizeUnit(stock.unit!)
-              );
-              if (itemConversion) {
-                convertedRemaining = remaining * itemConversion.factor;
-              } else {
-                // 2. Try reverse item-specific conversion
-                const reverseConversion = conversions.find(
-                  c => normalizeUnit(c.fromUnit) === normalizeUnit(stock.unit!) &&
-                       normalizeUnit(c.toUnit) === normalizeUnit(ingredient.unit!)
-                );
-                if (reverseConversion) {
-                  convertedRemaining = remaining / reverseConversion.factor;
-                } else {
-                  // 3. Fall back to global standard conversions
-                  const globalFactor = findConversionChain(ingredient.unit!, stock.unit!);
-                  if (globalFactor !== null) {
-                    convertedRemaining = remaining * globalFactor;
-                  }
-                }
+              const density = item.density ? parseFloat(item.density) : null;
+              const quantityUnitWeights = (item.quantityUnitWeights as Record<string, number>) || {};
+              const converted = convertWithDensity(remaining, ingredient.unit, stock.unit, density, quantityUnitWeights);
+              if (converted !== null) {
+                convertedRemaining = converted;
               }
             }
 
@@ -701,6 +869,19 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           })),
           warnings: deductionWarnings.length > 0 ? deductionWarnings : undefined,
         });
+      }
+
+      // Mark meal plan entry as cooked
+      if (mealPlanId) {
+        await db
+          .update(mealPlans)
+          .set({ cookedAt: new Date(), updatedAt: new Date() })
+          .where(
+            and(
+              eq(mealPlans.id, mealPlanId),
+              eq(mealPlans.householdId, request.user!.householdId)
+            )
+          );
       }
 
       return {
@@ -791,6 +972,21 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       // Process based on source type
       if (sourceType === 'url') {
         await processUrlImportSession(sessionId, sourceData, request.user!.householdId);
+      } else if (sourceType === 'pdf') {
+        // Extract text from PDF, then parse as text
+        try {
+          const { extractTextFromPDF } = await import('../../services/pdf-extraction.js');
+          const pdfBuffer = Buffer.from(sourceData, 'base64');
+          const extractedText = await extractTextFromPDF(pdfBuffer);
+          await processImportSession(sessionId, extractedText, request.user!.householdId, 'pdf');
+        } catch (err) {
+          // If PDF extraction fails, try raw text if provided
+          if (rawText) {
+            await processImportSession(sessionId, rawText, request.user!.householdId, 'text');
+          } else {
+            throw Errors.validation('Failed to extract text from PDF');
+          }
+        }
       } else if (rawText || sourceType === 'text') {
         await processImportSession(sessionId, rawText || sourceData, request.user!.householdId, 'text');
       }
@@ -835,6 +1031,51 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       );
 
       return { success: true, data: { message: 'Matches updated' } };
+    }
+  );
+
+  // Re-parse import session using LLM
+  app.post<{ Params: { sessionId: string } }>(
+    '/import/:sessionId/reparse-llm',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const session = await getImportSession(request.params.sessionId, request.user!.householdId);
+      if (!session) throw Errors.notFound('Import session');
+
+      const rawText = session.sourceData;
+      if (!rawText) throw Errors.validation('No source text available for re-parsing');
+
+      const { parseRecipeWithLLM, llmResultToImportFormat } = await import('../../services/llm-recipe-parser.js');
+      const llmResult = await parseRecipeWithLLM(rawText);
+      if (!llmResult) throw Errors.validation('LLM parsing failed — no provider available or text could not be parsed');
+
+      const converted = llmResultToImportFormat(llmResult);
+      const parsedRecipe = converted as any;
+
+      // Re-match ingredients
+      const matchResults = await matchIngredients(parsedRecipe.ingredients, request.user!.householdId);
+      const ingredientMatches = matchResults.map(r => r.match);
+
+      await db
+        .update(recipeImportSessions)
+        .set({
+          parsedRecipe,
+          ingredientMatches,
+          parseMethod: 'llm',
+          parseConfidence: '0.85',
+          parseWarnings: [],
+        })
+        .where(eq(recipeImportSessions.id, request.params.sessionId));
+
+      return {
+        success: true,
+        data: {
+          parsedRecipe,
+          ingredientMatches,
+          parseMethod: 'llm',
+          confidence: 0.85,
+        },
+      };
     }
   );
 
@@ -890,6 +1131,50 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       );
 
       return { success: true, data: { matches } };
+    }
+  );
+
+  // Parse ingredient lines with CRF (or regex fallback)
+  app.post(
+    '/ingredients/parse',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const schema = z.object({
+        lines: z.array(z.string()),
+      });
+      const { lines } = schema.parse(request.body);
+
+      // Try CRF first
+      try {
+        const { parseIngredientsWithCRF } = await import('../../services/crf-ingredient-parser.js');
+        const crfResults = await parseIngredientsWithCRF(lines);
+        if (crfResults) {
+          return {
+            success: true,
+            data: {
+              ingredients: crfResults.map((r) => ({
+                name: r.name,
+                quantity: r.quantity,
+                unit: r.unit,
+                notes: r.notes,
+              })),
+              parser: 'crf',
+            },
+          };
+        }
+      } catch {
+        // CRF unavailable
+      }
+
+      // Regex fallback
+      const { parseIngredientLine } = await import('./recipe-import.service.js');
+      return {
+        success: true,
+        data: {
+          ingredients: lines.map(line => parseIngredientLine(line)),
+          parser: 'regex',
+        },
+      };
     }
   );
 
@@ -1016,6 +1301,72 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           items: result.items,
         },
       };
+    }
+  );
+
+  // ===== CONFIDENCE-AWARE SHOPPING LIST (v2) =====
+
+  // Preview shopping list with confidence annotations
+  app.post(
+    '/meal-plans/shopping-preview',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const schema = z.object({
+        startDate: z.string(),
+        endDate: z.string(),
+        servingsMultiplier: z.number().positive().default(1),
+      });
+      const { startDate, endDate, servingsMultiplier } = schema.parse(request.body);
+
+      const { generateFromMealPlan } = await import('../../services/shopping-list-generation.service.js');
+
+      // Get household settings for tier
+      const household = await db.query.households.findFirst({
+        where: eq(households.id, request.user!.householdId),
+      });
+      const settings = (household?.settings || {}) as any;
+      const tier = settings.inventory?.tier || 'basic';
+      const thresholds = settings.inventory?.confidenceThresholds;
+
+      const preview = await generateFromMealPlan(
+        request.user!.householdId,
+        startDate,
+        endDate,
+        { tier, confidenceThresholds: thresholds, servingsMultiplier },
+      );
+
+      return { success: true, data: { items: preview } };
+    }
+  );
+
+  // Look-ahead suggestions for efficient shopping
+  app.get(
+    '/meal-plans/look-ahead-suggestions',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const schema = z.object({
+        days: z.coerce.number().int().positive().default(7),
+      });
+      const { days } = schema.parse(request.query);
+
+      const { getLookAheadSuggestions } = await import('../../services/shopping-list-generation.service.js');
+
+      // Get current shopping list item IDs
+      const currentItems = await db.query.shoppingList.findMany({
+        where: and(
+          eq(shoppingList.householdId, request.user!.householdId),
+          eq(shoppingList.isChecked, false),
+        ),
+      });
+      const itemIds = currentItems.filter(i => i.itemId).map(i => i.itemId!);
+
+      const suggestions = await getLookAheadSuggestions(
+        request.user!.householdId,
+        itemIds,
+        days,
+      );
+
+      return { success: true, data: { suggestions } };
     }
   );
 

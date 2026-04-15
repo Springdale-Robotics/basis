@@ -200,8 +200,14 @@ export function MealPlanPage() {
                           {meals.map((meal) => (
                             <div
                               key={meal.id}
-                              className="rounded-sm bg-primary/15 px-1.5 py-0.5 text-xs truncate"
+                              className={cn(
+                                'rounded-sm px-1.5 py-0.5 text-xs truncate',
+                                meal.cookedAt
+                                  ? 'bg-green-500/15 text-green-700 line-through opacity-70'
+                                  : 'bg-primary/15'
+                              )}
                             >
+                              {meal.cookedAt && <span className="mr-0.5">✓</span>}
                               {meal.recipe?.title}
                               {meal.servingsMultiplier && Number(meal.servingsMultiplier) !== 1 && (
                                 <span className="ml-1 opacity-60">

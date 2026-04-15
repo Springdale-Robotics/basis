@@ -65,6 +65,7 @@ export const recipeIngredients = pgTable('recipe_ingredients', {
   quantity: decimal('quantity', { precision: 10, scale: 3 }),
   unit: varchar('unit', { length: 50 }),
   notes: varchar('notes', { length: 255 }),
+  groupName: varchar('group_name', { length: 255 }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -82,6 +83,7 @@ export const mealPlans = pgTable('meal_plans', {
   plannedDate: date('planned_date').notNull(),
   mealType: mealTypeEnum('meal_type').notNull(),
   servingsMultiplier: decimal('servings_multiplier', { precision: 5, scale: 2 }).default('1'),
+  cookedAt: timestamp('cooked_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -180,27 +182,18 @@ export interface IngredientMatch {
   modifiedUnit?: string;  // User-modified unit during import
   confidence?: number;
   matchReason?: 'exact' | 'synonym' | 'contains' | 'fuzzy';
-  unitConversion?: {
+  needsQuantityWeight?: {
     fromUnit: string;
     toUnit: string;
-    factor: number;
-  };
-  needsConversion?: {
-    fromUnit: string;
-    toUnit: string;
-    hasExisting: boolean;
-    suggestedFactor?: number;
   };
   suggestions?: Array<{
     itemId: string;
     name: string;
     confidence: number;
     matchReason?: 'exact' | 'synonym' | 'contains' | 'fuzzy';
-    needsConversion?: {
+    needsQuantityWeight?: {
       fromUnit: string;
       toUnit: string;
-      hasExisting: boolean;
-      suggestedFactor?: number;
     };
   }>;
   // Catalog item data from exported .recipe files
@@ -208,11 +201,7 @@ export interface IngredientMatch {
     name: string;
     category?: string;
     defaultUnit?: string;
-    unitConversions?: Array<{
-      fromUnit: string;
-      toUnit: string;
-      factor: number;
-    }>;
+    density?: number;
   };
 }
 

@@ -19,6 +19,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { recipesApi, type ShoppingListItem, type GenerateShoppingListResponse } from '@/api/recipes';
 import { cn } from '@/lib/utils';
+import { useInventoryTier } from '@/hooks/useInventoryTier';
 
 interface GenerateShoppingListDialogProps {
   open: boolean;
@@ -35,8 +36,9 @@ export function GenerateShoppingListDialog({
   startDate,
   endDate,
 }: GenerateShoppingListDialogProps) {
+  const { isAdvanced } = useInventoryTier();
   const [step, setStep] = useState<Step>('options');
-  const [checkInventory, setCheckInventory] = useState(true);
+  const [checkInventory, setCheckInventory] = useState(false);
   const [servingsMultiplier, setServingsMultiplier] = useState(1);
   const [previewData, setPreviewData] = useState<GenerateShoppingListResponse | null>(null);
 
@@ -104,19 +106,21 @@ export function GenerateShoppingListDialog({
         {step === 'options' && (
           <>
             <div className="space-y-6 py-4">
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label htmlFor="check-inventory">Check current inventory</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Subtract items you already have in stock
-                  </p>
+              {isAdvanced && (
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="check-inventory">Check current inventory</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Subtract items you already have in stock
+                    </p>
+                  </div>
+                  <Switch
+                    id="check-inventory"
+                    checked={checkInventory}
+                    onCheckedChange={setCheckInventory}
+                  />
                 </div>
-                <Switch
-                  id="check-inventory"
-                  checked={checkInventory}
-                  onCheckedChange={setCheckInventory}
-                />
-              </div>
+              )}
 
               <div className="space-y-2">
                 <Label htmlFor="servings-multiplier">Servings multiplier</Label>
@@ -194,7 +198,7 @@ export function GenerateShoppingListDialog({
                       ))}
                     </div>
 
-                    {checkInventory && previewData.inventoryDeductions.length > 0 && (
+                    {isAdvanced && checkInventory && previewData.inventoryDeductions.length > 0 && (
                       <>
                         <Separator />
                         <div>

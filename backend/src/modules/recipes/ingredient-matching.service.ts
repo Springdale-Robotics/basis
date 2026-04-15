@@ -1,9 +1,57 @@
 import { db } from '../../config/database.js';
-import { inventoryItems } from '../../db/schema/index.js';
-import { eq } from 'drizzle-orm';
+import { inventoryItems, ingredientAliases } from '../../db/schema/index.js';
+import { eq, and } from 'drizzle-orm';
 import type { ParsedIngredient, IngredientMatch } from '../../db/schema/recipes.js';
-import type { InventoryItem, UnitConversion } from '../../db/schema/inventory.js';
-import { findConversionChain as findGlobalConversion } from '../../lib/unit-conversions.js';
+import type { InventoryItem } from '../../db/schema/inventory.js';
+import { findConversionChain as findGlobalConversion, getUnitCategory } from '../../lib/unit-conversions.js';
+import { isCountUnit as isQuantityUnit } from '../../lib/units.js';
+
+/**
+ * Look up ingredient aliases from the database for a household.
+ * Returns inventory item IDs that match the given ingredient name via alias.
+ *
+ * Directional matching:
+ * - If recipe says "milk" (generic), we find items that have "milk" as an alias name
+ *   (e.g., item "whole milk" with alias "milk" matches)
+ * - If recipe says "whole milk" (specific), only items named "whole milk" or with
+ *   alias "whole milk" match — the generic "milk" item does NOT match.
+ */
+async function findAliasCandidates(
+  ingredientName: string,
+  householdId: string,
+): Promise<Array<{ itemId: string; itemName: string; aliasType: string }>> {
+  const normalizedName = ingredientName.toLowerCase().trim();
+
+  // Find items where the searched name is one of their aliases
+  const aliasMatches = await db
+    .select({
+      itemId: ingredientAliases.canonicalItemId,
+      aliasName: ingredientAliases.aliasName,
+      aliasType: ingredientAliases.aliasType,
+    })
+    .from(ingredientAliases)
+    .where(and(
+      eq(ingredientAliases.householdId, householdId),
+      eq(ingredientAliases.aliasName, normalizedName),
+    ));
+
+  // Get item names for matched IDs
+  const results: Array<{ itemId: string; itemName: string; aliasType: string }> = [];
+  for (const match of aliasMatches) {
+    const item = await db.query.inventoryItems.findFirst({
+      where: eq(inventoryItems.id, match.itemId),
+    });
+    if (item) {
+      results.push({
+        itemId: item.id,
+        itemName: item.name,
+        aliasType: match.aliasType,
+      });
+    }
+  }
+
+  return results;
+}
 
 // Common ingredient synonyms for matching
 const INGREDIENT_SYNONYMS: Record<string, string[]> = {
@@ -140,22 +188,6 @@ const UNIT_MAPPINGS: Record<string, string[]> = {
   'cans': ['can', 'tin', 'tins'],
 };
 
-// Standard unit conversions for common measurements
-const STANDARD_CONVERSIONS: Record<string, Record<string, number>> = {
-  // Volume
-  'cup': { 'ml': 236.588, 'tbsp': 16, 'tsp': 48, 'oz': 8 },
-  'tbsp': { 'ml': 14.787, 'tsp': 3, 'cup': 0.0625 },
-  'tsp': { 'ml': 4.929, 'tbsp': 0.333 },
-  // Weight
-  'lb': { 'oz': 16, 'g': 453.592, 'kg': 0.454 },
-  'oz': { 'g': 28.3495, 'lb': 0.0625 },
-  'kg': { 'g': 1000, 'lb': 2.205 },
-  'g': { 'kg': 0.001, 'oz': 0.0353 },
-  // Metric volume
-  'l': { 'ml': 1000, 'cup': 4.227 },
-  'ml': { 'l': 0.001, 'tsp': 0.203, 'tbsp': 0.068 },
-};
-
 export interface IngredientMatchResult {
   parsed: ParsedIngredient;
   match: IngredientMatch;
@@ -168,16 +200,9 @@ export interface MatchSuggestion {
   name: string;
   confidence: number;
   matchReason: MatchReason;
-  unitConversion?: {
+  needsQuantityWeight?: {
     fromUnit: string;
     toUnit: string;
-    factor: number;
-  };
-  needsConversion?: {
-    fromUnit: string;
-    toUnit: string;
-    hasExisting: boolean;
-    suggestedFactor?: number;
   };
 }
 
@@ -343,70 +368,6 @@ function normalizeUnit(unit: string): string {
 }
 
 /**
- * Find unit conversion between two units
- * Priority: item-specific > local STANDARD_CONVERSIONS > global conversions
- */
-function findUnitConversion(
-  fromUnit: string,
-  toUnit: string,
-  itemConversions: UnitConversion[]
-): { fromUnit: string; toUnit: string; factor: number } | undefined {
-  const normFrom = normalizeUnit(fromUnit);
-  const normTo = normalizeUnit(toUnit);
-
-  if (normFrom === normTo) {
-    return undefined; // No conversion needed
-  }
-
-  // Check item-specific conversions first
-  for (const conv of itemConversions) {
-    if (normalizeUnit(conv.fromUnit) === normFrom && normalizeUnit(conv.toUnit) === normTo) {
-      return { fromUnit, toUnit, factor: conv.factor };
-    }
-    if (normalizeUnit(conv.fromUnit) === normTo && normalizeUnit(conv.toUnit) === normFrom) {
-      return { fromUnit, toUnit, factor: 1 / conv.factor };
-    }
-  }
-
-  // Check local standard conversions (legacy)
-  if (STANDARD_CONVERSIONS[normFrom]?.[normTo]) {
-    return { fromUnit, toUnit, factor: STANDARD_CONVERSIONS[normFrom][normTo] };
-  }
-  if (STANDARD_CONVERSIONS[normTo]?.[normFrom]) {
-    return { fromUnit, toUnit, factor: 1 / STANDARD_CONVERSIONS[normTo][normFrom] };
-  }
-
-  // Fall back to comprehensive global conversions (includes chains like cups→ml→liters)
-  const globalFactor = findGlobalConversion(fromUnit, toUnit);
-  if (globalFactor !== null) {
-    return { fromUnit, toUnit, factor: globalFactor };
-  }
-
-  return undefined;
-}
-
-/**
- * Find a suggested conversion factor from standard conversions
- * Uses the shared global conversion utility for consistency
- */
-function findSuggestedFactor(fromUnit: string, toUnit: string): number | undefined {
-  // First try the legacy STANDARD_CONVERSIONS for backward compatibility
-  const normFrom = normalizeUnit(fromUnit);
-  const normTo = normalizeUnit(toUnit);
-
-  if (STANDARD_CONVERSIONS[normFrom]?.[normTo]) {
-    return STANDARD_CONVERSIONS[normFrom][normTo];
-  }
-  if (STANDARD_CONVERSIONS[normTo]?.[normFrom]) {
-    return 1 / STANDARD_CONVERSIONS[normTo][normFrom];
-  }
-
-  // Fall back to the comprehensive global conversions
-  const globalFactor = findGlobalConversion(fromUnit, toUnit);
-  return globalFactor !== null ? globalFactor : undefined;
-}
-
-/**
  * Match parsed ingredients against inventory items
  */
 export async function matchIngredients(
@@ -435,39 +396,43 @@ export async function matchIngredients(
           matchReason,
         };
 
-        // Check for unit conversion if units differ
+        // Check if a quantity unit weight is needed
         if (parsed.unit && item.defaultUnit) {
           const normFrom = normalizeUnit(parsed.unit);
           const normTo = normalizeUnit(item.defaultUnit);
 
           if (normFrom !== normTo) {
-            const itemConversions = (item.unitConversions as UnitConversion[]) || [];
-            const conversion = findUnitConversion(
-              parsed.unit,
-              item.defaultUnit,
-              itemConversions
-            );
-            if (conversion) {
-              suggestion.unitConversion = conversion;
-            } else {
-              // No conversion found - flag that one is needed
-              // Check if item already has this conversion
-              const hasExisting = itemConversions.some(c =>
-                (normalizeUnit(c.fromUnit) === normFrom && normalizeUnit(c.toUnit) === normTo) ||
-                (normalizeUnit(c.fromUnit) === normTo && normalizeUnit(c.toUnit) === normFrom)
-              );
-              suggestion.needsConversion = {
-                fromUnit: parsed.unit,
-                toUnit: item.defaultUnit,
-                hasExisting,
-                suggestedFactor: findSuggestedFactor(parsed.unit, item.defaultUnit),
-              };
+            const fromCat = getUnitCategory(normFrom);
+            const toCat = getUnitCategory(normTo);
+            // Only flag needsQuantityWeight for quantity units without saved weights
+            if (fromCat === 'quantity' || toCat === 'quantity') {
+              const quantityUnitWeights = (item.quantityUnitWeights as Record<string, number>) || {};
+              const qtyUnit = fromCat === 'quantity' ? normFrom : normTo;
+              if (quantityUnitWeights[qtyUnit] == null) {
+                suggestion.needsQuantityWeight = {
+                  fromUnit: parsed.unit,
+                  toUnit: item.defaultUnit,
+                };
+              }
             }
           }
         }
 
         suggestions.push(suggestion);
       }
+    }
+
+    // Check DB aliases for additional matches
+    const aliasCandidates = await findAliasCandidates(parsed.name, householdId);
+    for (const candidate of aliasCandidates) {
+      // Don't duplicate items already found via name matching
+      if (suggestions.some(s => s.itemId === candidate.itemId)) continue;
+      suggestions.push({
+        itemId: candidate.itemId,
+        name: candidate.itemName,
+        confidence: 0.92, // Between exact (1.0) and synonym (0.95) — alias is a known equivalence
+        matchReason: 'synonym',
+      });
     }
 
     // Sort by confidence and take top 5
@@ -487,7 +452,7 @@ export async function matchIngredients(
         name: s.name,
         confidence: s.confidence,
         matchReason: s.matchReason,
-        needsConversion: s.needsConversion,
+        needsQuantityWeight: s.needsQuantityWeight,
       })),
     };
 
@@ -497,11 +462,8 @@ export async function matchIngredients(
       match.matchedItemName = topSuggestions[0].name;
       match.confidence = topSuggestions[0].confidence;
       match.matchReason = topSuggestions[0].matchReason;
-      if (topSuggestions[0].unitConversion) {
-        match.unitConversion = topSuggestions[0].unitConversion;
-      }
-      if (topSuggestions[0].needsConversion) {
-        match.needsConversion = topSuggestions[0].needsConversion;
+      if (topSuggestions[0].needsQuantityWeight) {
+        match.needsQuantityWeight = topSuggestions[0].needsQuantityWeight;
       }
     }
 
@@ -542,26 +504,17 @@ export async function matchSingleIngredient(
         const normTo = normalizeUnit(item.defaultUnit);
 
         if (normFrom !== normTo) {
-          const itemConversions = (item.unitConversions as UnitConversion[]) || [];
-          const conversion = findUnitConversion(
-            unit,
-            item.defaultUnit,
-            itemConversions
-          );
-          if (conversion) {
-            suggestion.unitConversion = conversion;
-          } else {
-            // No conversion found - flag that one is needed
-            const hasExisting = itemConversions.some(c =>
-              (normalizeUnit(c.fromUnit) === normFrom && normalizeUnit(c.toUnit) === normTo) ||
-              (normalizeUnit(c.fromUnit) === normTo && normalizeUnit(c.toUnit) === normFrom)
-            );
-            suggestion.needsConversion = {
-              fromUnit: unit,
-              toUnit: item.defaultUnit,
-              hasExisting,
-              suggestedFactor: findSuggestedFactor(unit, item.defaultUnit),
-            };
+          const fromCat = getUnitCategory(normFrom);
+          const toCat = getUnitCategory(normTo);
+          if (fromCat === 'quantity' || toCat === 'quantity') {
+            const quantityUnitWeights = (item.quantityUnitWeights as Record<string, number>) || {};
+            const qtyUnit = fromCat === 'quantity' ? normFrom : normTo;
+            if (quantityUnitWeights[qtyUnit] == null) {
+              suggestion.needsQuantityWeight = {
+                fromUnit: unit,
+                toUnit: item.defaultUnit,
+              };
+            }
           }
         }
       }

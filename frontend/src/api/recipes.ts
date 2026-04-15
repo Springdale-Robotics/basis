@@ -79,27 +79,18 @@ export interface IngredientMatch {
   modifiedUnit?: string;  // User-modified unit during import
   confidence?: number;
   matchReason?: MatchReason;
-  unitConversion?: {
+  needsQuantityWeight?: {
     fromUnit: string;
     toUnit: string;
-    factor: number;
-  };
-  needsConversion?: {
-    fromUnit: string;
-    toUnit: string;
-    hasExisting: boolean;
-    suggestedFactor?: number;
   };
   suggestions?: Array<{
     itemId: string;
     name: string;
     confidence: number;
     matchReason?: MatchReason;
-    needsConversion?: {
+    needsQuantityWeight?: {
       fromUnit: string;
       toUnit: string;
-      hasExisting: boolean;
-      suggestedFactor?: number;
     };
   }>;
   // Catalog item data from exported .recipe files
@@ -107,11 +98,7 @@ export interface IngredientMatch {
     name: string;
     category?: string;
     defaultUnit?: string;
-    unitConversions?: Array<{
-      fromUnit: string;
-      toUnit: string;
-      factor: number;
-    }>;
+    density?: number;
   };
 }
 
@@ -172,16 +159,9 @@ export interface MatchSuggestion {
   name: string;
   confidence: number;
   matchReason?: MatchReason;
-  unitConversion?: {
+  needsQuantityWeight?: {
     fromUnit: string;
     toUnit: string;
-    factor: number;
-  };
-  needsConversion?: {
-    fromUnit: string;
-    toUnit: string;
-    hasExisting: boolean;
-    suggestedFactor?: number;
   };
 }
 
@@ -213,6 +193,7 @@ export interface GenerateShoppingListResponse {
 
 export interface FinishCookingRequest {
   sessionId?: string;
+  mealPlanId?: string;
   deductInventory?: boolean;
   adjustments?: Array<{
     ingredientId: string;
@@ -323,8 +304,27 @@ export const recipesApi = {
   rematchIngredients: (sessionId: string) =>
     apiPost<{ matches: IngredientMatch[] }>(`/recipes/import/${sessionId}/rematch`, {}),
 
+  reparseLLM: (sessionId: string) =>
+    apiPost<{ parsedRecipe: ParsedRecipe; ingredientMatches: IngredientMatch[]; parseMethod: string; confidence: number }>(`/recipes/import/${sessionId}/reparse-llm`, {}),
+
+  parseIngredientLines: (lines: string[]) =>
+    apiPost<{ ingredients: Array<{ name: string; quantity?: number; unit?: string; notes?: string }>; parser: string }>('/recipes/ingredients/parse', { lines }),
+
   matchIngredient: (name: string, unit?: string) =>
     apiPost<{ suggestions: MatchSuggestion[] }>('/recipes/ingredients/match', { name, unit }),
+
+  // Availability
+  getAvailability: () =>
+    apiGet<{ availability: Record<string, { total: number; have: number }> }>('/recipes/availability'),
+
+  // Item name suggestions for unmatched ingredients
+  suggestItems: (ingredientNames: string[]) =>
+    apiPost<{ suggestions: Array<{
+      originalName: string;
+      suggestedName: string;
+      category?: string;
+      similarExisting?: string;
+    }> }>('/recipes/ingredients/suggest-items', { ingredientNames }),
 
   // Image upload/delete
   uploadImage: (recipeId: string, file: File, onProgress?: (progress: number) => void) =>
@@ -335,6 +335,10 @@ export const recipesApi = {
 
   deleteImage: (recipeId: string) =>
     apiDelete<{ message: string }>(`/recipes/${recipeId}/image`),
+
+  // Link a recipe ingredient to an inventory item
+  linkIngredient: (recipeId: string, ingredientId: string, inventoryItemId: string | null) =>
+    apiPatch<{ message: string }>(`/recipes/${recipeId}/ingredients/${ingredientId}/link`, { inventoryItemId }),
 };
 
 export interface RecipeImageResponse {

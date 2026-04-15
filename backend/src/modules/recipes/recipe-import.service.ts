@@ -1,9 +1,11 @@
 import { db } from '../../config/database.js';
-import { recipes, recipeIngredients, recipeImportSessions } from '../../db/schema/index.js';
+import { recipes, recipeIngredients, recipeImportSessions, ingredientAliases, inventoryItems } from '../../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
 import type { ParsedRecipe, ParsedIngredient, IngredientMatch, RecipeInstruction, IngredientGroup } from '../../db/schema/recipes.js';
 import { matchIngredients } from './ingredient-matching.service.js';
+import { normalizeIngredientName } from './ingredient-matching.service.js';
 import { Errors } from '../../lib/errors.js';
+import { resolveUnit, getUnit } from '../../lib/units.js';
 
 // Ingredient parsing regex patterns
 const INGREDIENT_PATTERNS = {
@@ -45,30 +47,17 @@ const INGREDIENT_GROUP_PATTERNS = [
   /^(.+?)\s*[:;]\s*$/,  // General pattern: "Sauce:" or "Filling;"
 ];
 
-// Common units for parsing
-const UNITS = new Set([
-  'cup', 'cups', 'c',
-  'tablespoon', 'tablespoons', 'tbsp', 'tbs', 'T',
-  'teaspoon', 'teaspoons', 'tsp', 't',
-  'ounce', 'ounces', 'oz',
-  'pound', 'pounds', 'lb', 'lbs',
-  'gram', 'grams', 'g', 'gm',
-  'kilogram', 'kilograms', 'kg',
-  'milliliter', 'milliliters', 'ml', 'mL',
-  'liter', 'liters', 'l', 'L', 'litre', 'litres',
-  'piece', 'pieces', 'pcs', 'pc',
-  'clove', 'cloves',
-  'bunch', 'bunches',
-  'head', 'heads',
-  'can', 'cans', 'tin', 'tins',
-  'package', 'packages', 'pkg',
-  'slice', 'slices',
-  'stick', 'sticks',
-  'pinch', 'pinches',
-  'dash', 'dashes',
-  'handful', 'handfuls',
-  'large', 'medium', 'small',
-]);
+/**
+ * Check if a string is a recognized unit (built-in key or alias).
+ * Returns the canonical key if recognized, or null if unknown.
+ */
+function recognizeUnit(input: string): string | null {
+  const resolved = resolveUnit(input);
+  // resolveUnit returns the input lowercased if not recognized.
+  // If the resolved key maps to a known unit definition, it's recognized.
+  if (getUnit(resolved)) return resolved;
+  return null;
+}
 
 /**
  * Convert Unicode fractions in a string to decimal representations
@@ -117,13 +106,16 @@ function parseFraction(str: string): number {
  * Parse a quantity string that may contain ranges like "2-3"
  */
 function parseQuantity(str: string): number {
+  let result: number;
   // Handle ranges - take the average
   if (str.includes('-')) {
     const parts = str.split('-').map(p => parseFraction(p.trim()));
-    return parts.reduce((a, b) => a + b, 0) / parts.length;
+    result = parts.reduce((a, b) => a + b, 0) / parts.length;
+  } else {
+    result = parseFraction(str);
   }
-
-  return parseFraction(str);
+  // Round to 3 decimal places to avoid 0.333333333...
+  return Math.round(result * 1000) / 1000;
 }
 
 /**
@@ -155,63 +147,78 @@ export function parseIngredientLine(line: string): ParsedIngredient {
   // Remove common list prefixes like "- ", "• ", "* "
   text = text.replace(/^[-•*]\s*/, '');
 
-  // Extract notes in parentheses
-  let notes: string | undefined;
+  // Extract notes in parentheses (but save them — don't lose info)
+  let parenNotes: string | undefined;
   const parenMatch = text.match(/\(([^)]+)\)/);
   if (parenMatch) {
-    notes = parenMatch[1];
+    parenNotes = parenMatch[1];
     text = text.replace(/\([^)]+\)/, '').trim();
   }
 
-  // Extract notes after comma
-  const commaIndex = text.indexOf(',');
-  if (commaIndex > -1) {
-    const afterComma = text.slice(commaIndex + 1).trim();
-    if (afterComma && !notes) {
-      notes = afterComma;
-    }
-    text = text.slice(0, commaIndex).trim();
-  }
-
-  // Try to match quantity + unit + name
+  // Try to match quantity + unit + name FIRST (before comma splitting)
   let match = text.match(INGREDIENT_PATTERNS.quantityUnitName);
   if (match) {
-    const [, quantityStr, unitStr, name] = match;
+    const [, quantityStr, unitStr, remainder] = match;
     const unit = unitStr?.replace('.', '').toLowerCase();
+    const canonicalUnit = unit ? recognizeUnit(unit) : null;
 
-    if (unit && UNITS.has(unit)) {
-      return {
-        name: name.trim(),
-        quantity: parseQuantity(quantityStr),
-        unit: unit,
-        notes,
-      };
-    } else {
-      // Unit might be part of the name
-      return {
-        name: (unitStr ? unitStr + ' ' : '') + name.trim(),
-        quantity: parseQuantity(quantityStr),
-        notes,
-      };
+    if (canonicalUnit) {
+      // Split remainder on comma — after-comma is notes (e.g., "flour, sifted")
+      const commaIdx = remainder.indexOf(',');
+      let name = remainder.trim();
+      let notes = parenNotes;
+      if (commaIdx > -1) {
+        name = remainder.slice(0, commaIdx).trim();
+        const afterComma = remainder.slice(commaIdx + 1).trim();
+        notes = [parenNotes, afterComma].filter(Boolean).join(', ') || undefined;
+      }
+      return { name, quantity: parseQuantity(quantityStr), unit: canonicalUnit, notes };
     }
   }
 
-  // Try quantity + name (no unit)
-  match = text.match(INGREDIENT_PATTERNS.quantityName);
+  // No recognized unit — try full text with comma as notes separator
+  // But only split on comma if it comes AFTER at least 2 words (avoids splitting "boneless, skinless chicken")
+  let notes = parenNotes;
+  let nameText = text;
+
+  // Look for comma-separated preparation notes at the end
+  // Pattern: "ingredient name, preparation" (e.g., "parsley, chopped")
+  // Heuristic: if after the last comma there are only 1-2 words that look like prep descriptors, treat as notes
+  const lastComma = text.lastIndexOf(',');
+  if (lastComma > -1) {
+    const afterLast = text.slice(lastComma + 1).trim();
+    const prepWords = ['chopped', 'diced', 'minced', 'sliced', 'grated', 'shredded', 'crushed', 'melted',
+      'softened', 'sifted', 'toasted', 'packed', 'divided', 'peeled', 'seeded', 'trimmed', 'halved',
+      'quartered', 'cubed', 'julienned', 'chiffonade', 'torn', 'crumbled', 'drained', 'rinsed',
+      'thawed', 'room temperature', 'at room temperature', 'to taste', 'optional', 'or more',
+      'plus more', 'for garnish', 'for serving', 'for topping'];
+    const isPrep = prepWords.some(w => afterLast.toLowerCase().startsWith(w));
+    if (isPrep) {
+      nameText = text.slice(0, lastComma).trim();
+      notes = [parenNotes, afterLast].filter(Boolean).join(', ') || undefined;
+    }
+  }
+
+  // Try quantity + name (no unit) on the cleaned text
+  match = nameText.match(INGREDIENT_PATTERNS.quantityName);
   if (match) {
     const [, quantityStr, name] = match;
+    return { name: name.trim(), quantity: parseQuantity(quantityStr), notes };
+  }
+
+  // Also try the quantityUnitName pattern again on cleaned text (unit might be part of name)
+  match = nameText.match(INGREDIENT_PATTERNS.quantityUnitName);
+  if (match) {
+    const [, quantityStr, unitStr, name] = match;
     return {
-      name: name.trim(),
+      name: (unitStr ? unitStr + ' ' : '') + name.trim(),
       quantity: parseQuantity(quantityStr),
       notes,
     };
   }
 
   // Just return the text as the name
-  return {
-    name: text,
-    notes,
-  };
+  return { name: nameText, notes };
 }
 
 // Enhanced section header patterns
@@ -571,7 +578,7 @@ interface CatalogItemData {
   name: string;
   category?: string;
   defaultUnit?: string;
-  unitConversions?: Array<{ fromUnit: string; toUnit: string; factor: number }>;
+  density?: number;
 }
 
 function parseRecipeFileFormat(text: string): {
@@ -633,6 +640,13 @@ export async function processImportSession(
   householdId: string,
   parseMethod: string = 'text'
 ): Promise<void> {
+  // Auto-detect URL in text input and redirect to URL parsing
+  const trimmed = rawText.trim();
+  if (/^https?:\/\/\S+$/.test(trimmed)) {
+    await processUrlImportSession(sessionId, trimmed, householdId);
+    return;
+  }
+
   // Check if this is a .recipe file format
   const recipeFileResult = parseRecipeFileFormat(rawText);
 
@@ -647,11 +661,76 @@ export async function processImportSession(
     confidence = 1.0; // High confidence for structured .recipe files
     finalParseMethod = 'json-ld'; // Treat as structured data
   } else {
-    // Parse the recipe text with confidence
+    // Parse the recipe text with confidence (regex-based structure detection)
     const textParseResult = parseRecipeTextWithConfidence(rawText);
     parsedRecipe = textParseResult.recipe;
     confidence = textParseResult.confidence;
     warnings = textParseResult.warnings;
+
+    // CRF enhancement: re-parse ingredient lines with NLP model for better accuracy
+    // Extract raw ingredient lines from the original text for CRF processing
+    if (parsedRecipe.ingredients && parsedRecipe.ingredients.length > 0) {
+      try {
+        const { parseIngredientsWithCRF } = await import('../../services/crf-ingredient-parser.js');
+
+        // Re-extract raw ingredient lines from original text
+        // Find the ingredients section using same patterns as parseRecipeText
+        const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        const rawIngredientLines: string[] = [];
+        let inIngredients = false;
+
+        for (const line of lines) {
+          const lower = line.toLowerCase();
+          if (/^ingredients?$/i.test(lower) || /^what you'?ll need$/i.test(lower)) {
+            inIngredients = true;
+            continue;
+          }
+          if (inIngredients && (/^instructions?$/i.test(lower) || /^directions?$/i.test(lower) || /^method$/i.test(lower) || /^steps?$/i.test(lower))) {
+            break;
+          }
+          if (inIngredients && line.length > 0) {
+            // Skip group headers like "For the sauce:"
+            if (/^for\s+/i.test(line) || /^[A-Z][^:]*:\s*$/.test(line)) continue;
+            rawIngredientLines.push(line.replace(/^[-•*]\s*/, ''));
+          }
+        }
+
+        // If we found raw lines, parse them with CRF
+        if (rawIngredientLines.length > 0) {
+          const crfResults = await parseIngredientsWithCRF(rawIngredientLines);
+          if (crfResults && crfResults.length > 0) {
+            parsedRecipe.ingredients = crfResults.map(r => ({
+              name: r.name,
+              quantity: r.quantity ?? undefined,
+              unit: r.unit ?? undefined,
+              notes: r.notes ?? undefined,
+            }));
+            finalParseMethod = 'crf';
+            confidence = Math.max(confidence, 0.75);
+          }
+        }
+      } catch (err) {
+        // CRF service not available — continue with regex results
+        console.debug('[Recipe Import] CRF parser unavailable, using regex results');
+      }
+    }
+
+    // LLM fallback: if parsing still produced low confidence, try AI
+    if (confidence < 0.6) {
+      try {
+        const { parseRecipeWithLLM, llmResultToImportFormat } = await import('../../services/llm-recipe-parser.js');
+        const llmResult = await parseRecipeWithLLM(rawText);
+        if (llmResult) {
+          const converted = llmResultToImportFormat(llmResult);
+          parsedRecipe = converted as ParsedRecipe;
+          confidence = 0.85;
+          finalParseMethod = 'llm';
+          warnings = [];
+        }
+      } catch (err) {
+        console.warn('[Recipe Import] LLM fallback failed, using regex result:', err);
+      }
+    }
   }
 
   // Match ingredients against inventory
@@ -693,6 +772,36 @@ export async function processUrlImportSession(
 
   // Parse the URL
   const result = await parseRecipeFromUrl(url);
+
+  // Try CRF enhancement on URL-parsed ingredients
+  // JSON-LD ingredient strings are perfect CRF input (e.g., "4 boneless, skinless chicken breasts")
+  if (result.parsedRecipe.ingredients && result.parsedRecipe.ingredients.length > 0) {
+    try {
+      const { parseIngredientsWithCRF } = await import('../../services/crf-ingredient-parser.js');
+      // Reconstruct original strings for CRF (URL parser already has clean ingredient text)
+      const rawLines = result.parsedRecipe.ingredients.map(ing => {
+        const parts = [];
+        if (ing.quantity) parts.push(String(ing.quantity));
+        if (ing.unit) parts.push(ing.unit);
+        parts.push(ing.name);
+        if (ing.notes) parts.push(ing.notes);
+        return parts.join(' ');
+      });
+
+      const crfResults = await parseIngredientsWithCRF(rawLines);
+      if (crfResults && crfResults.length > 0) {
+        result.parsedRecipe.ingredients = crfResults.map(r => ({
+          name: r.name,
+          quantity: r.quantity ?? undefined,
+          unit: r.unit ?? undefined,
+          notes: r.notes ?? undefined,
+        }));
+        (result as any).parseMethod = 'crf';
+      }
+    } catch {
+      // CRF not available, continue with regex-parsed ingredients
+    }
+  }
 
   // Match ingredients against inventory
   const matchResults = await matchIngredients(result.parsedRecipe.ingredients, householdId);
@@ -838,6 +947,18 @@ export async function confirmImportSession(
     })
     .returning();
 
+  // Build ingredient-to-group lookup from parsed groups
+  const ingredientGroupMap: Record<string, string> = {};
+  if (finalRecipe.ingredientGroups) {
+    for (const group of finalRecipe.ingredientGroups) {
+      if (group.name) {
+        for (const groupIng of group.ingredients) {
+          ingredientGroupMap[groupIng.name] = group.name;
+        }
+      }
+    }
+  }
+
   // Create ingredients with inventory links
   if (finalRecipe.ingredients.length > 0) {
     await db.insert(recipeIngredients).values(
@@ -852,9 +973,42 @@ export async function confirmImportSession(
           unit,
           notes: ing.notes,
           inventoryItemId: match?.matchedItemId,
+          groupName: ingredientGroupMap[ing.name] || null,
         };
       })
     );
+  }
+
+  // Auto-create ingredient aliases for manual matches where names differ
+  for (const match of ingredientMatches) {
+    if (match.matchStatus === 'matched' && match.matchedItemId && match.matchReason === 'manual') {
+      const parsedNorm = normalizeIngredientName(match.parsedName);
+      // Get the matched item name
+      const item = await db.query.inventoryItems.findFirst({
+        where: eq(inventoryItems.id, match.matchedItemId),
+      });
+      if (item) {
+        const itemNorm = normalizeIngredientName(item.name);
+        // Only create alias if names are actually different
+        if (parsedNorm !== itemNorm) {
+          // Check if alias already exists
+          const existing = await db.query.ingredientAliases.findFirst({
+            where: and(
+              eq(ingredientAliases.householdId, householdId),
+              eq(ingredientAliases.aliasName, parsedNorm),
+            ),
+          });
+          if (!existing) {
+            await db.insert(ingredientAliases).values({
+              householdId,
+              canonicalItemId: match.matchedItemId,
+              aliasName: parsedNorm,
+              aliasType: 'exact',
+            });
+          }
+        }
+      }
+    }
   }
 
   // Update session status

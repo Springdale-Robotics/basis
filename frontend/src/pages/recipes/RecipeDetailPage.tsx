@@ -8,12 +8,18 @@ import {
   Trash2,
   PlayCircle,
   Plus,
+  Minus,
   Download,
+  Link2,
+  Link2Off,
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { getItemIcon } from '@/lib/inventory-constants';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
@@ -31,6 +37,7 @@ export function RecipeDetailPage() {
   const queryClient = useQueryClient();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [editFormOpen, setEditFormOpen] = useState(false);
+  const [scaledServings, setScaledServings] = useState<number | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['recipes', id],
@@ -46,16 +53,53 @@ export function RecipeDetailPage() {
       ...data.recipe,
       ingredients: (data.ingredients || []).map((ing) => ({
         id: (ing as any).id || crypto.randomUUID(),
-        // Use linked inventory item name if available, otherwise use parsed name
-        name: ing.linkedItemName || ing.name,
+        name: ing.name, // Always use the original recipe text
+        linkedItemName: ing.linkedItemName || null,
         amount: Number(ing.quantity) || 0,
         unit: ing.unit || '',
         notes: ing.notes,
         optional: false,
         inventoryItemId: ing.inventoryItemId,
+        groupName: ing.groupName,
       })),
     };
   }, [data]);
+
+  // Fetch stock data for ingredient availability
+  const { data: stockData } = useQuery({
+    queryKey: ['inventory', 'stock'],
+    queryFn: inventoryApi.getStock,
+    enabled: !!recipe,
+  });
+
+  // Fetch all inventory items for linking
+  const { data: allItemsData } = useQuery({
+    queryKey: ['inventory', 'items'],
+    queryFn: () => inventoryApi.getItems({}),
+    enabled: !!recipe,
+  });
+
+  const existingItemOptions: ComboboxOption[] = useMemo(() =>
+    (allItemsData?.items || []).map(item => ({
+      value: item.id,
+      label: item.name,
+      icon: <span>{getItemIcon(item)}</span>,
+    })),
+    [allItemsData]
+  );
+
+  const stockedItemIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (stockData?.stock) {
+      for (const entry of stockData.stock) {
+        const itemId = entry.itemId || entry.inventoryItemId;
+        if (itemId && parseFloat(String(entry.quantity)) > 0) {
+          ids.add(itemId);
+        }
+      }
+    }
+    return ids;
+  }, [stockData]);
 
   const updateMutation = useMutation({
     mutationFn: async ({ formData, imageChange }: { formData: RecipeFormData; imageChange: RecipeImageChange }) => {
@@ -145,7 +189,7 @@ export function RecipeDetailPage() {
               name: linkedItem.name,
               category: linkedItem.category,
               defaultUnit: linkedItem.defaultUnit,
-              unitConversions: linkedItem.unitConversions,
+              density: linkedItem.density,
             } : undefined,
           };
         }),
@@ -254,7 +298,34 @@ export function RecipeDetailPage() {
             )}
             <div className="flex items-center gap-1 text-sm">
               <Users className="h-4 w-4 text-muted-foreground" />
-              <span>{recipe.servings} servings</span>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => setScaledServings(Math.max(1, (scaledServings ?? recipe.servings) - 1))}
+                >
+                  <Minus className="h-3 w-3" />
+                </Button>
+                <span className="font-medium min-w-[2ch] text-center">{scaledServings ?? recipe.servings}</span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => setScaledServings((scaledServings ?? recipe.servings) + 1)}
+                >
+                  <Plus className="h-3 w-3" />
+                </Button>
+                <span>servings</span>
+                {scaledServings && scaledServings !== recipe.servings && (
+                  <button
+                    className="text-xs text-muted-foreground hover:text-foreground ml-1"
+                    onClick={() => setScaledServings(null)}
+                  >
+                    (reset)
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -294,23 +365,84 @@ export function RecipeDetailPage() {
           {/* Ingredients */}
           <Card>
             <CardHeader>
-              <CardTitle>Ingredients</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle>Ingredients</CardTitle>
+                {recipe.ingredients && recipe.ingredients.length > 0 && (() => {
+                  const linked = recipe.ingredients.filter(i => i.inventoryItemId);
+                  const have = linked.filter(i => stockedItemIds.has(i.inventoryItemId!));
+                  if (linked.length === 0) return null;
+                  return (
+                    <span className="text-xs text-muted-foreground">
+                      {have.length}/{linked.length} in stock
+                    </span>
+                  );
+                })()}
+              </div>
             </CardHeader>
             <CardContent>
               <ul className="space-y-2">
-                {(recipe.ingredients ?? []).map((ingredient) => (
+                {(recipe.ingredients ?? []).map((ingredient) => {
+                  const scale = scaledServings ? scaledServings / recipe.servings : 1;
+                  const scaledAmount = Math.round(ingredient.amount * scale * 100) / 100;
+                  const hasItem = ingredient.inventoryItemId
+                    ? stockedItemIds.has(ingredient.inventoryItemId)
+                    : null;
+                  return (
                   <li key={ingredient.id} className="flex items-center gap-2">
-                    <span className="font-medium">
-                      {ingredient.amount} {ingredient.unit}
+                    {hasItem !== null && (
+                      <span className={`h-2 w-2 rounded-full shrink-0 ${hasItem ? 'bg-green-500' : 'bg-red-500'}`} />
+                    )}
+                    <span className="font-medium shrink-0">
+                      {scaledAmount} {ingredient.unit}
                     </span>
-                    <span>{ingredient.name}</span>
+                    <span className="flex-1">{ingredient.name}</span>
                     {ingredient.optional && (
-                      <Badge variant="outline" className="text-xs">
+                      <Badge variant="outline" className="text-xs shrink-0">
                         optional
                       </Badge>
                     )}
+                    {ingredient.linkedItemName ? (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button type="button" className="text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                            <Link2 className="h-3.5 w-3.5" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-2 text-xs" side="left">
+                          Linked to: <span className="font-medium">{ingredient.linkedItemName}</span>
+                        </PopoverContent>
+                      </Popover>
+                    ) : (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button type="button" className="text-destructive/60 hover:text-destructive transition-colors shrink-0">
+                            <Link2Off className="h-3.5 w-3.5" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-64 p-3" side="left">
+                          <p className="text-xs font-medium mb-2">Link to catalog item</p>
+                          <Combobox
+                            options={existingItemOptions}
+                            value=""
+                            onValueChange={async (itemId) => {
+                              if (!itemId || !id) return;
+                              try {
+                                await recipesApi.linkIngredient(id, ingredient.id, itemId);
+                                queryClient.invalidateQueries({ queryKey: ['recipes', id] });
+                              } catch (err) {
+                                console.error('Failed to link:', err);
+                              }
+                            }}
+                            placeholder="Search items..."
+                            searchPlaceholder="Type to search..."
+                            emptyText="No items found"
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    )}
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </CardContent>
           </Card>

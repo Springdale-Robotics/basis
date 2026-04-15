@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Grid, List, Search, Clock, Users, Upload, Camera } from 'lucide-react';
+import { Plus, Grid, List, Search, Clock, Users, Upload, Camera, ChefHat } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -24,6 +24,7 @@ type ViewMode = 'grid' | 'list';
 export function RecipesPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [search, setSearch] = useState('');
+  const [canMakeFilter, setCanMakeFilter] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [imageParseOpen, setImageParseOpen] = useState(false);
@@ -33,6 +34,11 @@ export function RecipesPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['recipes', search],
     queryFn: () => recipesApi.list({ search: search || undefined }),
+  });
+
+  const { data: availabilityData } = useQuery({
+    queryKey: ['recipes', 'availability'],
+    queryFn: recipesApi.getAvailability,
   });
 
   const createMutation = useMutation({
@@ -54,6 +60,7 @@ export function RecipesPage() {
             quantity: ing.amount || undefined,
             unit: ing.unit || undefined,
             notes: ing.notes || undefined,
+            inventoryItemId: ing.inventoryItemId || undefined,
           })),
         instructions: formData.instructions.filter((inst) => inst.text),
         tags: formData.tags,
@@ -83,7 +90,14 @@ export function RecipesPage() {
     },
   });
 
-  const recipes = data?.recipes || [];
+  const allRecipes = data?.recipes || [];
+  const recipes = canMakeFilter
+    ? allRecipes.filter(r => {
+        const avail = availabilityData?.availability?.[r.id];
+        if (!avail || avail.total === 0) return false;
+        return avail.have / avail.total >= 0.8;
+      })
+    : allRecipes;
 
   return (
     <div>
@@ -120,6 +134,16 @@ export function RecipesPage() {
           />
         </div>
 
+        <div className="flex items-center gap-2">
+          <Button
+            variant={canMakeFilter ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setCanMakeFilter(!canMakeFilter)}
+          >
+            <ChefHat className="mr-1.5 h-4 w-4" />
+            Can make now
+          </Button>
+
         <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>
           <TabsList>
             <TabsTrigger value="grid">
@@ -130,6 +154,7 @@ export function RecipesPage() {
             </TabsTrigger>
           </TabsList>
         </Tabs>
+        </div>
       </div>
 
       {/* Recipe list */}

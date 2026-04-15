@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, GripVertical, Loader2, Link2, Check, Search, Package, Tag, X } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Plus, Trash2, GripVertical, Loader2, Link2, Link2Off, Check, Search, Package, Tag, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,17 +26,18 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+// Step-based wizard (no Tabs component needed)
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { recipeSchema, type RecipeFormData } from '@/types/forms';
 import { inventoryApi } from '@/api/inventory';
 import { recipesApi } from '@/api/recipes';
+import { useCategories } from '@/hooks/useCategories';
+import { getItemIcon } from '@/lib/inventory-constants';
 import { RecipeImageInput } from './RecipeImageInput';
 import { cn } from '@/lib/utils';
-import type { Recipe, InventoryItem, UnitConversion } from '@/types/models';
+import type { Recipe, InventoryItem } from '@/types/models';
 import { unitOptions, normalizeUnit } from '@/lib/inventory-constants';
-import { UnitConversionPromptDialog } from '@/components/inventory/UnitConversionPromptDialog';
 
 export interface RecipeImageChange {
   type: 'file' | 'url' | 'remove' | 'none';
@@ -437,15 +438,6 @@ function TagInput({ tags, onAddTag, onRemoveTag }: TagInputProps) {
   );
 }
 
-interface PendingConversion {
-  ingredientIndex: number;
-  ingredientName: string;
-  itemId: string;
-  itemName: string;
-  fromUnit: string;
-  toUnit: string;
-}
-
 export function RecipeForm({
   open,
   onOpenChange,
@@ -454,12 +446,124 @@ export function RecipeForm({
   onDelete,
   isSubmitting,
 }: RecipeFormProps) {
-  const queryClient = useQueryClient();
   const isEditing = !!recipe;
-  const [activeTab, setActiveTab] = useState('details');
-  const [pendingConversions, setPendingConversions] = useState<PendingConversion[]>([]);
-  const [currentConversionIndex, setCurrentConversionIndex] = useState(0);
-  const [pendingFormData, setPendingFormData] = useState<RecipeFormData | null>(null);
+  type FormStep = 'details' | 'ingredients' | 'parse-link' | 'instructions';
+  const formSteps: { key: FormStep; label: string }[] = [
+    { key: 'details', label: 'Details' },
+    { key: 'ingredients', label: 'Ingredients' },
+    { key: 'parse-link', label: 'Link' },
+    { key: 'instructions', label: 'Instructions' },
+  ];
+  const [activeStep, setActiveStep] = useState<FormStep>('details');
+  const currentStepIndex = formSteps.findIndex(s => s.key === activeStep);
+  const isLastStep = currentStepIndex === formSteps.length - 1;
+  const { categories } = useCategories();
+
+  // Parse & Link state
+  interface ParseLinkItem {
+    originalText: string;
+    parsedName: string;
+    parsedQuantity?: number;
+    parsedUnit?: string;
+    parsedNotes?: string;
+    action: 'create' | 'link';
+    // For 'create'
+    suggestedName: string;
+    category?: string;
+    similarExisting?: string;
+    // For 'link'
+    linkedItemId?: string;
+    linkedItemName?: string;
+  }
+  const [parseLinkItems, setParseLinkItems] = useState<ParseLinkItem[]>([]);
+  const parseLinkItemsRef = useRef<ParseLinkItem[]>([]);
+  // Keep ref in sync with state
+  parseLinkItemsRef.current = parseLinkItems;
+  const [isParsing, setIsParsing] = useState(false);
+  const [hasParsed, setHasParsed] = useState(false);
+
+  // Fetch existing items for linking
+  const { data: existingItemsData } = useQuery({
+    queryKey: ['inventory', 'items'],
+    queryFn: () => inventoryApi.getItems({}),
+    staleTime: 60000,
+  });
+  const existingItems = existingItemsData?.items || [];
+  const existingItemOptions: ComboboxOption[] = existingItems.map(item => ({
+    value: item.id,
+    label: item.name,
+    icon: <span>{getItemIcon(item)}</span>,
+  }));
+
+  // Parse ingredients when switching to parse-link tab
+  const handleParseIngredients = async () => {
+    const ingredients = getValues('ingredients');
+    const rawLines = ingredients
+      .map(i => i.rawText?.trim() || '')
+      .filter(t => t.length > 0);
+
+    if (rawLines.length === 0) return;
+    setIsParsing(true);
+
+    try {
+      // Parse ingredient lines with CRF (falls back to regex)
+      const parseResult = await recipesApi.parseIngredientLines(rawLines);
+      const parsed = parseResult.ingredients || [];
+
+      // Get name suggestions for auto-matching
+      const names = parsed.map(p => p.name || '');
+      let suggestions: Array<{ originalName: string; suggestedName: string; category?: string; similarExisting?: string }> = [];
+      try {
+        const suggestResult = await recipesApi.suggestItems(names);
+        suggestions = suggestResult.suggestions;
+      } catch {
+        // Suggestions unavailable
+      }
+
+      // Try auto-matching each ingredient
+      const items: ParseLinkItem[] = [];
+      for (let i = 0; i < parsed.length; i++) {
+        const p = parsed[i];
+        const suggestion = suggestions[i];
+        let action: 'create' | 'link' = 'create';
+        let linkedItemId: string | undefined;
+        let linkedItemName: string | undefined;
+
+        // Try to match against existing items
+        try {
+          const matchResult = await recipesApi.matchIngredient(p.name || rawLines[i], p.unit);
+          if (matchResult.suggestions?.length > 0 && matchResult.suggestions[0].confidence >= 0.8) {
+            action = 'link';
+            linkedItemId = matchResult.suggestions[0].itemId;
+            linkedItemName = matchResult.suggestions[0].name;
+          }
+        } catch {
+          // Match failed
+        }
+
+        items.push({
+          originalText: rawLines[i],
+          parsedName: p.name || rawLines[i],
+          parsedQuantity: p.quantity,
+          parsedUnit: p.unit,
+          parsedNotes: p.notes,
+          action,
+          suggestedName: suggestion?.suggestedName || p.name || rawLines[i],
+          category: suggestion?.category,
+          similarExisting: suggestion?.similarExisting,
+          linkedItemId,
+          linkedItemName,
+        });
+      }
+
+      setParseLinkItems(items);
+      setHasParsed(true);
+    } catch (err) {
+      console.error('Failed to parse ingredients:', err);
+    } finally {
+      setIsParsing(false);
+    }
+  };
 
   // Image state
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
@@ -468,18 +572,12 @@ export function RecipeForm({
   const [currentImage, setCurrentImage] = useState<string | null>(null);
   const [imageRemoved, setImageRemoved] = useState(false);
 
-  // Fetch inventory items to check for unit conversions
-  const { data: itemsData } = useQuery({
-    queryKey: ['inventory-items'],
-    queryFn: () => inventoryApi.getItems(),
-    staleTime: 60000,
-  });
-
   const {
     register,
     handleSubmit,
     control,
     setValue,
+    getValues,
     watch,
     reset,
     formState: { errors },
@@ -573,23 +671,6 @@ export function RecipeForm({
     }
   }, [open, recipe, reset]);
 
-  const items = itemsData?.items || [];
-
-  // Check if a unit conversion exists for an item
-  const hasConversion = (item: InventoryItem, fromUnit: string, toUnit: string): boolean => {
-    const normalizeUnit = (u: string) => u.toLowerCase().trim();
-    const normFrom = normalizeUnit(fromUnit);
-    const normTo = normalizeUnit(toUnit);
-
-    if (normFrom === normTo) return true;
-
-    const conversions = (item.unitConversions || []) as UnitConversion[];
-    return conversions.some(c =>
-      (normalizeUnit(c.fromUnit) === normFrom && normalizeUnit(c.toUnit) === normTo) ||
-      (normalizeUnit(c.fromUnit) === normTo && normalizeUnit(c.toUnit) === normFrom)
-    );
-  };
-
   // Build image change object
   const getImageChange = (): RecipeImageChange => {
     if (imageRemoved) {
@@ -604,82 +685,55 @@ export function RecipeForm({
     return { type: 'none' };
   };
 
-  const handleFormSubmit = (data: RecipeFormData) => {
-    // Check for ingredients that need unit conversions
-    const neededConversions: PendingConversion[] = [];
+  const handleFormSubmit = async (data: RecipeFormData) => {
+    // Use ref to get latest parseLinkItems (avoids stale closure)
+    const currentParseLinkItems = parseLinkItemsRef.current;
 
-    for (let i = 0; i < data.ingredients.length; i++) {
-      const ing = data.ingredients[i];
-      if (ing.inventoryItemId && ing.unit) {
-        const item = items.find(it => it.id === ing.inventoryItemId);
-        if (item && item.defaultUnit && ing.unit !== item.defaultUnit) {
-          // Check if conversion already exists
-          if (!hasConversion(item, ing.unit, item.defaultUnit)) {
-            neededConversions.push({
-              ingredientIndex: i,
-              ingredientName: ing.name,
-              itemId: item.id,
-              itemName: item.name,
-              fromUnit: ing.unit,
-              toUnit: item.defaultUnit,
-            });
+    // Apply parsed ingredient data from Parse & Link tab
+    if (currentParseLinkItems.length > 0) {
+      // Create new items first
+      const toCreate = currentParseLinkItems.filter(p => p.action === 'create' && p.suggestedName.trim());
+      let nameToId: Record<string, string> = {};
+
+      if (toCreate.length > 0) {
+        try {
+          const items = toCreate.map(p => ({
+            name: p.suggestedName.trim(),
+            category: p.category,
+            defaultUnit: p.parsedUnit || 'pieces',
+          }));
+          const result = await inventoryApi.batchCreateItems({ items });
+          if (result?.items) {
+            for (const item of result.items) {
+              nameToId[item.name.toLowerCase()] = item.id;
+            }
           }
+        } catch (err) {
+          console.error('Failed to create items:', err);
         }
       }
-    }
 
-    if (neededConversions.length > 0) {
-      // Store form data and show conversion prompts
-      setPendingFormData(data);
-      setPendingConversions(neededConversions);
-      setCurrentConversionIndex(0);
-    } else {
-      // No conversions needed, submit directly
-      onSubmit(data, getImageChange());
-    }
-  };
+      // Apply structured data + links to ingredients
+      data.ingredients = currentParseLinkItems.map(p => {
+        let inventoryItemId: string | undefined;
+        if (p.action === 'link' && p.linkedItemId) {
+          inventoryItemId = p.linkedItemId;
+        } else if (p.action === 'create' && p.suggestedName.trim()) {
+          inventoryItemId = nameToId[p.suggestedName.trim().toLowerCase()];
+        }
 
-  const handleConversionConfirm = async (factor: number, saveForFuture: boolean) => {
-    const currentConversion = pendingConversions[currentConversionIndex];
-
-    if (saveForFuture && currentConversion) {
-      // Save the conversion to the inventory item
-      await inventoryApi.addUnitConversion(currentConversion.itemId, {
-        fromUnit: currentConversion.fromUnit,
-        toUnit: currentConversion.toUnit,
-        factor,
+        return {
+          name: p.parsedName, // CRF-extracted ingredient name (e.g., "flour")
+          amount: p.parsedQuantity ?? 0,
+          unit: p.parsedUnit ?? '',
+          notes: p.parsedNotes,
+          inventoryItemId,
+          rawText: p.originalText, // Full original text for reference
+        };
       });
-      // Invalidate inventory queries
-      queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
     }
 
-    // Move to next conversion or submit
-    if (currentConversionIndex < pendingConversions.length - 1) {
-      setCurrentConversionIndex(currentConversionIndex + 1);
-    } else {
-      // All conversions handled, submit the form
-      if (pendingFormData) {
-        onSubmit(pendingFormData, getImageChange());
-      }
-      setPendingConversions([]);
-      setPendingFormData(null);
-      setCurrentConversionIndex(0);
-    }
-  };
-
-  const handleConversionSkip = () => {
-    // Move to next conversion or submit
-    if (currentConversionIndex < pendingConversions.length - 1) {
-      setCurrentConversionIndex(currentConversionIndex + 1);
-    } else {
-      // All conversions handled (skipped), submit the form
-      if (pendingFormData) {
-        onSubmit(pendingFormData, getImageChange());
-      }
-      setPendingConversions([]);
-      setPendingFormData(null);
-      setCurrentConversionIndex(0);
-    }
+    onSubmit(data, getImageChange());
   };
 
   const handleFormError = (errors: any) => {
@@ -688,15 +742,16 @@ export function RecipeForm({
 
   const handleClose = () => {
     reset();
-    setPendingConversions([]);
-    setPendingFormData(null);
-    setCurrentConversionIndex(0);
     // Reset image state
     setPendingImageFile(null);
     setPendingImageUrl(null);
     setImageProcessing(false);
     setCurrentImage(null);
     setImageRemoved(false);
+    // Reset parse & link state
+    setParseLinkItems([]);
+    setHasParsed(false);
+    setActiveStep('details');
     onOpenChange(false);
   };
 
@@ -715,19 +770,33 @@ export function RecipeForm({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[700px] max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="flex-shrink-0">
           <DialogTitle>{isEditing ? 'Edit Recipe' : 'New Recipe'}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit(handleFormSubmit, handleFormError)}>
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="mb-4">
-              <TabsTrigger value="details">Details</TabsTrigger>
-              <TabsTrigger value="ingredients">Ingredients</TabsTrigger>
-              <TabsTrigger value="instructions">Instructions</TabsTrigger>
-            </TabsList>
 
-            <TabsContent value="details" className="space-y-4 min-h-[340px]">
+        {/* Step indicator */}
+        <div className="flex items-center gap-1 flex-shrink-0 px-1">
+          {formSteps.map((s, i) => (
+            <div key={s.key} className="flex flex-col items-center flex-1">
+              <div className={cn(
+                'h-1.5 w-full rounded-full transition-colors',
+                i <= currentStepIndex ? 'bg-primary' : 'bg-muted'
+              )} />
+              <span className={cn(
+                'text-[10px] mt-1 transition-colors',
+                i === currentStepIndex ? 'text-foreground font-medium' : 'text-muted-foreground'
+              )}>
+                {s.label}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <form onSubmit={(e) => e.preventDefault()} className="flex flex-col flex-1 min-h-0">
+          <div className="flex-1 overflow-y-auto pr-1">
+
+            {activeStep === "details" && (<div className="space-y-4 py-2">
               {/* Image upload */}
               <div className="space-y-2">
                 <Label>Image</Label>
@@ -842,75 +911,184 @@ export function RecipeForm({
                   onRemoveTag={handleRemoveTag}
                 />
               </div>
-            </TabsContent>
+            </div>)}
 
-            <TabsContent value="ingredients" className="space-y-4 min-h-[340px]">
+
+            {activeStep === "ingredients" && (<div className="space-y-4 py-2">
               <p className="text-xs text-muted-foreground mb-2">
-                Search your inventory to add ingredients (auto-links for stock tracking) or type custom names
+                Type each ingredient naturally, e.g. "2 cups flour" or "1 lb boneless chicken breast"
               </p>
-              {ingredientFields.map((field, index) => {
-                const ingredientName = watch(`ingredients.${index}.name`);
-                const inventoryItemId = watch(`ingredients.${index}.inventoryItemId`);
-                const isLinked = !!inventoryItemId;
-
-                return (
-                  <div key={field.id} className="flex gap-2 items-start">
-                    <GripVertical className="h-4 w-4 mt-3 text-muted-foreground cursor-grab" />
-                    <div className="flex gap-2 flex-1">
-                      <div className="w-20">
-                        <Input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          placeholder="Amt"
-                          {...register(`ingredients.${index}.amount` as const, {
-                            valueAsNumber: true,
-                          })}
-                        />
-                      </div>
-                      <div className="w-24">
-                        <UnitCombobox
-                          value={watch(`ingredients.${index}.unit`) || ''}
-                          onChange={(value) => setValue(`ingredients.${index}.unit`, value)}
-                        />
-                      </div>
-                      <IngredientNameInput
-                        value={ingredientName || ''}
-                        inventoryItemId={inventoryItemId}
-                        onNameChange={(name) => setValue(`ingredients.${index}.name`, name)}
-                        onSelectInventoryItem={(itemId, itemName, defaultUnit) => {
-                          setValue(`ingredients.${index}.name`, itemName);
-                          setValue(`ingredients.${index}.inventoryItemId`, itemId);
-                          // Always set unit from inventory item when linking
-                          if (defaultUnit) {
-                            setValue(`ingredients.${index}.unit`, defaultUnit);
-                          }
-                        }}
-                        onUnlink={() => setValue(`ingredients.${index}.inventoryItemId`, undefined)}
-                      />
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeIngredient(index)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                );
-              })}
+              {ingredientFields.map((field, index) => (
+                <div key={field.id} className="flex gap-2 items-center">
+                  <span className="text-xs text-muted-foreground w-5 text-right shrink-0">{index + 1}.</span>
+                  <Input
+                    placeholder='e.g. "2 cups all-purpose flour"'
+                    {...register(`ingredients.${index}.rawText` as const)}
+                    className="flex-1"
+                    id={`ingredient-input-${index}`}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        appendIngredient({ name: '', amount: 0, unit: '', rawText: '' });
+                        // Focus the new input on next render
+                        setTimeout(() => {
+                          const next = document.getElementById(`ingredient-input-${index + 1}`);
+                          next?.focus();
+                        }, 50);
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="shrink-0"
+                    onClick={() => removeIngredient(index)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => appendIngredient({ name: '', amount: 1, unit: '' })}
+                onClick={() => appendIngredient({ name: '', amount: 0, unit: '', rawText: '' })}
               >
                 <Plus className="mr-2 h-4 w-4" />
                 Add Ingredient
               </Button>
-            </TabsContent>
+            </div>)}
 
-            <TabsContent value="instructions" className="space-y-4 min-h-[340px]">
+
+            {activeStep === "parse-link" && (<div className="space-y-4 py-2">
+              {!hasParsed ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <Package className="h-12 w-12 text-muted-foreground/50 mb-3" />
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Parse your ingredients and link them to your catalog for inventory tracking
+                  </p>
+                  <Button
+                    type="button"
+                    onClick={handleParseIngredients}
+                    disabled={isParsing}
+                  >
+                    {isParsing ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Check className="mr-2 h-4 w-4" />
+                    )}
+                    {isParsing ? 'Parsing...' : 'Parse & Link Ingredients'}
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">
+                      {parseLinkItems.filter(i => i.action === 'link').length} linked,{' '}
+                      {parseLinkItems.filter(i => i.action === 'create').length} new items to create
+                    </p>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => { setHasParsed(false); setParseLinkItems([]); }}>
+                      Re-parse
+                    </Button>
+                  </div>
+
+                  {parseLinkItems.map((item, idx) => (
+                    <div key={idx} className="p-3 rounded-lg border space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {item.parsedQuantity != null && (
+                            <span className="font-medium text-sm shrink-0">
+                              {item.parsedQuantity}{item.parsedUnit ? ` ${item.parsedUnit}` : ''}
+                            </span>
+                          )}
+                          <span className="text-sm truncate">{item.parsedName}</span>
+                          {item.parsedNotes && (
+                            <span className="text-xs text-muted-foreground truncate">({item.parsedNotes})</span>
+                          )}
+                        </div>
+                        <div className="flex gap-1 shrink-0">
+                          <button
+                            type="button"
+                            className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                              item.action === 'link'
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-muted text-muted-foreground hover:text-foreground'
+                            }`}
+                            onClick={() => setParseLinkItems(prev => prev.map((p, i) =>
+                              i === idx ? { ...p, action: 'link' } : p
+                            ))}
+                          >
+                            Link existing
+                          </button>
+                          <button
+                            type="button"
+                            className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                              item.action === 'create'
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-muted text-muted-foreground hover:text-foreground'
+                            }`}
+                            onClick={() => setParseLinkItems(prev => prev.map((p, i) =>
+                              i === idx ? { ...p, action: 'create', linkedItemId: undefined, linkedItemName: undefined } : p
+                            ))}
+                          >
+                            Create new
+                          </button>
+                        </div>
+                      </div>
+
+                      {item.action === 'link' ? (
+                        <Combobox
+                          options={existingItemOptions}
+                          value={item.linkedItemId || ''}
+                          onValueChange={(itemId) => {
+                            const existing = existingItems.find(i => i.id === itemId);
+                            setParseLinkItems(prev => prev.map((p, i) =>
+                              i === idx ? { ...p, linkedItemId: itemId || undefined, linkedItemName: existing?.name } : p
+                            ));
+                          }}
+                          placeholder="Search items..."
+                          searchPlaceholder="Type to search..."
+                          emptyText="No items found"
+                        />
+                      ) : (
+                        <div className="space-y-1.5">
+                          <input
+                            className="text-sm bg-transparent border-b border-border focus:border-primary focus:outline-none px-0 py-0.5 w-full"
+                            placeholder="Item name"
+                            value={item.suggestedName}
+                            onChange={(e) => setParseLinkItems(prev => prev.map((p, i) =>
+                              i === idx ? { ...p, suggestedName: e.target.value } : p
+                            ))}
+                          />
+                          <div className="flex items-center gap-2">
+                            <select
+                              className="text-xs rounded border bg-muted/50 px-1.5 py-0.5 text-muted-foreground hover:text-foreground cursor-pointer"
+                              value={item.category || ''}
+                              onChange={(e) => setParseLinkItems(prev => prev.map((p, i) =>
+                                i === idx ? { ...p, category: e.target.value || undefined } : p
+                              ))}
+                            >
+                              <option value="">No category</option>
+                              {categories.map(cat => (
+                                <option key={cat} value={cat}>{cat}</option>
+                              ))}
+                            </select>
+                            {item.similarExisting && (
+                              <Badge variant="outline" className="text-xs text-warning-foreground border-warning/50">
+                                Similar to: {item.similarExisting}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>)}
+
+
+            {activeStep === "instructions" && (<div className="space-y-4 py-2">
               {instructionFields.map((field, index) => (
                 <div key={field.id} className="flex gap-2 items-start">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary text-primary-foreground text-sm font-medium shrink-0">
@@ -919,7 +1097,17 @@ export function RecipeForm({
                   <Input
                     placeholder="Instruction step"
                     className="flex-1"
+                    id={`instruction-input-${index}`}
                     {...register(`instructions.${index}.text` as const)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        appendInstruction({ step: instructionFields.length + 1, text: '' });
+                        setTimeout(() => {
+                          document.getElementById(`instruction-input-${index + 1}`)?.focus();
+                        }, 50);
+                      }
+                    }}
                   />
                   <Button
                     type="button"
@@ -941,51 +1129,66 @@ export function RecipeForm({
                 <Plus className="mr-2 h-4 w-4" />
                 Add Step
               </Button>
-            </TabsContent>
-          </Tabs>
+            </div>)}
 
-          <DialogFooter className="flex justify-between mt-6">
-            {isEditing && onDelete && (
-              <Button
-                type="button"
-                variant="destructive"
-                onClick={onDelete}
-                disabled={isSubmitting}
-              >
-                Delete
-              </Button>
-            )}
-            <div className="flex gap-2 ml-auto">
-              <Button type="button" variant="outline" onClick={handleClose}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {isEditing ? 'Save' : 'Create'}
-              </Button>
+          </div>
+
+          {/* Step navigation */}
+          <DialogFooter className="flex justify-between mt-4 flex-shrink-0 border-t pt-4">
+            <div>
+              {isEditing && onDelete && activeStep === 'details' && (
+                <Button type="button" variant="destructive" onClick={onDelete} disabled={isSubmitting}>
+                  Delete
+                </Button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              {currentStepIndex > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setActiveStep(formSteps[currentStepIndex - 1].key)}
+                >
+                  Back
+                </Button>
+              )}
+              {currentStepIndex === 0 && (
+                <Button type="button" variant="outline" onClick={handleClose}>
+                  Cancel
+                </Button>
+              )}
+              {!isLastStep ? (
+                <Button
+                  type="button"
+                  onClick={() => {
+                    const nextStep = formSteps[currentStepIndex + 1];
+                    // Auto-parse when entering parse-link step
+                    if (nextStep.key === 'parse-link' && !hasParsed) {
+                      handleParseIngredients();
+                    }
+                    setActiveStep(nextStep.key);
+                  }}
+                >
+                  Continue to {formSteps[currentStepIndex + 1].label}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={async () => {
+                    // Manually trigger form submission with parseLinkItems applied
+                    const data = getValues();
+                    await handleFormSubmit(data);
+                  }}
+                >
+                  {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {isEditing ? 'Save Changes' : 'Save Recipe'}
+                </Button>
+              )}
             </div>
           </DialogFooter>
         </form>
       </DialogContent>
-
-      {/* Unit Conversion Prompt Dialog */}
-      {pendingConversions.length > 0 && pendingConversions[currentConversionIndex] && (
-        <UnitConversionPromptDialog
-          open={true}
-          onOpenChange={(open) => {
-            if (!open) {
-              setPendingConversions([]);
-              setPendingFormData(null);
-              setCurrentConversionIndex(0);
-            }
-          }}
-          itemName={pendingConversions[currentConversionIndex].itemName}
-          fromUnit={pendingConversions[currentConversionIndex].fromUnit}
-          toUnit={pendingConversions[currentConversionIndex].toUnit}
-          onConfirm={handleConversionConfirm}
-          onSkip={handleConversionSkip}
-        />
-      )}
     </Dialog>
   );
 }

@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo } from 'react';
 import { Check, X, ChevronDown, Plus, Loader2, Link2, Unlink, AlertCircle, Search } from 'lucide-react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -14,10 +14,10 @@ import { Label } from '@/components/ui/label';
 import { inventoryApi } from '@/api/inventory';
 import { recipesApi, type IngredientMatch, type MatchSuggestion, type MatchReason } from '@/api/recipes';
 import { cn } from '@/lib/utils';
-import { UnitConversionPromptDialog } from '@/components/inventory/UnitConversionPromptDialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { unitOptions, categoryOptions, normalizeUnit } from '@/lib/inventory-constants';
-import { hasGlobalConversion } from '@/lib/unit-conversions';
+import { getUnitCategoryForDensity } from '@/lib/unit-conversions';
+import { isCountUnit as isQuantityUnit } from '@/lib/units';
 
 interface IngredientMatchRowProps {
   match: IngredientMatch;
@@ -47,8 +47,33 @@ function getMatchReasonVariant(reason: MatchReason | undefined): 'default' | 'se
   }
 }
 
+/**
+ * Check if two units can potentially be converted using the density-based system.
+ * Same-category conversions (weight↔weight, volume↔volume) always work.
+ * Cross-category (weight↔volume) works if the item has a density.
+ * Quantity units need a quantityUnitWeight entry.
+ */
+function canConvertUnits(fromUnit: string, toUnit: string): boolean {
+  const normFrom = normalizeUnit(fromUnit);
+  const normTo = normalizeUnit(toUnit);
+  if (normFrom === normTo) return true;
+
+  const fromCat = getUnitCategoryForDensity(normFrom);
+  const toCat = getUnitCategoryForDensity(normTo);
+
+  // Same category always works via global conversions
+  if (fromCat === toCat && fromCat !== 'other') return true;
+
+  // Cross-category (weight↔volume) will work if item has density — allow it
+  if ((fromCat === 'weight' && toCat === 'volume') || (fromCat === 'volume' && toCat === 'weight')) return true;
+
+  // Quantity units involved — might need user input, but don't block linking
+  if (fromCat === 'quantity' || toCat === 'quantity') return true;
+
+  return false;
+}
+
 export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientMatchRowProps) {
-  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -61,24 +86,6 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
   const [newItemUnit, setNewItemUnit] = useState('');
   const [newItemCategory, setNewItemCategory] = useState('');
   const [newItemAreaId, setNewItemAreaId] = useState('');
-
-  // Conversion prompt for linking existing items
-  const [conversionPrompt, setConversionPrompt] = useState<{
-    itemId: string;
-    itemName: string;
-    fromUnit: string;
-    toUnit: string;
-    suggestedFactor?: number;
-  } | null>(null);
-
-  // Conversion prompt for creating new items
-  const [createConversionPrompt, setCreateConversionPrompt] = useState<{
-    itemId: string;
-    itemName: string;
-    fromUnit: string;
-    toUnit: string;
-    suggestedFactor?: number;
-  } | null>(null);
 
   // Fetch inventory items for selection
   const { data: itemsData } = useQuery({
@@ -121,59 +128,10 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
     [areas]
   );
 
-  const handleSelect = (itemId: string, itemName: string, suggestion?: MatchSuggestion) => {
-    // Check if this selection needs a unit conversion
-    if (suggestion?.needsConversion && !suggestion.needsConversion.hasExisting) {
-      const { fromUnit, toUnit } = suggestion.needsConversion;
-
-      // Check if global conversion exists - if so, no prompt needed
-      if (hasGlobalConversion(fromUnit, toUnit)) {
-        onUpdate(match.parsedName, itemId, itemName, recipeUnit);
-        setOpen(false);
-        return;
-      }
-
-      // No global conversion - prompt user for item-specific conversion
-      setConversionPrompt({
-        itemId,
-        itemName,
-        fromUnit,
-        toUnit,
-        suggestedFactor: suggestion.needsConversion.suggestedFactor,
-      });
-      setOpen(false);
-      return;
-    }
-
+  const handleSelect = (itemId: string, itemName: string) => {
+    // With density-based conversions, just link directly
     onUpdate(match.parsedName, itemId, itemName, recipeUnit);
     setOpen(false);
-  };
-
-  const handleConversionConfirm = async (factor: number, saveForFuture: boolean) => {
-    if (!conversionPrompt) return;
-
-    // Save conversion to item if requested
-    if (saveForFuture) {
-      await inventoryApi.addUnitConversion(conversionPrompt.itemId, {
-        fromUnit: conversionPrompt.fromUnit,
-        toUnit: conversionPrompt.toUnit,
-        factor,
-      });
-      // Invalidate inventory queries to reflect the update
-      queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
-      queryClient.invalidateQueries({ queryKey: ['ingredient-suggestions'] });
-    }
-
-    // Complete the match
-    onUpdate(match.parsedName, conversionPrompt.itemId, conversionPrompt.itemName, recipeUnit);
-    setConversionPrompt(null);
-  };
-
-  const handleConversionSkip = () => {
-    if (!conversionPrompt) return;
-    // Complete the match without conversion
-    onUpdate(match.parsedName, conversionPrompt.itemId, conversionPrompt.itemName, recipeUnit);
-    setConversionPrompt(null);
   };
 
   const handleUnlink = () => {
@@ -181,10 +139,8 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
   };
 
   const handleShowCreateForm = () => {
-    // Pre-fill form with parsed data or catalogItem data from .recipe import
     const catalogItem = match.catalogItem;
     setNewItemName(catalogItem?.name || match.parsedName);
-    // Use catalogItem defaultUnit if available, otherwise use recipe unit
     setNewItemUnit(catalogItem?.defaultUnit || recipeUnit);
     setNewItemCategory(catalogItem?.category?.toLowerCase() || '');
     setNewItemAreaId('');
@@ -204,7 +160,6 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
 
     setIsCreating(true);
     try {
-      // Create the item first
       const result = await onCreateNew(
         newItemName,
         newItemUnit || undefined,
@@ -212,70 +167,13 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
         newItemAreaId || undefined
       );
 
-      // Check if units differ - need conversion
-      if (recipeUnit && newItemUnit &&
-          normalizeUnit(recipeUnit) !== normalizeUnit(newItemUnit)) {
-        // If global conversion exists, no prompt needed
-        if (hasGlobalConversion(recipeUnit, newItemUnit)) {
-          onUpdate(match.parsedName, result.itemId, result.itemName, recipeUnit);
-          resetCreateForm();
-          setOpen(false);
-          return;
-        }
-
-        // Look for a matching conversion from catalogItem (from .recipe import)
-        const catalogConversion = match.catalogItem?.unitConversions?.find(
-          c => normalizeUnit(c.fromUnit) === normalizeUnit(recipeUnit) &&
-               normalizeUnit(c.toUnit) === normalizeUnit(newItemUnit)
-        );
-        // Show conversion prompt before linking
-        setCreateConversionPrompt({
-          itemId: result.itemId,
-          itemName: result.itemName,
-          fromUnit: recipeUnit,
-          toUnit: newItemUnit,
-          suggestedFactor: catalogConversion?.factor,
-        });
-        // Don't link yet - wait for conversion
-        return;
-      }
-
-      // Same unit or no unit specified - link directly
+      // With density-based conversions, just link directly
       onUpdate(match.parsedName, result.itemId, result.itemName, recipeUnit);
       resetCreateForm();
       setOpen(false);
     } finally {
       setIsCreating(false);
     }
-  };
-
-  const handleCreateConversionConfirm = async (factor: number, _saveForFuture: boolean) => {
-    if (!createConversionPrompt) return;
-
-    // Save conversion to the newly created item
-    await inventoryApi.addUnitConversion(createConversionPrompt.itemId, {
-      fromUnit: createConversionPrompt.fromUnit,
-      toUnit: createConversionPrompt.toUnit,
-      factor,
-    });
-
-    // Invalidate queries
-    queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
-
-    // Now link the item
-    onUpdate(match.parsedName, createConversionPrompt.itemId, createConversionPrompt.itemName, recipeUnit);
-    setCreateConversionPrompt(null);
-    resetCreateForm();
-    setOpen(false);
-  };
-
-  const handleCreateConversionSkip = () => {
-    if (!createConversionPrompt) return;
-    // Link without conversion
-    onUpdate(match.parsedName, createConversionPrompt.itemId, createConversionPrompt.itemName, recipeUnit);
-    setCreateConversionPrompt(null);
-    resetCreateForm();
-    setOpen(false);
   };
 
   const isLinked = !!match.matchedItemId;
@@ -298,7 +196,6 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
             value={recipeUnit}
             onValueChange={(newUnit) => {
               setRecipeUnit(newUnit);
-              // Notify parent of unit change
               onUpdate(match.parsedName, match.matchedItemId, match.matchedItemName, newUnit);
             }}
             placeholder="unit"
@@ -325,16 +222,10 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
           <div className="flex items-center gap-1 mt-1 text-sm text-muted-foreground flex-wrap">
             <Link2 className="h-3 w-3 flex-shrink-0" />
             <span>Linked to: {match.matchedItemName}</span>
-            {match.unitConversion && (
-              <Badge variant="outline" className="ml-2 text-xs">
-                {match.unitConversion.fromUnit} = {match.unitConversion.factor} {match.unitConversion.toUnit}
-              </Badge>
-            )}
-            {match.needsConversion && !match.needsConversion.hasExisting &&
-             !hasGlobalConversion(match.needsConversion.fromUnit, match.needsConversion.toUnit) && (
+            {match.needsQuantityWeight && (
               <Badge variant="outline" className="ml-2 text-xs text-orange-600 border-orange-300">
                 <AlertCircle className="h-3 w-3 mr-1" />
-                needs conversion
+                needs quantity weight
               </Badge>
             )}
           </div>
@@ -395,7 +286,7 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
                           <button
                             key={suggestion.itemId}
                             type="button"
-                            onClick={() => handleSelect(suggestion.itemId, suggestion.name, suggestion)}
+                            onClick={() => handleSelect(suggestion.itemId, suggestion.name)}
                             className={cn(
                               'relative flex w-full cursor-pointer select-none items-center justify-between rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground',
                               match.matchedItemId === suggestion.itemId && 'bg-accent'
@@ -416,10 +307,9 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
                               )}
                             </div>
                             <div className="flex items-center gap-1">
-                              {suggestion.needsConversion && !suggestion.needsConversion.hasExisting &&
-                               !hasGlobalConversion(suggestion.needsConversion.fromUnit, suggestion.needsConversion.toUnit) && (
+                              {suggestion.needsQuantityWeight && (
                                 <Badge variant="outline" className="text-xs text-orange-600">
-                                  needs conversion
+                                  needs weight
                                 </Badge>
                               )}
                               <Badge variant="secondary" className="text-xs">
@@ -457,24 +347,13 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
                         return filteredItems.slice(0, 20).map((item) => {
                           const unitsDiffer = recipeUnit && item.defaultUnit &&
                             normalizeUnit(recipeUnit) !== normalizeUnit(item.defaultUnit);
-                          // Only mark as needing conversion if units differ AND no global conversion exists
-                          const needsConversionBadge = unitsDiffer &&
-                            !hasGlobalConversion(recipeUnit, item.defaultUnit);
+                          const convertible = unitsDiffer ? canConvertUnits(recipeUnit, item.defaultUnit) : true;
 
                           return (
                             <button
                               key={item.id}
                               type="button"
-                              onClick={() => handleSelect(item.id, item.name, unitsDiffer ? {
-                                itemId: item.id,
-                                name: item.name,
-                                confidence: 0,
-                                needsConversion: {
-                                  fromUnit: recipeUnit,
-                                  toUnit: item.defaultUnit,
-                                  hasExisting: false,
-                                }
-                              } : undefined)}
+                              onClick={() => handleSelect(item.id, item.name)}
                               className={cn(
                                 'relative flex w-full cursor-pointer select-none items-center justify-between rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground',
                                 match.matchedItemId === item.id && 'bg-accent'
@@ -490,9 +369,9 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
                                 <span>{item.name}</span>
                               </div>
                               <div className="flex items-center gap-1">
-                                {needsConversionBadge && (
+                                {unitsDiffer && !convertible && (
                                   <Badge variant="outline" className="text-xs text-orange-600">
-                                    needs conversion
+                                    different units
                                   </Badge>
                                 )}
                                 {item.defaultUnit && (
@@ -556,14 +435,14 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
                       </p>
                     </div>
 
-                    {/* Show warning if units differ and no global conversion exists */}
+                    {/* Show info if units differ */}
                     {recipeUnit && newItemUnit &&
                      normalizeUnit(recipeUnit) !== normalizeUnit(newItemUnit) &&
-                     !hasGlobalConversion(recipeUnit, newItemUnit) && (
+                     !canConvertUnits(recipeUnit, newItemUnit) && (
                       <Alert>
                         <AlertCircle className="h-4 w-4" />
                         <AlertDescription>
-                          You'll need to provide a conversion from {recipeUnit} to {newItemUnit} after creating.
+                          Units differ ({recipeUnit} vs {newItemUnit}) and may not convert automatically.
                         </AlertDescription>
                       </Alert>
                     )}
@@ -618,41 +497,6 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
           </Popover>
         )}
       </div>
-
-      {/* Unit Conversion Prompt Dialog for linking existing items */}
-      {conversionPrompt && (
-        <UnitConversionPromptDialog
-          open={!!conversionPrompt}
-          onOpenChange={(open) => {
-            if (!open) setConversionPrompt(null);
-          }}
-          itemName={conversionPrompt.itemName}
-          fromUnit={conversionPrompt.fromUnit}
-          toUnit={conversionPrompt.toUnit}
-          suggestedFactor={conversionPrompt.suggestedFactor}
-          onConfirm={handleConversionConfirm}
-          onSkip={handleConversionSkip}
-        />
-      )}
-
-      {/* Unit Conversion Prompt Dialog for Create Flow */}
-      {createConversionPrompt && (
-        <UnitConversionPromptDialog
-          open={!!createConversionPrompt}
-          onOpenChange={(open) => {
-            if (!open) {
-              // User closed without saving - still link but without conversion
-              handleCreateConversionSkip();
-            }
-          }}
-          itemName={createConversionPrompt.itemName}
-          fromUnit={createConversionPrompt.fromUnit}
-          toUnit={createConversionPrompt.toUnit}
-          suggestedFactor={createConversionPrompt.suggestedFactor}
-          onConfirm={handleCreateConversionConfirm}
-          onSkip={handleCreateConversionSkip}
-        />
-      )}
     </div>
   );
 }

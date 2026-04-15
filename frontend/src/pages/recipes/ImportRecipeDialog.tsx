@@ -22,8 +22,13 @@ import { inventoryApi } from '@/api/inventory';
 import { cn } from '@/lib/utils';
 import { IngredientMatchRow } from './IngredientMatchRow';
 import { BulkIngredientActions } from './BulkIngredientActions';
+import { useInventoryTier } from '@/hooks/useInventoryTier';
+import { useCategories } from '@/hooks/useCategories';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { getItemIcon } from '@/lib/inventory-constants';
 
-type ImportStep = 'source' | 'review' | 'ingredients' | 'confirm';
+type ImportStep = 'source' | 'review' | 'ingredients' | 'quick-catalog' | 'confirm';
 
 interface ImportRecipeDialogProps {
   open: boolean;
@@ -51,14 +56,29 @@ function getConfidenceBadgeVariant(confidence: number): 'default' | 'secondary' 
 }
 
 export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportRecipeDialogProps) {
+  const { isAdvanced } = useInventoryTier();
+  const { categories } = useCategories();
   const [step, setStep] = useState<ImportStep>('source');
+
+  // Fetch existing inventory items for "link to existing" option
+  const { data: existingItemsData } = useQuery({
+    queryKey: ['inventory', 'items'],
+    queryFn: () => inventoryApi.getItems({}),
+    enabled: open,
+  });
+  const existingItems = existingItemsData?.items || [];
+  const existingItemOptions: ComboboxOption[] = existingItems.map(item => ({
+    value: item.id,
+    label: item.name,
+    icon: <span>{getItemIcon(item)}</span>,
+  }));
   const [sourceType, setSourceType] = useState<'url' | 'pdf' | 'text' | 'file'>('text');
   const [sourceUrl, setSourceUrl] = useState('');
   const [rawText, setRawText] = useState('');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [ingredientMatches, setIngredientMatches] = useState<IngredientMatch[]>([]);
   // Store catalog item data from imported .recipe files
-  const [importedCatalogItems, setImportedCatalogItems] = useState<Record<string, { name: string; category?: string; defaultUnit?: string; unitConversions?: Array<{ fromUnit: string; toUnit: string; factor: number }> }>>({});
+  const [importedCatalogItems, setImportedCatalogItems] = useState<Record<string, { name: string; category?: string; defaultUnit?: string; density?: number }>>({});
   const [overrides, setOverrides] = useState<{
     title?: string;
     description?: string;
@@ -66,6 +86,22 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
     cookTimeMinutes?: number;
     servings?: number;
   }>({});
+
+  // Quick catalog state (Basic mode)
+  interface CatalogSuggestion {
+    originalName: string;
+    suggestedName: string;
+    editedName: string;
+    category?: string;
+    similarExisting?: string;
+    /** 'create' = make new item, 'link' = link to existing item */
+    action: 'create' | 'link';
+    /** If action='link', the existing item ID to link to */
+    linkedItemId?: string;
+    linkedItemName?: string;
+  }
+  const [catalogSuggestions, setCatalogSuggestions] = useState<CatalogSuggestion[]>([]);
+  const [isCreatingItems, setIsCreatingItems] = useState(false);
 
   // Preview state for URL/text parsing
   const [previewRecipe, setPreviewRecipe] = useState<ParsedRecipe | null>(null);
@@ -161,10 +197,72 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
 
   // Confirm import mutation
   const confirmMutation = useMutation({
-    mutationFn: () => recipesApi.confirmImport(sessionId!, overrides),
+    mutationFn: async () => {
+      // Step 1: Create new items from catalog suggestions
+      const toCreate = catalogSuggestions.filter(s => s.action === 'create' && s.editedName.trim());
+      if (toCreate.length > 0) {
+        const items = toCreate.map(s => ({
+          name: s.editedName.trim(),
+          category: s.category,
+          defaultUnit: 'pieces',
+        }));
+        const result = await inventoryApi.batchCreateItems({ items });
+
+        if (result?.items) {
+          const nameToId: Record<string, string> = {};
+          for (const item of result.items) {
+            nameToId[item.name.toLowerCase()] = item.id;
+          }
+
+          // Update ingredient matches with created item IDs
+          for (const suggestion of toCreate) {
+            const itemId = nameToId[suggestion.editedName.trim().toLowerCase()];
+            if (itemId) {
+              const matchIdx = ingredientMatches.findIndex(m => m.parsedName === suggestion.originalName);
+              if (matchIdx >= 0) {
+                ingredientMatches[matchIdx] = {
+                  ...ingredientMatches[matchIdx],
+                  matchedItemId: itemId,
+                  matchedItemName: suggestion.editedName.trim(),
+                  matchStatus: 'manual',
+                };
+              }
+            }
+          }
+        }
+      }
+
+      // Step 2: Apply "link to existing" matches
+      const toLink = catalogSuggestions.filter(s => s.action === 'link' && s.linkedItemId);
+      for (const suggestion of toLink) {
+        const matchIdx = ingredientMatches.findIndex(m => m.parsedName === suggestion.originalName);
+        if (matchIdx >= 0) {
+          ingredientMatches[matchIdx] = {
+            ...ingredientMatches[matchIdx],
+            matchedItemId: suggestion.linkedItemId!,
+            matchedItemName: suggestion.linkedItemName || '',
+            matchStatus: 'manual',
+          };
+        }
+      }
+
+      // Step 3: Save all matches to session
+      if (sessionId && (toCreate.length > 0 || toLink.length > 0)) {
+        await recipesApi.updateImportMatches(sessionId, ingredientMatches.map(m => ({
+          parsedName: m.parsedName,
+          matchedItemId: m.matchedItemId,
+          matchedItemName: m.matchedItemName,
+          modifiedUnit: m.modifiedUnit,
+        })));
+      }
+
+      // Step 4: Confirm the import (creates recipe in DB)
+      return recipesApi.confirmImport(sessionId!, overrides);
+    },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['recipes'] });
       queryClient.invalidateQueries({ queryKey: ['tag-suggestions'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
       onSuccess?.(data.recipeId);
       handleClose();
     },
@@ -186,6 +284,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
     setSessionId(null);
     setIngredientMatches([]);
     setImportedCatalogItems({});
+    setCatalogSuggestions([]);
     setOverrides({});
     setPreviewRecipe(null);
     setParseMethod(undefined);
@@ -235,8 +334,8 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
         setParseWarnings([]);
 
         // Store catalog item data for ingredient matching (including unit conversions)
-        const catalogItems: Record<string, { name: string; category?: string; defaultUnit?: string; unitConversions?: Array<{ fromUnit: string; toUnit: string; factor: number }> }> = {};
-        recipe.ingredients?.forEach((ing: { name: string; catalogItem?: { name: string; category?: string; defaultUnit?: string; unitConversions?: Array<{ fromUnit: string; toUnit: string; factor: number }> } }) => {
+        const catalogItems: Record<string, { name: string; category?: string; defaultUnit?: string; density?: number }> = {};
+        recipe.ingredients?.forEach((ing: { name: string; catalogItem?: { name: string; category?: string; defaultUnit?: string; density?: number } }) => {
           if (ing.catalogItem) {
             catalogItems[ing.name] = ing.catalogItem;
           }
@@ -343,12 +442,23 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
   }, []);
 
   // Calculate step progress
-  const stepProgress = {
-    source: 0,
-    review: 33,
-    ingredients: 66,
-    confirm: 100,
-  };
+  // Step definitions per mode
+  const steps: { key: ImportStep; label: string }[] = isAdvanced
+    ? [
+        { key: 'source', label: 'Source' },
+        { key: 'review', label: 'Review' },
+        { key: 'ingredients', label: 'Link' },
+        { key: 'confirm', label: 'Save' },
+      ]
+    : [
+        { key: 'source', label: 'Source' },
+        { key: 'review', label: 'Review' },
+        { key: 'quick-catalog', label: 'Catalog' },
+        { key: 'confirm', label: 'Save' },
+      ];
+
+  const currentStepIndex = steps.findIndex(s => s.key === step);
+  const nextStepLabel = currentStepIndex < steps.length - 1 ? steps[currentStepIndex + 1]?.label : null;
 
   const isPreviewing = previewUrlMutation.isPending || previewTextMutation.isPending;
   const hasPreview = !!previewRecipe;
@@ -361,12 +471,27 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
       <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle>Import Recipe</DialogTitle>
-          <DialogDescription>
-            Import a recipe from text, URL, or PDF
-          </DialogDescription>
         </DialogHeader>
 
-        <Progress value={stepProgress[step]} className="h-1 flex-shrink-0" />
+        {/* Step indicator */}
+        <div className="flex items-center gap-1 flex-shrink-0 px-1">
+          {steps.map((s, i) => (
+            <div key={s.key} className="flex items-center flex-1">
+              <div className="flex flex-col items-center flex-1">
+                <div className={cn(
+                  'h-1.5 w-full rounded-full transition-colors',
+                  i <= currentStepIndex ? 'bg-primary' : 'bg-muted'
+                )} />
+                <span className={cn(
+                  'text-[10px] mt-1 transition-colors',
+                  i === currentStepIndex ? 'text-foreground font-medium' : 'text-muted-foreground'
+                )}>
+                  {s.label}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
 
         <div className="flex-1 overflow-y-auto pr-4 min-h-0">
           {step === 'source' && (
@@ -566,7 +691,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
                   )}
                 >
                   {startImportMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {sourceType === 'file' ? 'Import Recipe' : 'Parse Recipe'}
+                  Parse & Review
                   <ChevronRight className="ml-2 h-4 w-4" />
                 </Button>
               </div>
@@ -596,12 +721,34 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
                           </Badge>
                         )}
                       </div>
-                      {currentWarnings.length > 0 && (
-                        <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                          <AlertTriangle className="h-4 w-4" />
-                          {currentWarnings.length} warning{currentWarnings.length !== 1 ? 's' : ''}
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {currentWarnings.length > 0 && (
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                            <AlertTriangle className="h-4 w-4" />
+                            {currentWarnings.length} warning{currentWarnings.length !== 1 ? 's' : ''}
+                          </div>
+                        )}
+                        {currentParseMethod !== 'llm' && sessionId && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={async () => {
+                              try {
+                                const result = await recipesApi.reparseLLM(sessionId);
+                                setParseConfidence(result.confidence);
+                                setParseMethod(result.parseMethod as ParseMethod);
+                                setParseWarnings([]);
+                                // Refresh session data
+                                queryClient.invalidateQueries({ queryKey: ['import-session', sessionId] });
+                              } catch (err) {
+                                console.error('LLM re-parse failed:', err);
+                              }
+                            }}
+                          >
+                            Re-parse with AI
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -705,10 +852,62 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
                     <Button variant="outline" onClick={() => setStep('source')}>
                       Back
                     </Button>
-                    <Button onClick={handleProceedToIngredients}>
-                      Link Ingredients
-                      <ChevronRight className="ml-2 h-4 w-4" />
-                    </Button>
+                    {isAdvanced ? (
+                      <Button onClick={handleProceedToIngredients}>
+                        Link Ingredients
+                        <ChevronRight className="ml-2 h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <Button onClick={async () => {
+                        // Basic mode: auto-accept high confidence matches
+                        let autoAccepted: IngredientMatch[] = [];
+                        if (session?.ingredientMatches) {
+                          autoAccepted = session.ingredientMatches.map(m => {
+                            if (m.suggestions && m.suggestions.length > 0 && m.suggestions[0].confidence >= 0.8) {
+                              return {
+                                ...m,
+                                matchedItemId: m.suggestions[0].itemId,
+                                matchedItemName: m.suggestions[0].name,
+                                matchStatus: 'manual' as const,
+                                confidence: m.suggestions[0].confidence,
+                              };
+                            }
+                            return m;
+                          });
+                          setIngredientMatches(autoAccepted);
+                          const updates = autoAccepted.map(m => ({
+                            parsedName: m.parsedName,
+                            matchedItemId: m.matchedItemId,
+                            matchedItemName: m.matchedItemName,
+                            modifiedUnit: m.modifiedUnit,
+                          }));
+                          updateMatchesMutation.mutate(updates);
+                        }
+
+                        // Always go to catalog step — get suggestions for unmatched
+                        const unmatched = autoAccepted.filter(m => !m.matchedItemId);
+                        try {
+                          if (unmatched.length > 0) {
+                            const result = await recipesApi.suggestItems(
+                              unmatched.map(m => m.parsedName)
+                            );
+                            setCatalogSuggestions(result.suggestions.map(s => ({
+                              ...s,
+                              editedName: s.suggestedName,
+                              action: 'create' as const,
+                            })));
+                          } else {
+                            setCatalogSuggestions([]);
+                          }
+                        } catch {
+                          setCatalogSuggestions([]);
+                        }
+                        setStep('quick-catalog');
+                      }}>
+                        {nextStepLabel ? `Continue to ${nextStepLabel}` : 'Continue'}
+                        <ChevronRight className="ml-2 h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 </>
               ) : (
@@ -766,28 +965,183 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
                   Back
                 </Button>
                 <Button onClick={handleSaveMatches}>
-                  Continue
+                  {nextStepLabel ? `Continue to ${nextStepLabel}` : 'Continue'}
                   <ChevronRight className="ml-2 h-4 w-4" />
                 </Button>
               </div>
             </div>
           )}
 
+          {step === 'quick-catalog' && (() => {
+            const matched = ingredientMatches.filter(m => m.matchedItemId);
+            const unmatched = catalogSuggestions;
+            const allResolved = unmatched.every(s =>
+              (s.action === 'create' && s.editedName.trim()) ||
+              (s.action === 'link' && s.linkedItemId)
+            );
+            const newItemCount = unmatched.filter(s => s.action === 'create').length;
+
+            return (
+            <div className="space-y-4 py-4">
+              <div>
+                <h3 className="font-medium">Link Ingredients to Catalog</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Each ingredient needs a catalog item.
+                  {matched.length > 0 && ` ${matched.length} auto-matched.`}
+                  {unmatched.length > 0 && ` ${unmatched.length} need linking.`}
+                </p>
+              </div>
+
+              {/* Already matched */}
+              {matched.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Auto-matched</p>
+                  {matched.map(m => (
+                    <div key={m.parsedName} className="flex items-center gap-2 px-3 py-1.5 rounded bg-muted/30 text-sm">
+                      <Check className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                      <span className="text-muted-foreground truncate">{m.parsedName}</span>
+                      <span className="text-muted-foreground shrink-0">→</span>
+                      <span className="font-medium truncate">{m.matchedItemName}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Unmatched — create new or link to existing */}
+              {unmatched.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Needs linking</p>
+                  <div className="space-y-2">
+                    {unmatched.map((suggestion, idx) => (
+                      <div key={suggestion.originalName} className="p-3 rounded-lg border space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-medium">{suggestion.originalName}</p>
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              className={cn(
+                                'text-xs px-2 py-0.5 rounded transition-colors',
+                                suggestion.action === 'create'
+                                  ? 'bg-primary text-primary-foreground'
+                                  : 'bg-muted text-muted-foreground hover:text-foreground'
+                              )}
+                              onClick={() => setCatalogSuggestions(prev => prev.map((s, i) =>
+                                i === idx ? { ...s, action: 'create', linkedItemId: undefined, linkedItemName: undefined } : s
+                              ))}
+                            >
+                              Create new
+                            </button>
+                            <button
+                              type="button"
+                              className={cn(
+                                'text-xs px-2 py-0.5 rounded transition-colors',
+                                suggestion.action === 'link'
+                                  ? 'bg-primary text-primary-foreground'
+                                  : 'bg-muted text-muted-foreground hover:text-foreground'
+                              )}
+                              onClick={() => setCatalogSuggestions(prev => prev.map((s, i) =>
+                                i === idx ? { ...s, action: 'link' } : s
+                              ))}
+                            >
+                              Link existing
+                            </button>
+                          </div>
+                        </div>
+
+                        {suggestion.action === 'create' ? (
+                          <div className="space-y-1.5">
+                            <input
+                              className="text-sm bg-transparent border-b border-border focus:border-primary focus:outline-none px-0 py-0.5 w-full"
+                              placeholder="Item name"
+                              value={suggestion.editedName}
+                              onChange={(e) => setCatalogSuggestions(prev => prev.map((s, i) =>
+                                i === idx ? { ...s, editedName: e.target.value } : s
+                              ))}
+                            />
+                            <div className="flex items-center gap-2">
+                              <select
+                                className="text-xs rounded border bg-muted/50 px-1.5 py-0.5 text-muted-foreground hover:text-foreground cursor-pointer"
+                                value={suggestion.category || ''}
+                                onChange={(e) => setCatalogSuggestions(prev => prev.map((s, i) =>
+                                  i === idx ? { ...s, category: e.target.value || undefined } : s
+                                ))}
+                              >
+                                <option value="">No category</option>
+                                {categories.map(cat => (
+                                  <option key={cat} value={cat}>{cat}</option>
+                                ))}
+                              </select>
+                              {suggestion.similarExisting && (
+                                <Badge variant="outline" className="text-xs text-warning-foreground border-warning/50">
+                                  Similar to: {suggestion.similarExisting}
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <Combobox
+                            options={existingItemOptions}
+                            value={suggestion.linkedItemId || ''}
+                            onValueChange={(value) => {
+                              const item = existingItems.find(i => i.id === value);
+                              setCatalogSuggestions(prev => prev.map((s, i) =>
+                                i === idx ? {
+                                  ...s,
+                                  linkedItemId: value || undefined,
+                                  linkedItemName: item?.name,
+                                } : s
+                              ));
+                            }}
+                            placeholder="Search items..."
+                            searchPlaceholder="Type to search..."
+                            emptyText="No matching items"
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-between">
+                <Button variant="outline" onClick={() => setStep('review')}>
+                  Back
+                </Button>
+                <Button
+                  onClick={() => setStep('confirm')}
+                  disabled={!allResolved}
+                >
+                  {newItemCount > 0
+                    ? `Continue — ${newItemCount} new item${newItemCount !== 1 ? 's' : ''} to create`
+                    : 'Continue to Save'}
+                  <ChevronRight className="ml-2 h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            );
+          })()}
+
           {step === 'confirm' && (
             <div className="space-y-4 py-4">
-              <div className="text-center py-8">
+              <div className="text-center py-6">
                 <Check className="h-16 w-16 mx-auto text-green-500" />
                 <h3 className="mt-4 text-lg font-medium">Ready to Import</h3>
                 <p className="text-sm text-muted-foreground mt-1">
                   {session?.parsedRecipe?.title ?? overrides.title}
                 </p>
-                <p className="text-xs text-muted-foreground mt-2">
-                  {ingredientMatches.filter(m => m.matchedItemId).length} ingredients linked to inventory
-                </p>
+                <div className="text-xs text-muted-foreground mt-3 space-y-1">
+                  <p>{ingredientMatches.length} ingredients total</p>
+                  {catalogSuggestions.filter(s => s.action === 'create').length > 0 && (
+                    <p>{catalogSuggestions.filter(s => s.action === 'create').length} new catalog items will be created</p>
+                  )}
+                  {catalogSuggestions.filter(s => s.action === 'link').length > 0 && (
+                    <p>{catalogSuggestions.filter(s => s.action === 'link').length} linked to existing items</p>
+                  )}
+                </div>
               </div>
 
               <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setStep('ingredients')}>
+                <Button variant="outline" onClick={() => setStep(isAdvanced ? 'ingredients' : catalogSuggestions.length > 0 ? 'quick-catalog' : 'review')}>
                   Back
                 </Button>
                 <Button onClick={() => confirmMutation.mutate()} disabled={confirmMutation.isPending}>
