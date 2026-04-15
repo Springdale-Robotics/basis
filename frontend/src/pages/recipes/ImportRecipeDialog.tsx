@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query';
-import { Upload, Link, FileText, Check, X, ChevronRight, Loader2, AlertCircle, AlertTriangle, Info, FileUp } from 'lucide-react';
+import { Upload, Link, FileText, Check, X, ChevronRight, Loader2, AlertCircle, AlertTriangle, Info, FileUp, Camera } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -18,6 +18,7 @@ import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { recipesApi, type IngredientMatch, type ImportSession, type ParsedRecipe, type ParseMethod } from '@/api/recipes';
+import { imageParseApi, type ImageParseSession, type ParsedRecipeContent } from '@/api/image-parse';
 import { inventoryApi } from '@/api/inventory';
 import { cn } from '@/lib/utils';
 import { IngredientMatchRow } from './IngredientMatchRow';
@@ -34,6 +35,7 @@ interface ImportRecipeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: (recipeId: string) => void;
+  defaultTab?: 'text' | 'url' | 'file' | 'pdf' | 'image';
 }
 
 // Map parse method to user-friendly name
@@ -55,7 +57,22 @@ function getConfidenceBadgeVariant(confidence: number): 'default' | 'secondary' 
   return 'destructive';
 }
 
-export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportRecipeDialogProps) {
+function formatRecipeAsText(recipe: ParsedRecipe): string {
+  const lines = [recipe.title || 'Untitled Recipe', '', 'Ingredients:'];
+  for (const ing of recipe.ingredients) {
+    const parts: string[] = [];
+    if (ing.quantity) parts.push(String(ing.quantity));
+    if (ing.unit) parts.push(ing.unit);
+    parts.push(ing.name);
+    if (ing.notes) parts.push(`(${ing.notes})`);
+    lines.push(parts.join(' '));
+  }
+  lines.push('', 'Instructions:');
+  recipe.instructions.forEach((step, i) => lines.push(`${i + 1}. ${step}`));
+  return lines.join('\n');
+}
+
+export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }: ImportRecipeDialogProps) {
   const { isAdvanced } = useInventoryTier();
   const { categories } = useCategories();
   const [step, setStep] = useState<ImportStep>('source');
@@ -72,10 +89,21 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
     label: item.name,
     icon: <span>{getItemIcon(item)}</span>,
   }));
-  const [sourceType, setSourceType] = useState<'url' | 'pdf' | 'text' | 'file'>('text');
+  const [sourceType, setSourceType] = useState<'url' | 'pdf' | 'text' | 'file' | 'image'>(defaultTab || 'text');
+
+  // Sync tab when dialog opens
+  useEffect(() => {
+    if (open) {
+      setSourceType(defaultTab || 'text');
+    }
+  }, [open, defaultTab]);
   const [sourceUrl, setSourceUrl] = useState('');
   const [rawText, setRawText] = useState('');
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // Image scan state
+  const [imageParseSessionId, setImageParseSessionId] = useState<string | null>(null);
+  const [imageProcessing, setImageProcessing] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
   const [ingredientMatches, setIngredientMatches] = useState<IngredientMatch[]>([]);
   // Store catalog item data from imported .recipe files
   const [importedCatalogItems, setImportedCatalogItems] = useState<Record<string, { name: string; category?: string; defaultUnit?: string; density?: number }>>({});
@@ -145,6 +173,15 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
   // Start import mutation
   const startImportMutation = useMutation({
     mutationFn: async () => {
+      if (sourceType === 'image' && previewRecipe) {
+        // Send OCR-extracted recipe as text for the import pipeline to process
+        const recipeText = formatRecipeAsText(previewRecipe);
+        return recipesApi.startImport({
+          sourceType: 'text',
+          sourceData: recipeText,
+          rawText: recipeText,
+        });
+      }
       if (sourceType === 'file' && previewRecipe) {
         // For .recipe files, send the parsed recipe as JSON with catalogItem data
         const fileData = {
@@ -278,7 +315,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
 
   const handleClose = useCallback(() => {
     setStep('source');
-    setSourceType('text');
+    setSourceType(defaultTab || 'text');
     setSourceUrl('');
     setRawText('');
     setSessionId(null);
@@ -290,8 +327,11 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
     setParseMethod(undefined);
     setParseConfidence(undefined);
     setParseWarnings([]);
+    setImageParseSessionId(null);
+    setImageProcessing(false);
+    setImageError(null);
     onOpenChange(false);
-  }, [onOpenChange]);
+  }, [onOpenChange, defaultTab]);
 
   const handlePreview = useCallback(() => {
     if (sourceType === 'url') {
@@ -349,6 +389,64 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
     }
     // Reset file input
     e.target.value = '';
+  }, []);
+
+  const handleImageUpload = useCallback(async (file: File) => {
+    setImageProcessing(true);
+    setImageError(null);
+    setPreviewRecipe(null);
+
+    try {
+      // Upload image to the image-parse service
+      const { sessionId: imgSessionId } = await imageParseApi.uploadImage(file, 'recipe', undefined, 'accurate');
+      setImageParseSessionId(imgSessionId);
+
+      // Poll until processing is complete
+      const maxWaitMs = 180000; // 3 minutes
+      const startTime = Date.now();
+      let delay = 1000;
+
+      while (Date.now() - startTime < maxWaitMs) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        const { session: imgSession } = await imageParseApi.getSession(imgSessionId);
+
+        if (imgSession.status === 'review' && imgSession.parsedContent) {
+          // Map image-parse result to preview recipe format
+          const data = imgSession.parsedContent.data as ParsedRecipeContent;
+          setPreviewRecipe({
+            title: data.title || '',
+            description: data.description,
+            instructions: data.instructions || [],
+            prepTimeMinutes: data.prepTimeMinutes,
+            cookTimeMinutes: data.cookTimeMinutes,
+            servings: data.servings,
+            imageUrl: data.imageUrl,
+            ingredients: (data.ingredients || []).map(ing => ({
+              name: ing.name,
+              quantity: ing.quantity,
+              unit: ing.unit,
+              notes: ing.notes,
+            })),
+          });
+          setParseMethod('crf' as ParseMethod);
+          setParseConfidence(parseFloat(imgSession.confidence || '0.8'));
+          setParseWarnings(imgSession.parseWarnings || []);
+          setImageProcessing(false);
+          return;
+        }
+
+        if (imgSession.status === 'failed') {
+          throw new Error('Image processing failed. Try a clearer photo.');
+        }
+
+        delay = Math.min(delay * 1.5, 5000);
+      }
+
+      throw new Error('Image processing timed out. Please try again.');
+    } catch (e) {
+      setImageError(e instanceof Error ? e.message : 'Failed to process image');
+      setImageProcessing(false);
+    }
   }, []);
 
   const handleMatchUpdate = useCallback((parsedName: string, matchedItemId?: string, matchedItemName?: string, unit?: string) => {
@@ -497,12 +595,13 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
           {step === 'source' && (
             <div className="space-y-4 py-4">
               <Tabs value={sourceType} onValueChange={(v) => {
-                setSourceType(v as 'url' | 'pdf' | 'text' | 'file');
+                setSourceType(v as 'url' | 'pdf' | 'text' | 'file' | 'image');
                 setPreviewRecipe(null);
                 setParseWarnings([]);
                 setImportedCatalogItems({});
+                setImageError(null);
               }}>
-                <TabsList className="grid w-full grid-cols-4">
+                <TabsList className="grid w-full grid-cols-5">
                   <TabsTrigger value="text">
                     <FileText className="mr-2 h-4 w-4" />
                     Paste Text
@@ -510,6 +609,10 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
                   <TabsTrigger value="url">
                     <Link className="mr-2 h-4 w-4" />
                     From URL
+                  </TabsTrigger>
+                  <TabsTrigger value="image">
+                    <Camera className="mr-2 h-4 w-4" />
+                    Scan Image
                   </TabsTrigger>
                   <TabsTrigger value="file">
                     <FileUp className="mr-2 h-4 w-4" />
@@ -614,6 +717,70 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
                   </div>
                 </TabsContent>
 
+                <TabsContent value="image" className="mt-4">
+                  <div className="space-y-4">
+                    {imageProcessing ? (
+                      <div className="border-2 border-dashed rounded-lg p-8 text-center space-y-4">
+                        <Loader2 className="h-12 w-12 mx-auto text-primary animate-spin" />
+                        <p className="text-sm font-medium">Processing image...</p>
+                        <p className="text-xs text-muted-foreground">
+                          Extracting text and parsing recipe. This may take up to a minute.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Label>Upload a photo of a recipe</Label>
+                        <Input
+                          type="file"
+                          accept="image/jpeg,image/png,image/gif,image/webp,image/heic"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleImageUpload(file);
+                            e.target.value = '';
+                          }}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Take a photo of a handwritten recipe card, printed recipe, or screenshot. Supports JPG, PNG, GIF, WebP, HEIC (max 10MB).
+                        </p>
+                      </div>
+                    )}
+
+                    {imageError && (
+                      <Alert variant="destructive">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>{imageError}</AlertDescription>
+                      </Alert>
+                    )}
+
+                    {hasPreview && sourceType === 'image' && (
+                      <Card>
+                        <CardContent className="p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-medium">{previewRecipe?.title}</h4>
+                            <div className="flex gap-2">
+                              {currentConfidence !== undefined && (
+                                <Badge variant={getConfidenceBadgeVariant(currentConfidence)} className="text-xs">
+                                  {Math.round(currentConfidence * 100)}% confidence
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                          {previewRecipe?.description && (
+                            <p className="text-sm text-muted-foreground line-clamp-2">
+                              {previewRecipe.description}
+                            </p>
+                          )}
+                          <div className="flex gap-4 text-sm text-muted-foreground">
+                            <span>{previewRecipe?.ingredients.length ?? 0} ingredients</span>
+                            <span>{previewRecipe?.instructions.length ?? 0} steps</span>
+                            {previewRecipe?.servings && <span>{previewRecipe.servings} servings</span>}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
+                </TabsContent>
+
                 <TabsContent value="file" className="mt-4">
                   <div className="space-y-4">
                     <div className="space-y-2">
@@ -684,10 +851,12 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess }: ImportReci
               <div className="flex justify-end">
                 <Button
                   onClick={() => startImportMutation.mutate()}
-                  disabled={startImportMutation.isPending || (
+                  disabled={startImportMutation.isPending || imageProcessing || (
                     sourceType === 'text' ? !rawText :
                     sourceType === 'file' ? !previewRecipe :
-                    !sourceUrl
+                    sourceType === 'image' ? !previewRecipe :
+                    sourceType === 'url' ? !sourceUrl :
+                    true
                   )}
                 >
                   {startImportMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

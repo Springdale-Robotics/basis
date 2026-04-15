@@ -12,7 +12,6 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { RecipeForm, type RecipeImageChange } from '@/components/recipes/RecipeForm';
 import { ImportRecipeDialog } from './ImportRecipeDialog';
-import { ImageParseDialog } from '@/components/image-parse';
 import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
 import type { Recipe } from '@/types/models';
@@ -27,7 +26,7 @@ export function RecipesPage() {
   const [canMakeFilter, setCanMakeFilter] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [imageParseOpen, setImageParseOpen] = useState(false);
+  const [importDefaultTab, setImportDefaultTab] = useState<'text' | 'url' | 'file' | 'pdf' | 'image' | undefined>();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
@@ -106,11 +105,11 @@ export function RecipesPage() {
         description="Your recipe collection"
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setImageParseOpen(true)}>
+            <Button variant="outline" onClick={() => { setImportDefaultTab('image'); setImportOpen(true); }}>
               <Camera className="mr-2 h-4 w-4" />
               Scan Image
             </Button>
-            <Button variant="outline" onClick={() => setImportOpen(true)}>
+            <Button variant="outline" onClick={() => { setImportDefaultTab(undefined); setImportOpen(true); }}>
               <Upload className="mr-2 h-4 w-4" />
               Import
             </Button>
@@ -200,17 +199,7 @@ export function RecipesPage() {
         open={importOpen}
         onOpenChange={setImportOpen}
         onSuccess={(recipeId) => navigate(`/recipes/${recipeId}`)}
-      />
-
-      <ImageParseDialog
-        open={imageParseOpen}
-        onOpenChange={setImageParseOpen}
-        defaultType="recipe"
-        onSuccess={(type, createdIds) => {
-          if (createdIds.length > 0) {
-            navigate(`/recipes/${createdIds[0]}`);
-          }
-        }}
+        defaultTab={importDefaultTab}
       />
     </div>
   );
