@@ -295,7 +295,7 @@ export const recipesApi = {
   updateImportMatches: (sessionId: string, updates: Array<{ parsedName: string; matchedItemId?: string; matchedItemName?: string; modifiedUnit?: string }>) =>
     apiPost<{ message: string }>(`/recipes/import/${sessionId}/match`, { updates }),
 
-  confirmImport: (sessionId: string, overrides?: { title?: string; description?: string; prepTimeMinutes?: number; cookTimeMinutes?: number; servings?: number; imageUrl?: string }) =>
+  confirmImport: (sessionId: string, overrides?: { title?: string; description?: string; prepTimeMinutes?: number; cookTimeMinutes?: number; servings?: number; imageUrl?: string; ingredients?: Array<{ name: string; quantity?: number; unit?: string; notes?: string }>; instructions?: string[] }) =>
     apiPost<{ recipeId: string }>(`/recipes/import/${sessionId}/confirm`, overrides),
 
   cancelImport: (sessionId: string) =>

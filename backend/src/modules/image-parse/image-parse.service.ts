@@ -1,5 +1,7 @@
 import { randomUUID } from 'crypto';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, lt } from 'drizzle-orm';
+import { mkdir, writeFile, readFile, unlink } from 'fs/promises';
+import { join } from 'path';
 import { db } from '../../config/database.js';
 import { config } from '../../config/index.js';
 import { logger } from '../../lib/logger.js';
@@ -24,6 +26,25 @@ import { normalizeListContent, parseListFromText } from './extractors/list-extra
 import { normalizeRecipeContent, parseRecipeFromText } from './extractors/recipe-extractor.js';
 import { normalizeCalendarContent, parseCalendarFromText } from './extractors/calendar-extractor.js';
 import { queueImageParse } from '../../jobs/index.js';
+
+/** Directory for temporary image uploads during parsing */
+const UPLOAD_DIR = join(config.STORAGE_PATH, 'image-parse');
+
+/** Ensure the upload directory exists */
+async function ensureUploadDir(): Promise<void> {
+  await mkdir(UPLOAD_DIR, { recursive: true });
+}
+
+/** Get the file path for a session image */
+export function getSessionImagePath(sessionId: string, mimeType: string): string {
+  const ext = mimeType.includes('png') ? '.png'
+    : mimeType.includes('gif') ? '.gif'
+    : mimeType.includes('webp') ? '.webp'
+    : mimeType.includes('heic') ? '.heic'
+    : mimeType.includes('heif') ? '.heif'
+    : '.jpg';
+  return join(UPLOAD_DIR, `${sessionId}${ext}`);
+}
 
 /**
  * Create a new image parse session
@@ -75,21 +96,21 @@ export async function processUploadedImage(
     throw Errors.validation(`Unsupported image type: ${mimeType}`);
   }
 
-  logger.info({ sessionId }, 'Validation passed, converting to base64');
+  // Save image to disk instead of storing base64 in the database
+  await ensureUploadDir();
+  const imagePath = getSessionImagePath(sessionId, mimeType);
+  await writeFile(imagePath, imageBuffer);
 
-  // Store image data as base64 in database (temporary storage)
-  const imageBase64 = imageBuffer.toString('base64');
-
-  logger.info({ sessionId, base64Length: imageBase64.length }, 'Base64 conversion done, updating database');
+  logger.info({ sessionId, imagePath, sizeBytes: imageBuffer.length }, 'Image saved to disk');
 
   await db
     .update(imageParseSessions)
     .set({
-      originalImagePath: imageBase64, // Store as base64 for now
+      originalImagePath: imagePath,
       imageMimeType: mimeType,
       selectedType: targetType,
       extractionMode,
-      status: extractionMode === 'counsel' ? 'processing' : 'processing', // Same for now, counsel uses SSE
+      status: 'processing',
       updatedAt: new Date(),
     })
     .where(
@@ -98,13 +119,6 @@ export async function processUploadedImage(
 
   logger.info({ sessionId, extractionMode }, 'Database updated, queuing job');
 
-  // Counsel mode uses SSE stream directly from frontend, not job queue
-  if (extractionMode === 'counsel') {
-    logger.info({ sessionId }, 'Counsel mode - skipping job queue, using SSE stream');
-    return;
-  }
-
-  // Queue for processing (non-counsel modes)
   await queueImageParse({
     sessionId,
     householdId,
@@ -172,8 +186,8 @@ export async function processImageWithAI(sessionId: string, householdId: string)
       return;
     }
 
-    // Decode image
-    const imageBuffer = Buffer.from(session.originalImagePath, 'base64');
+    // Read image from disk
+    const imageBuffer = await readFile(session.originalImagePath);
     const targetType = session.selectedType as ParsedContentType | null;
     const extractionMode = session.extractionMode || 'accurate';
 
@@ -510,14 +524,23 @@ export async function confirmSession(
         throw Errors.validation(`Cannot create entities from type: ${selectedType}`);
     }
 
-    // Mark session as confirmed
+    // Mark session as confirmed and clean up image file
     await db
       .update(imageParseSessions)
       .set({
         status: 'confirmed',
+        originalImagePath: null,
         updatedAt: new Date(),
       })
       .where(eq(imageParseSessions.id, sessionId));
+
+    if (session.originalImagePath) {
+      try {
+        await unlink(session.originalImagePath);
+      } catch {
+        // File may already be deleted
+      }
+    }
 
     return { type: selectedType, createdIds };
   } catch (error) {
@@ -527,9 +550,11 @@ export async function confirmSession(
 }
 
 /**
- * Cancel a session
+ * Cancel a session and clean up the image file
  */
 export async function cancelSession(sessionId: string, householdId: string): Promise<void> {
+  const session = await getSession(sessionId, householdId);
+
   await db
     .update(imageParseSessions)
     .set({
@@ -539,6 +564,44 @@ export async function cancelSession(sessionId: string, householdId: string): Pro
     .where(
       and(eq(imageParseSessions.id, sessionId), eq(imageParseSessions.householdId, householdId))
     );
+
+  // Clean up the image file
+  if (session?.originalImagePath) {
+    try {
+      await unlink(session.originalImagePath);
+    } catch {
+      // File may already be deleted
+    }
+  }
+}
+
+/**
+ * Clean up expired sessions and their image files
+ */
+export async function cleanupExpiredSessions(): Promise<number> {
+  const expired = await db.query.imageParseSessions.findMany({
+    where: lt(imageParseSessions.expiresAt, new Date()),
+  });
+
+  for (const session of expired) {
+    if (session.originalImagePath) {
+      try {
+        await unlink(session.originalImagePath);
+      } catch {
+        // File may already be deleted
+      }
+    }
+  }
+
+  if (expired.length > 0) {
+    await db
+      .delete(imageParseSessions)
+      .where(lt(imageParseSessions.expiresAt, new Date()));
+
+    logger.info({ count: expired.length }, 'Cleaned up expired image parse sessions');
+  }
+
+  return expired.length;
 }
 
 /**

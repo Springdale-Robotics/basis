@@ -5,8 +5,8 @@ import type { ApiResponse } from '@/types/api';
 // Types matching backend schemas
 export type ParsedContentType = 'list' | 'recipe' | 'calendar_event' | 'mixed' | 'unknown';
 export type ImageParseStatus = 'uploading' | 'processing' | 'review' | 'confirmed' | 'cancelled' | 'failed';
-export type ProcessingStage = 'queued' | 'vlm_started' | 'vlm_done' | 'llm_started' | 'llm_done' | 'counsel_vlm' | 'counsel_interpretations' | 'counsel_discussion' | 'counsel_voting' | 'counsel_finalizing' | null;
-export type ExtractionMode = 'accurate' | 'thorough' | 'counsel';
+export type ProcessingStage = 'queued' | 'vlm_started' | 'vlm_done' | 'llm_started' | 'llm_done' | null;
+export type ExtractionMode = 'accurate' | 'thorough';
 
 export interface ParsedListItem {
   content: string;
@@ -78,72 +78,6 @@ export interface ImageParseSession {
   hasImage: boolean;
   createdAt: string;
   expiresAt: string;
-  counselDiscussion?: CounselDiscussionData;
-}
-
-// Counsel mode types
-export interface CounselPersonaInterpretation {
-  personaId: string;
-  personaName: string;
-  title: string;
-  ingredientCount: number;
-  notes: string[];
-  concerns: string[];
-  confidence: number;
-}
-
-export interface CounselDiscussionMessage {
-  speakerId: string;
-  speakerName: string;
-  message: string;
-  topic: string;
-  messageType: 'statement' | 'rebuttal' | 'agreement' | 'vote';
-}
-
-export interface CounselVoteResult {
-  topic: string;
-  winner: string;
-  tally: Record<string, number>;
-  reasoning: string;
-}
-
-export interface CounselDiscussionData {
-  interpretations: CounselPersonaInterpretation[];
-  disagreements: Array<{
-    topic: string;
-    description: string;
-    positions: Record<string, string>;
-  }>;
-  discussion: CounselDiscussionMessage[];
-  votes: CounselVoteResult[];
-}
-
-// SSE event types for counsel mode
-export type CounselEventType =
-  | 'vlm_complete'
-  | 'stage'
-  | 'persona_thinking'
-  | 'persona_interpretation'
-  | 'disagreement'
-  | 'consensus'
-  | 'discussion_topic'
-  | 'discussion'
-  | 'vote'
-  | 'final_result'
-  | 'error';
-
-export interface CounselSSECallbacks {
-  onVlmComplete?: (data: { passes: number; text_length: number }) => void;
-  onStage?: (data: { stage: string; message: string }) => void;
-  onPersonaThinking?: (data: { persona_id: string; persona_name: string }) => void;
-  onPersonaInterpretation?: (data: CounselPersonaInterpretation) => void;
-  onDisagreement?: (data: { topic: string; description: string; positions: Record<string, string> }) => void;
-  onConsensus?: (data: { message: string }) => void;
-  onDiscussionTopic?: (data: { topic: string }) => void;
-  onDiscussion?: (data: CounselDiscussionMessage) => void;
-  onVote?: (data: CounselVoteResult) => void;
-  onFinalResult?: (data: unknown) => void;
-  onError?: (data: { message: string }) => void;
 }
 
 export interface AIStatus {
@@ -321,94 +255,4 @@ export const imageParseApi = {
    */
   cancel: (sessionId: string) =>
     apiDelete<{ message: string }>(`/image-parse/${sessionId}`),
-
-  /**
-   * Subscribe to counsel mode SSE stream
-   * Returns an EventSource that can be closed when done
-   */
-  subscribeCounselStream: (
-    sessionId: string,
-    callbacks: CounselSSECallbacks
-  ): EventSource => {
-    const url = `${API_BASE_URL}/image-parse/${sessionId}/counsel/stream`;
-    const es = new EventSource(url, { withCredentials: true });
-
-    // Map event types to callbacks
-    es.addEventListener('vlm_complete', (e) => {
-      callbacks.onVlmComplete?.(JSON.parse((e as MessageEvent).data));
-    });
-
-    es.addEventListener('stage', (e) => {
-      callbacks.onStage?.(JSON.parse((e as MessageEvent).data));
-    });
-
-    es.addEventListener('persona_thinking', (e) => {
-      callbacks.onPersonaThinking?.(JSON.parse((e as MessageEvent).data));
-    });
-
-    es.addEventListener('persona_interpretation', (e) => {
-      const data = JSON.parse((e as MessageEvent).data);
-      callbacks.onPersonaInterpretation?.({
-        personaId: data.persona_id,
-        personaName: data.persona_name,
-        title: data.title,
-        ingredientCount: data.ingredient_count,
-        notes: data.notes || [],
-        concerns: data.concerns || [],
-        confidence: data.confidence,
-      });
-    });
-
-    es.addEventListener('disagreement', (e) => {
-      callbacks.onDisagreement?.(JSON.parse((e as MessageEvent).data));
-    });
-
-    es.addEventListener('consensus', (e) => {
-      callbacks.onConsensus?.(JSON.parse((e as MessageEvent).data));
-    });
-
-    es.addEventListener('discussion_topic', (e) => {
-      callbacks.onDiscussionTopic?.(JSON.parse((e as MessageEvent).data));
-    });
-
-    es.addEventListener('discussion', (e) => {
-      const data = JSON.parse((e as MessageEvent).data);
-      callbacks.onDiscussion?.({
-        speakerId: data.speaker_id,
-        speakerName: data.speaker_name,
-        message: data.message,
-        topic: data.topic,
-        messageType: data.message_type,
-      });
-    });
-
-    es.addEventListener('vote', (e) => {
-      const data = JSON.parse((e as MessageEvent).data);
-      callbacks.onVote?.({
-        topic: data.topic,
-        winner: data.winner,
-        tally: data.tally,
-        reasoning: data.reasoning,
-      });
-    });
-
-    es.addEventListener('final_result', (e) => {
-      callbacks.onFinalResult?.(JSON.parse((e as MessageEvent).data));
-      es.close(); // Close when done
-    });
-
-    es.addEventListener('error', (e) => {
-      if ((e as MessageEvent).data) {
-        callbacks.onError?.(JSON.parse((e as MessageEvent).data));
-      }
-      es.close();
-    });
-
-    // Handle connection errors
-    es.onerror = () => {
-      callbacks.onError?.({ message: 'Connection lost' });
-    };
-
-    return es;
-  },
 };

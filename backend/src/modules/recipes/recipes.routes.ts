@@ -1091,6 +1091,13 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         cookTimeMinutes: z.number().int().positive().optional(),
         servings: z.number().int().positive().optional(),
         imageUrl: z.string().url().optional(),
+        ingredients: z.array(z.object({
+          name: z.string(),
+          quantity: z.number().optional(),
+          unit: z.string().optional(),
+          notes: z.string().optional(),
+        })).optional(),
+        instructions: z.array(z.string()).optional(),
       });
 
       const overrides = schema.parse(request.body || {});

@@ -18,7 +18,7 @@ import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { recipesApi, type IngredientMatch, type ImportSession, type ParsedRecipe, type ParseMethod } from '@/api/recipes';
-import { imageParseApi, type ImageParseSession, type ParsedRecipeContent } from '@/api/image-parse';
+import { imageParseApi, type ParsedContent, type ParsedRecipeContent } from '@/api/image-parse';
 import { inventoryApi } from '@/api/inventory';
 import { cn } from '@/lib/utils';
 import { IngredientMatchRow } from './IngredientMatchRow';
@@ -57,19 +57,84 @@ function getConfidenceBadgeVariant(confidence: number): 'default' | 'secondary' 
   return 'destructive';
 }
 
-function formatRecipeAsText(recipe: ParsedRecipe): string {
-  const lines = [recipe.title || 'Untitled Recipe', '', 'Ingredients:'];
-  for (const ing of recipe.ingredients) {
-    const parts: string[] = [];
-    if (ing.quantity) parts.push(String(ing.quantity));
-    if (ing.unit) parts.push(ing.unit);
-    parts.push(ing.name);
-    if (ing.notes) parts.push(`(${ing.notes})`);
-    lines.push(parts.join(' '));
+/**
+ * Format OCR output into editable text with clear section headers.
+ * Uses structured data when available to place content under the right headers,
+ * so the user can see if anything ended up in the wrong section.
+ */
+function formatOcrForEditing(rawText: string | null, parsedContent: ParsedContent | null): string {
+  // If we have structured recipe data, rebuild text with explicit headers
+  if (parsedContent?.type === 'recipe') {
+    const data = parsedContent.data as ParsedRecipeContent;
+    const sections: string[] = [];
+
+    // Title
+    if (data.title) {
+      sections.push(data.title);
+      sections.push('');
+    }
+
+    // Description
+    if (data.description) {
+      sections.push(data.description);
+      sections.push('');
+    }
+
+    // Metadata line
+    const meta: string[] = [];
+    if (data.prepTimeMinutes) meta.push(`Prep: ${data.prepTimeMinutes} min`);
+    if (data.cookTimeMinutes) meta.push(`Cook: ${data.cookTimeMinutes} min`);
+    if (data.servings) meta.push(`Servings: ${data.servings}`);
+    if (meta.length > 0) {
+      sections.push(meta.join(' | '));
+      sections.push('');
+    }
+
+    // Ingredients
+    sections.push('Ingredients');
+    if (data.ingredients && data.ingredients.length > 0) {
+      for (const ing of data.ingredients) {
+        const parts: string[] = [];
+        if (ing.quantity != null) parts.push(String(ing.quantity));
+        if (ing.unit) parts.push(ing.unit);
+        parts.push(ing.name);
+        if (ing.notes) parts.push(`(${ing.notes})`);
+        sections.push(parts.join(' '));
+      }
+    }
+    sections.push('');
+
+    // Instructions
+    sections.push('Instructions');
+    if (data.instructions && data.instructions.length > 0) {
+      data.instructions.forEach((step, i) => {
+        sections.push(`${i + 1}. ${step}`);
+      });
+    }
+
+    return sections.join('\n');
   }
-  lines.push('', 'Instructions:');
-  recipe.instructions.forEach((step, i) => lines.push(`${i + 1}. ${step}`));
-  return lines.join('\n');
+
+  // No structured data — use raw text, but ensure section headers exist
+  if (rawText) {
+    const lower = rawText.toLowerCase();
+    const hasIngredients = /^ingredients?$/im.test(rawText);
+    const hasInstructions = /^(instructions?|directions?|method|steps?)$/im.test(rawText);
+
+    // If headers are already present, return as-is
+    if (hasIngredients && hasInstructions) {
+      return rawText;
+    }
+
+    // Add missing headers as guidance
+    const lines = [rawText, ''];
+    if (!hasIngredients) lines.push('Ingredients', '(move ingredient lines here)', '');
+    if (!hasInstructions) lines.push('Instructions', '(move instruction lines here)', '');
+    return lines.join('\n');
+  }
+
+  // Nothing at all
+  return 'Ingredients\n\n\nInstructions\n\n';
 }
 
 export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }: ImportRecipeDialogProps) {
@@ -104,6 +169,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
   const [imageParseSessionId, setImageParseSessionId] = useState<string | null>(null);
   const [imageProcessing, setImageProcessing] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
+  const [imageRawText, setImageRawText] = useState<string | null>(null);
   const [ingredientMatches, setIngredientMatches] = useState<IngredientMatch[]>([]);
   // Store catalog item data from imported .recipe files
   const [importedCatalogItems, setImportedCatalogItems] = useState<Record<string, { name: string; category?: string; defaultUnit?: string; density?: number }>>({});
@@ -113,6 +179,8 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
     prepTimeMinutes?: number;
     cookTimeMinutes?: number;
     servings?: number;
+    ingredients?: Array<{ name: string; quantity?: number; unit?: string; notes?: string }>;
+    instructions?: string[];
   }>({});
 
   // Quick catalog state (Basic mode)
@@ -173,13 +241,12 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
   // Start import mutation
   const startImportMutation = useMutation({
     mutationFn: async () => {
-      if (sourceType === 'image' && previewRecipe) {
-        // Send OCR-extracted recipe as text for the import pipeline to process
-        const recipeText = formatRecipeAsText(previewRecipe);
+      if (sourceType === 'image' && imageRawText) {
+        // Send the user-reviewed OCR text for CRF parsing
         return recipesApi.startImport({
           sourceType: 'text',
-          sourceData: recipeText,
-          rawText: recipeText,
+          sourceData: imageRawText,
+          rawText: imageRawText,
         });
       }
       if (sourceType === 'file' && previewRecipe) {
@@ -330,6 +397,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
     setImageParseSessionId(null);
     setImageProcessing(false);
     setImageError(null);
+    setImageRawText(null);
     onOpenChange(false);
   }, [onOpenChange, defaultTab]);
 
@@ -394,7 +462,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
   const handleImageUpload = useCallback(async (file: File) => {
     setImageProcessing(true);
     setImageError(null);
-    setPreviewRecipe(null);
+    setImageRawText(null);
 
     try {
       // Upload image to the image-parse service
@@ -410,26 +478,11 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
         await new Promise(resolve => setTimeout(resolve, delay));
         const { session: imgSession } = await imageParseApi.getSession(imgSessionId);
 
-        if (imgSession.status === 'review' && imgSession.parsedContent) {
-          // Map image-parse result to preview recipe format
-          const data = imgSession.parsedContent.data as ParsedRecipeContent;
-          setPreviewRecipe({
-            title: data.title || '',
-            description: data.description,
-            instructions: data.instructions || [],
-            prepTimeMinutes: data.prepTimeMinutes,
-            cookTimeMinutes: data.cookTimeMinutes,
-            servings: data.servings,
-            imageUrl: data.imageUrl,
-            ingredients: (data.ingredients || []).map(ing => ({
-              name: ing.name,
-              quantity: ing.quantity,
-              unit: ing.unit,
-              notes: ing.notes,
-            })),
-          });
-          setParseMethod('crf' as ParseMethod);
-          setParseConfidence(parseFloat(imgSession.confidence || '0.8'));
+        if (imgSession.status === 'review') {
+          // Build editable text with clear section headers from structured data
+          // so the user can see and fix any misplaced content before CRF parsing
+          const editableText = formatOcrForEditing(imgSession.rawText, imgSession.parsedContent);
+          setImageRawText(editableText);
           setParseWarnings(imgSession.parseWarnings || []);
           setImageProcessing(false);
           return;
@@ -600,6 +653,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
                 setParseWarnings([]);
                 setImportedCatalogItems({});
                 setImageError(null);
+                setImageRawText(null);
               }}>
                 <TabsList className="grid w-full grid-cols-5">
                   <TabsTrigger value="text">
@@ -724,7 +778,34 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
                         <Loader2 className="h-12 w-12 mx-auto text-primary animate-spin" />
                         <p className="text-sm font-medium">Processing image...</p>
                         <p className="text-xs text-muted-foreground">
-                          Extracting text and parsing recipe. This may take up to a minute.
+                          Extracting text from image. This may take up to a minute.
+                        </p>
+                      </div>
+                    ) : imageRawText !== null ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label>Extracted text — review and fix any errors</Label>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setImageRawText(null);
+                              setParseWarnings([]);
+                            }}
+                          >
+                            <X className="mr-1 h-3 w-3" />
+                            Clear
+                          </Button>
+                        </div>
+                        <Textarea
+                          value={imageRawText}
+                          onChange={(e) => setImageRawText(e.target.value)}
+                          rows={14}
+                          className="font-mono text-sm"
+                          placeholder="No text was extracted from the image."
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Fix any OCR errors above, then click Parse & Review. The text will be parsed into a structured recipe.
                         </p>
                       </div>
                     ) : (
@@ -750,33 +831,6 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
                         <AlertCircle className="h-4 w-4" />
                         <AlertDescription>{imageError}</AlertDescription>
                       </Alert>
-                    )}
-
-                    {hasPreview && sourceType === 'image' && (
-                      <Card>
-                        <CardContent className="p-4 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <h4 className="font-medium">{previewRecipe?.title}</h4>
-                            <div className="flex gap-2">
-                              {currentConfidence !== undefined && (
-                                <Badge variant={getConfidenceBadgeVariant(currentConfidence)} className="text-xs">
-                                  {Math.round(currentConfidence * 100)}% confidence
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
-                          {previewRecipe?.description && (
-                            <p className="text-sm text-muted-foreground line-clamp-2">
-                              {previewRecipe.description}
-                            </p>
-                          )}
-                          <div className="flex gap-4 text-sm text-muted-foreground">
-                            <span>{previewRecipe?.ingredients.length ?? 0} ingredients</span>
-                            <span>{previewRecipe?.instructions.length ?? 0} steps</span>
-                            {previewRecipe?.servings && <span>{previewRecipe.servings} servings</span>}
-                          </div>
-                        </CardContent>
-                      </Card>
                     )}
                   </div>
                 </TabsContent>
@@ -854,7 +908,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
                   disabled={startImportMutation.isPending || imageProcessing || (
                     sourceType === 'text' ? !rawText :
                     sourceType === 'file' ? !previewRecipe :
-                    sourceType === 'image' ? !previewRecipe :
+                    sourceType === 'image' ? !imageRawText :
                     sourceType === 'url' ? !sourceUrl :
                     true
                   )}
@@ -873,7 +927,9 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 </div>
-              ) : session?.parsedRecipe ? (
+              ) : session?.parsedRecipe ? (() => {
+                const recipe = session.parsedRecipe!;
+                return (
                 <>
                   {/* Confidence and warnings banner */}
                   {(currentConfidence !== undefined || currentWarnings.length > 0) && (
@@ -938,7 +994,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
                     <div>
                       <Label>Title</Label>
                       <Input
-                        value={overrides.title ?? session.parsedRecipe.title}
+                        value={overrides.title ?? recipe.title}
                         onChange={(e) => setOverrides(prev => ({ ...prev, title: e.target.value }))}
                       />
                     </div>
@@ -946,7 +1002,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
                     <div>
                       <Label>Description</Label>
                       <Textarea
-                        value={overrides.description ?? session.parsedRecipe.description ?? ''}
+                        value={overrides.description ?? recipe.description ?? ''}
                         onChange={(e) => setOverrides(prev => ({ ...prev, description: e.target.value }))}
                         rows={2}
                       />
@@ -957,7 +1013,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
                         <Label>Prep Time (min)</Label>
                         <Input
                           type="number"
-                          value={overrides.prepTimeMinutes ?? session.parsedRecipe.prepTimeMinutes ?? ''}
+                          value={overrides.prepTimeMinutes ?? recipe.prepTimeMinutes ?? ''}
                           onChange={(e) => setOverrides(prev => ({ ...prev, prepTimeMinutes: parseInt(e.target.value) || undefined }))}
                         />
                       </div>
@@ -965,7 +1021,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
                         <Label>Cook Time (min)</Label>
                         <Input
                           type="number"
-                          value={overrides.cookTimeMinutes ?? session.parsedRecipe.cookTimeMinutes ?? ''}
+                          value={overrides.cookTimeMinutes ?? recipe.cookTimeMinutes ?? ''}
                           onChange={(e) => setOverrides(prev => ({ ...prev, cookTimeMinutes: parseInt(e.target.value) || undefined }))}
                         />
                       </div>
@@ -973,45 +1029,147 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
                         <Label>Servings</Label>
                         <Input
                           type="number"
-                          value={overrides.servings ?? session.parsedRecipe.servings ?? ''}
+                          value={overrides.servings ?? recipe.servings ?? ''}
                           onChange={(e) => setOverrides(prev => ({ ...prev, servings: parseInt(e.target.value) || undefined }))}
                         />
                       </div>
                     </div>
 
-                    {session.parsedRecipe.author && (
+                    {recipe.author && (
                       <div className="text-sm text-muted-foreground">
-                        By {session.parsedRecipe.author}
+                        By {recipe.author}
                       </div>
                     )}
 
                     <div>
-                      <Label>Ingredients ({session.parsedRecipe.ingredients.length})</Label>
+                      <div className="flex items-center justify-between">
+                        <Label>Ingredients ({overrides.ingredients ? overrides.ingredients.length : recipe.ingredients.length})</Label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            const current = overrides.ingredients;
+                            const ingredients = current || recipe.ingredients;
+                            setOverrides(prev => ({
+                              ...prev,
+                              ingredients: [...ingredients, { name: '', quantity: undefined, unit: undefined, notes: undefined }],
+                            }))
+;
+                          }}
+                        >
+                          + Add
+                        </Button>
+                      </div>
                       <Card className="mt-2">
-                        <CardContent className="p-3 max-h-32 overflow-y-auto">
-                          <ul className="text-sm space-y-1">
-                            {session.parsedRecipe.ingredients.map((ing, i) => (
-                              <li key={i}>
-                                {ing.quantity && <span className="font-medium">{ing.quantity} </span>}
-                                {ing.unit && <span>{ing.unit} </span>}
-                                <span>{ing.name}</span>
-                                {ing.notes && <span className="text-muted-foreground"> ({ing.notes})</span>}
-                              </li>
-                            ))}
-                          </ul>
+                        <CardContent className="p-3 max-h-48 overflow-y-auto space-y-2">
+                          {(overrides.ingredients || recipe.ingredients).map((ing, i) => (
+                            <div key={i} className="flex items-center gap-1.5">
+                              <Input
+                                className="w-16 h-8 text-xs px-2"
+                                placeholder="Qty"
+                                value={ing.quantity ?? ''}
+                                onChange={(e) => {
+                                  const current = (overrides.ingredients) || [...recipe.ingredients];
+                                  const updated = [...current];
+                                  updated[i] = { ...updated[i], quantity: e.target.value ? parseFloat(e.target.value) : undefined };
+                                  setOverrides(prev => ({ ...prev, ingredients: updated }))
+;
+                                }}
+                              />
+                              <Input
+                                className="w-16 h-8 text-xs px-2"
+                                placeholder="Unit"
+                                value={ing.unit ?? ''}
+                                onChange={(e) => {
+                                  const current = (overrides.ingredients) || [...recipe.ingredients];
+                                  const updated = [...current];
+                                  updated[i] = { ...updated[i], unit: e.target.value || undefined };
+                                  setOverrides(prev => ({ ...prev, ingredients: updated }))
+;
+                                }}
+                              />
+                              <Input
+                                className="flex-1 h-8 text-xs px-2"
+                                placeholder="Ingredient name"
+                                value={ing.name}
+                                onChange={(e) => {
+                                  const current = (overrides.ingredients) || [...recipe.ingredients];
+                                  const updated = [...current];
+                                  updated[i] = { ...updated[i], name: e.target.value };
+                                  setOverrides(prev => ({ ...prev, ingredients: updated }))
+;
+                                }}
+                              />
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0 shrink-0 text-destructive hover:text-destructive"
+                                onClick={() => {
+                                  const current = (overrides.ingredients) || [...recipe.ingredients];
+                                  const updated = current.filter((_, idx) => idx !== i);
+                                  setOverrides(prev => ({ ...prev, ingredients: updated }))
+;
+                                }}
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          ))}
                         </CardContent>
                       </Card>
                     </div>
 
                     <div>
-                      <Label>Instructions ({session.parsedRecipe.instructions.length} steps)</Label>
+                      <div className="flex items-center justify-between">
+                        <Label>Instructions ({overrides.instructions ? overrides.instructions.length : recipe.instructions.length} steps)</Label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            const current = overrides.instructions;
+                            const instructions = current || recipe.instructions;
+                            setOverrides(prev => ({
+                              ...prev,
+                              instructions: [...instructions, ''],
+                            }))
+;
+                          }}
+                        >
+                          + Add Step
+                        </Button>
+                      </div>
                       <Card className="mt-2">
-                        <CardContent className="p-3 max-h-32 overflow-y-auto">
-                          <ol className="text-sm space-y-2 list-decimal list-inside">
-                            {session.parsedRecipe.instructions.map((inst, i) => (
-                              <li key={i}>{inst}</li>
-                            ))}
-                          </ol>
+                        <CardContent className="p-3 max-h-48 overflow-y-auto space-y-2">
+                          {(overrides.instructions || recipe.instructions).map((inst, i) => (
+                            <div key={i} className="flex items-start gap-1.5">
+                              <span className="shrink-0 text-xs text-muted-foreground mt-2.5 w-5 text-right">{i + 1}.</span>
+                              <Textarea
+                                className="flex-1 text-xs min-h-[2rem]"
+                                rows={1}
+                                value={inst}
+                                onChange={(e) => {
+                                  const current = (overrides.instructions) || [...recipe.instructions];
+                                  const updated = [...current];
+                                  updated[i] = e.target.value;
+                                  setOverrides(prev => ({ ...prev, instructions: updated }))
+;
+                                }}
+                              />
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0 shrink-0 text-destructive hover:text-destructive"
+                                onClick={() => {
+                                  const current = (overrides.instructions) || [...recipe.instructions];
+                                  const updated = current.filter((_, idx) => idx !== i);
+                                  setOverrides(prev => ({ ...prev, instructions: updated }))
+;
+                                }}
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          ))}
                         </CardContent>
                       </Card>
                     </div>
@@ -1079,7 +1237,8 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
                     )}
                   </div>
                 </>
-              ) : (
+                );
+              })() : (
                 <div className="flex flex-col items-center justify-center py-8 text-center">
                   <AlertCircle className="h-12 w-12 text-destructive" />
                   <p className="mt-2 text-sm text-muted-foreground">

@@ -16,16 +16,6 @@ export default defineConfig({
       '/api': {
         target: process.env.VITE_BACKEND_URL || 'http://localhost:3000',
         changeOrigin: true,
-        // Handle SSE streaming properly - don't buffer responses
-        configure: (proxy) => {
-          proxy.on('proxyRes', (proxyRes, req) => {
-            // For SSE endpoints, ensure no buffering
-            if (req.url?.includes('/counsel/stream')) {
-              proxyRes.headers['cache-control'] = 'no-cache';
-              proxyRes.headers['x-accel-buffering'] = 'no';
-            }
-          });
-        },
       },
       '/socket.io': {
         target: process.env.VITE_BACKEND_URL || 'http://localhost:3000',

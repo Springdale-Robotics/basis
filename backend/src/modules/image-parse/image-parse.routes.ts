@@ -52,6 +52,13 @@ export async function imageParseRoutes(app: FastifyInstance): Promise<void> {
           throw Errors.validation('Expected multipart/form-data');
         }
 
+        // Reject obviously oversized uploads early before buffering
+        const contentLength = Number(request.headers['content-length'] || 0);
+        const maxBytes = 10 * 1024 * 1024; // 10MB hard limit for image parsing
+        if (contentLength > maxBytes) {
+          throw Errors.validation('Image size exceeds maximum of 10MB');
+        }
+
         const data = await request.file();
         if (!data) {
           throw Errors.validation('No file uploaded');
@@ -107,150 +114,6 @@ export async function imageParseRoutes(app: FastifyInstance): Promise<void> {
           name: err.name
         }, 'Image parse upload failed');
         throw error;
-      }
-    }
-  );
-
-  // SSE proxy for counsel mode discussion stream
-  // IMPORTANT: This route must be registered BEFORE /:sessionId to ensure proper matching
-  app.get<{ Params: { sessionId: string } }>(
-    '/:sessionId/counsel/stream',
-    { preHandler: [authMiddleware] },
-    async (request, reply) => {
-      const session = await getSession(request.params.sessionId, request.user!.householdId);
-
-      if (!session) {
-        throw Errors.notFound('Session');
-      }
-
-      if (!session.originalImagePath) {
-        throw Errors.validation('No image to process');
-      }
-
-      // Import config for VLM service URL
-      const { config } = await import('../../config/index.js');
-
-      // Set up SSE headers
-      reply.raw.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no',
-      });
-
-      try {
-        // Make request to Python VLM-LLM service counsel endpoint
-        const vlmServiceUrl = config.VLM_LLM_SERVICE_URL || 'http://vlm-llm:8000';
-
-        // Read the image file and convert to base64
-        const fs = await import('fs/promises');
-        const path = await import('path');
-        const imagePath = path.join(process.cwd(), 'uploads', path.basename(session.originalImagePath));
-        const imageBuffer = await fs.readFile(imagePath);
-        const imageBase64 = imageBuffer.toString('base64');
-
-        logger.info({ sessionId: request.params.sessionId, imagePath }, 'Starting counsel mode with image');
-
-        const response = await fetch(`${vlmServiceUrl}/extract/counsel`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            image_data: imageBase64,
-            num_vlm_passes: 3, // Reduced from 5 for faster processing
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`VLM service error: ${response.status}`);
-        }
-
-        if (!response.body) {
-          throw new Error('No response body from VLM service');
-        }
-
-        // Stream the SSE response through to client
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-
-        const interpretations: unknown[] = [];
-        const disagreements: unknown[] = [];
-        const discussion: unknown[] = [];
-        const votes: unknown[] = [];
-
-        logger.info({ sessionId: request.params.sessionId }, 'Starting counsel stream proxy');
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          const chunk = decoder.decode(value, { stream: true });
-          logger.debug({ chunkLength: chunk.length }, 'Received counsel chunk');
-
-          // Parse and collect counsel data for storage
-          const lines = chunk.split('\n');
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              logger.debug({ eventType: line.slice(7) }, 'SSE event type');
-            }
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                // Collect data based on event type from previous line
-                // (simplified - in production would track event type properly)
-                if (data.persona_id && data.persona_name && data.ingredient_count !== undefined) {
-                  interpretations.push(data);
-                } else if (data.topic && data.positions) {
-                  disagreements.push(data);
-                } else if (data.speaker_id && data.message) {
-                  discussion.push(data);
-                } else if (data.tally && data.winner) {
-                  votes.push(data);
-                }
-              } catch {
-                // Not JSON, ignore
-              }
-            }
-          }
-
-          // Write chunk and flush immediately for SSE
-          reply.raw.write(chunk);
-          if (typeof (reply.raw as NodeJS.WritableStream & { flush?: () => void }).flush === 'function') {
-            (reply.raw as NodeJS.WritableStream & { flush?: () => void }).flush!();
-          }
-        }
-
-        logger.info({
-          sessionId: request.params.sessionId,
-          interpretationsCount: interpretations.length,
-          discussionCount: discussion.length,
-          votesCount: votes.length,
-        }, 'Counsel stream completed');
-
-        // Store counsel discussion data in session
-        const { db } = await import('../../config/database.js');
-        const { imageParseSessions } = await import('../../db/schema/image-parse.js');
-        const { eq } = await import('drizzle-orm');
-
-        await db
-          .update(imageParseSessions)
-          .set({
-            counselDiscussion: {
-              interpretations: interpretations as never[],
-              disagreements: disagreements as never[],
-              discussion: discussion as never[],
-              votes: votes as never[],
-            },
-            updatedAt: new Date(),
-          })
-          .where(eq(imageParseSessions.id, session.id));
-
-        reply.raw.end();
-      } catch (error) {
-        logger.error({ error, sessionId: request.params.sessionId }, 'Counsel stream failed');
-        reply.raw.write(`event: error\ndata: ${JSON.stringify({ message: 'Stream failed' })}\n\n`);
-        reply.raw.end();
       }
     }
   );
