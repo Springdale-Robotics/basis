@@ -49,7 +49,7 @@ class VLMService:
             'OLLAMA_HOST',
             'http://ollama:11434'
         )
-        self.model = model or os.environ.get('VLM_MODEL', 'llava:7b')
+        self.model = model or os.environ.get('VLM_MODEL', 'minicpm-v')
         self.timeout = timeout
         self._available: bool | None = None
 
@@ -88,6 +88,7 @@ class VLMService:
         self,
         image_base64: str,
         prompt: str | None = None,
+        temperature: float = 0.1,
     ) -> VLMResponse:
         """
         Extract text from an image using the vision model.
@@ -129,7 +130,7 @@ Output the transcription and nothing else."""
                     "images": [image_base64],
                     "stream": False,
                     "options": {
-                        "temperature": 0.1,  # Low temperature for mostly deterministic output
+                        "temperature": temperature,
                         "num_predict": 2048,  # Allow longer output for full recipes
                         "top_p": 0.9,
                         "repeat_penalty": 1.0,  # Don't penalize repetition - recipes have many similar measurements

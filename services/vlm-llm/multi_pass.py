@@ -1,18 +1,21 @@
 """
-Multi-pass extraction with voting for improved VLM accuracy.
+Multi-pass extraction with cross-validation for improved VLM accuracy.
 
-Runs multiple extraction passes with different prompts and combines
-results using confidence-weighted voting to produce more accurate output.
+Runs two VLM passes — a full transcription and an ingredients-focused pass —
+then cross-validates ingredient quantities between them. Optionally triggers
+a targeted re-read for disagreements.
 """
 
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
 from prompts import (
     VLM_TEXT_EXTRACTION_PROMPT,
-    VLM_QUANTITY_FOCUSED_PROMPT,
+    VLM_INGREDIENTS_PROMPT,
+    VLM_TARGETED_REREAD_PROMPT,
     VLM_SECTION_BY_SECTION_PROMPT,
 )
 
@@ -29,46 +32,68 @@ class ExtractionPass:
 
 
 @dataclass
+class IngredientAgreement:
+    """Cross-pass agreement info for a single ingredient."""
+    name: str
+    quantity: float | None
+    unit: str | None
+    notes: str | None
+    passes_found: int
+    passes_agree_qty: bool
+    agreement_score: float  # 0.0-1.0
+    needs_review: bool = False
+
+
+@dataclass
 class MultiPassResult:
     """Result of multi-pass extraction."""
     passes: list[ExtractionPass]
     merged_text: str
     merged_ingredients: list[dict]
+    ingredient_agreements: list[IngredientAgreement]
     total_processing_ms: int
     pass_count: int
 
 
-# Prompts for multi-pass extraction
-EXTRACTION_PROMPTS = [
-    ("standard", VLM_TEXT_EXTRACTION_PROMPT),
-    ("quantity_focused", VLM_QUANTITY_FOCUSED_PROMPT),
-    ("section_by_section", VLM_SECTION_BY_SECTION_PROMPT),
-]
+def extract_ingredient_lines(raw_text: str) -> list[str]:
+    """
+    Extract lines that look like ingredients from raw VLM text.
+
+    Returns the raw line strings (not parsed), suitable for CRF parsing.
+    """
+    lines = []
+    for line in raw_text.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        # Strip bullet points
+        line = re.sub(r'^[-•*]\s*', '', line).strip()
+        if not line:
+            continue
+        # Match lines starting with a number/fraction (ingredient-like)
+        if re.match(r'^\d|^[½¼¾⅓⅔⅛]', line):
+            lines.append(line)
+        # Match lines with embedded quantities like "butter 1/2 cup"
+        elif re.search(r'\d+\s*/\s*\d+|(?:\d+\s+)?(?:cup|tsp|tbsp|c\.|T\.|t\.|oz|lb)', line, re.IGNORECASE):
+            lines.append(line)
+    return lines
 
 
 def extract_ingredients_from_text(raw_text: str) -> list[dict]:
     """
     Extract ingredients from raw VLM text using regex patterns.
-
-    Args:
-        raw_text: Raw text from VLM extraction
-
-    Returns:
-        List of ingredient dicts with name, quantity, unit, notes
     """
     ingredients = []
 
-    # Common patterns for ingredients
     patterns = [
         # "1 cup flour" or "1/2 tsp salt"
-        r'(?:^|\n)\s*[-•*]?\s*(\d+(?:\s*\d+)?(?:/\d+)?|\d+\.?\d*)\s*(cups?|c\.?|tablespoons?|tbsp\.?|T\.?|teaspoons?|tsp\.?|t\.?|ounces?|oz\.?|pounds?|lbs?\.?|grams?|g\.?|kilograms?|kg\.?|milliliters?|ml\.?|liters?|l\.?|quarts?|qt\.?|pints?|pt\.?|gallons?|gal\.?|sticks?|cloves?|cans?|packages?|pkg\.?|bunches?|heads?|pieces?|slices?|pinch(?:es)?|dash(?:es)?|drops?|handfuls?|sprigs?)\s+(?:of\s+)?([^\n,]+?)(?:\s*,\s*([^\n]+))?(?:\n|$)',
+        r'(?:^|\n)\s*[-•*]?\s*(\d+(?:\s*\d+)?(?:/\d+)?|\d+\.?\d*)\s*(cups?|c\.?|tablespoons?|tbsp\.?|T\.?|teaspoons?|tsp\.?|t\.?|ounces?|oz\.?|pounds?|lbs?\.?|grams?|g\.?|kilograms?|kg\.?|milliliters?|ml\.?|liters?|l\.?|quarts?|qt\.?|pints?|pt\.?|gallons?|gal\.?|sticks?|cloves?|cans?|packages?|pkg\.?|bunches?|heads?|pieces?|slices?|pinch(?:es)?|dash(?:es)?|drops?|handfuls?|sprigs?|squares?|Sq\.?)\s+(?:of\s+)?([^\n,]+?)(?:\s*,\s*([^\n]+))?(?:\n|$)',
         # "flour, 1 cup" (reversed)
         r'(?:^|\n)\s*[-•*]?\s*([a-zA-Z][^\n,]+?)\s*,\s*(\d+(?:\s*\d+)?(?:/\d+)?|\d+\.?\d*)\s*(cups?|c\.?|tablespoons?|tbsp\.?|teaspoons?|tsp\.?|ounces?|oz\.?|pounds?|lbs?\.?)\s*(?:\n|$)',
         # Just name with number (e.g., "2 eggs")
         r'(?:^|\n)\s*[-•*]?\s*(\d+(?:\s*\d+)?(?:/\d+)?)\s+([a-zA-Z][^\n,]+?)(?:\n|$)',
     ]
 
-    # Track seen ingredients to avoid duplicates
     seen = set()
 
     for pattern in patterns:
@@ -91,26 +116,18 @@ def extract_ingredients_from_text(raw_text: str) -> list[dict]:
             if not name:
                 continue
 
-            # Clean up name
             name = re.sub(r'\s+', ' ', name).strip()
             name = re.sub(r'^(of\s+)', '', name, flags=re.IGNORECASE)
 
-            # Skip if too short or looks like a number
             if len(name) < 2 or name.isdigit():
                 continue
 
-            # Create unique key
             key = name.lower()
             if key in seen:
                 continue
             seen.add(key)
 
-            # Parse quantity
-            quantity = None
-            if quantity_str:
-                quantity = parse_quantity(quantity_str)
-
-            # Normalize unit
+            quantity = parse_quantity(quantity_str) if quantity_str else None
             if unit:
                 unit = normalize_unit(unit)
 
@@ -126,17 +143,7 @@ def extract_ingredients_from_text(raw_text: str) -> list[dict]:
 
 
 def parse_quantity(quantity_str: str) -> float | None:
-    """
-    Parse a quantity string into a float.
-
-    Handles fractions, mixed numbers, and ranges.
-
-    Args:
-        quantity_str: String like "1", "1/2", "1 1/2", "2-3"
-
-    Returns:
-        Float value or None if unparseable
-    """
+    """Parse a quantity string into a float."""
     if not quantity_str:
         return None
 
@@ -165,7 +172,6 @@ def parse_quantity(quantity_str: str) -> float | None:
         except (ValueError, ZeroDivisionError):
             pass
 
-    # Handle simple numbers
     try:
         return float(quantity_str)
     except ValueError:
@@ -173,19 +179,12 @@ def parse_quantity(quantity_str: str) -> float | None:
 
 
 def normalize_unit(unit: str) -> str:
-    """
-    Normalize unit abbreviations to consistent form.
-
-    Args:
-        unit: Raw unit string
-
-    Returns:
-        Normalized unit
-    """
+    """Normalize unit abbreviations to consistent form."""
     unit_map = {
         'c': 'cup', 'c.': 'cup', 'cups': 'cup',
         't': 'tsp', 't.': 'tsp', 'tsp.': 'tsp', 'teaspoon': 'tsp', 'teaspoons': 'tsp',
         'T': 'tbsp', 'T.': 'tbsp', 'tbsp.': 'tbsp', 'tablespoon': 'tbsp', 'tablespoons': 'tbsp',
+        'tbl': 'tbsp', "tbl's": 'tbsp', 'tbs': 'tbsp',
         'oz': 'oz', 'oz.': 'oz', 'ounce': 'oz', 'ounces': 'oz',
         'lb': 'lb', 'lb.': 'lb', 'lbs': 'lb', 'lbs.': 'lb', 'pound': 'lb', 'pounds': 'lb',
         'g': 'g', 'g.': 'g', 'gram': 'g', 'grams': 'g',
@@ -208,231 +207,134 @@ def normalize_unit(unit: str) -> str:
         'drop': 'drop', 'drops': 'drop',
         'handful': 'handful', 'handfuls': 'handful',
         'sprig': 'sprig', 'sprigs': 'sprig',
+        'square': 'square', 'squares': 'square', 'sq': 'square', 'sq.': 'square',
+        'box': 'box', 'boxes': 'box',
+        'bundle': 'bundle', 'bundles': 'bundle',
     }
-
-    return unit_map.get(unit.lower(), unit.lower())
+    return unit_map.get(unit.lower().rstrip('.'), unit.lower())
 
 
 def similarity(a: str, b: str) -> float:
-    """
-    Calculate string similarity ratio.
-
-    Args:
-        a, b: Strings to compare
-
-    Returns:
-        Similarity ratio (0.0 to 1.0)
-    """
+    """Calculate string similarity ratio."""
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
 
-def merge_ingredients(ingredient_lists: list[list[dict]], require_consensus: bool = True) -> list[dict]:
+def cross_validate_ingredients(
+    pass1_ingredients: list[dict],
+    pass2_ingredients: list[dict],
+) -> list[IngredientAgreement]:
     """
-    Merge multiple ingredient lists using consensus voting.
+    Cross-validate ingredients between two passes.
 
-    For ingredients that appear in multiple lists, prefer the version
-    with the most complete information (quantity, unit, notes).
-
-    Args:
-        ingredient_lists: List of ingredient lists from different passes
-        require_consensus: If True, only include ingredients that appear in 2+ passes
-
-    Returns:
-        Merged and deduplicated ingredient list
+    Matches ingredients by name similarity, then compares quantities.
     """
-    if not ingredient_lists:
-        return []
+    agreements = []
 
-    if len(ingredient_lists) == 1:
-        return ingredient_lists[0]
+    # Build a combined list, matching by name
+    matched_p2 = set()
 
-    num_passes = len(ingredient_lists)
-    min_votes = 2 if require_consensus and num_passes >= 2 else 1
+    for ing1 in pass1_ingredients:
+        name1 = ing1.get("name", "").lower()
+        if not name1:
+            continue
 
-    # Collect all ingredients with their source counts
-    ingredient_votes: dict[str, list[dict]] = {}
-
-    for pass_ingredients in ingredient_lists:
-        for ing in pass_ingredients:
-            name = ing.get("name", "").lower()
-            if not name:
+        # Find best match in pass 2
+        best_match = None
+        best_sim = 0.0
+        best_idx = -1
+        for j, ing2 in enumerate(pass2_ingredients):
+            if j in matched_p2:
                 continue
+            name2 = ing2.get("name", "").lower()
+            sim = similarity(name1, name2)
+            if sim > best_sim and sim > 0.6:
+                best_sim = sim
+                best_match = ing2
+                best_idx = j
 
-            # Find matching ingredient by name similarity
-            matched = False
-            for existing_name in ingredient_votes.keys():
-                if similarity(name, existing_name) > 0.85:
-                    ingredient_votes[existing_name].append(ing)
-                    matched = True
-                    break
+        if best_match is not None:
+            matched_p2.add(best_idx)
 
-            if not matched:
-                ingredient_votes[name] = [ing]
+            # Compare quantities
+            qty1 = ing1.get("quantity")
+            qty2 = best_match.get("quantity")
+            qty_agrees = False
+            if qty1 is not None and qty2 is not None:
+                # Allow small floating point tolerance
+                qty_agrees = abs(qty1 - qty2) < 0.01
+            elif qty1 is None and qty2 is None:
+                qty_agrees = True
 
-    # Merge votes for each ingredient
-    merged = []
-    for name_key, votes in ingredient_votes.items():
-        if not votes:
-            continue
+            # Use the version with more complete info
+            if _score_ingredient(best_match) > _score_ingredient(ing1):
+                chosen = best_match
+            else:
+                chosen = ing1
 
-        vote_count = len(votes)
-
-        # Require consensus: skip ingredients that only appear in one pass
-        if vote_count < min_votes:
-            logger.debug(f"Skipping '{name_key}' - only {vote_count} vote(s), need {min_votes}")
-            continue
-
-        # Score each vote by completeness
-        def score_ingredient(ing: dict) -> int:
-            score = 0
-            if ing.get("quantity") is not None:
-                score += 3
-            if ing.get("unit"):
-                score += 2
-            if ing.get("notes"):
-                score += 1
-            return score
-
-        # Sort by score and take the best
-        votes.sort(key=score_ingredient, reverse=True)
-        best = votes[0].copy()
-
-        # Boost confidence based on vote count
-        if vote_count >= num_passes:
-            best["confidence"] = 0.95  # All passes agree
-        elif vote_count >= 2:
-            best["confidence"] = min(0.9, 0.7 + 0.1 * vote_count)
+            agreement_score = 0.95 if qty_agrees else 0.5
+            agreements.append(IngredientAgreement(
+                name=chosen.get("name", ""),
+                quantity=chosen.get("quantity"),
+                unit=chosen.get("unit"),
+                notes=chosen.get("notes"),
+                passes_found=2,
+                passes_agree_qty=qty_agrees,
+                agreement_score=agreement_score,
+                needs_review=not qty_agrees,
+            ))
         else:
-            best["confidence"] = 0.6
+            # Only in pass 1
+            agreements.append(IngredientAgreement(
+                name=ing1.get("name", ""),
+                quantity=ing1.get("quantity"),
+                unit=ing1.get("unit"),
+                notes=ing1.get("notes"),
+                passes_found=1,
+                passes_agree_qty=False,
+                agreement_score=0.6,
+                needs_review=True,
+            ))
 
-        merged.append(best)
+    # Ingredients only in pass 2
+    for j, ing2 in enumerate(pass2_ingredients):
+        if j in matched_p2:
+            continue
+        agreements.append(IngredientAgreement(
+            name=ing2.get("name", ""),
+            quantity=ing2.get("quantity"),
+            unit=ing2.get("unit"),
+            notes=ing2.get("notes"),
+            passes_found=1,
+            passes_agree_qty=False,
+            agreement_score=0.6,
+            needs_review=True,
+        ))
 
-    logger.debug(f"Merged {len(merged)} ingredients from {num_passes} passes (min_votes={min_votes})")
-    return merged
-
-
-def merge_raw_texts(texts: list[str]) -> str:
-    """
-    Merge raw texts from multiple passes.
-
-    Uses the FIRST pass (standard prompt) as the primary source, since it's
-    designed for general text extraction. Other passes may hallucinate when
-    they try to extract details that don't exist.
-
-    Args:
-        texts: List of raw text extractions (first is from standard prompt)
-
-    Returns:
-        Merged text (preferring first pass)
-    """
-    if not texts:
-        return ""
-
-    if len(texts) == 1:
-        return texts[0]
-
-    # Use the first pass (standard extraction) as primary
-    # The standard prompt is most reliable; other prompts may hallucinate
-    primary_text = texts[0]
-
-    # Check if first pass seems valid (has some structure)
-    has_ingredients = bool(re.search(r'ingredient|INGREDIENT', primary_text, re.IGNORECASE))
-    has_title = bool(re.search(r'title|TITLE', primary_text, re.IGNORECASE))
-
-    if has_ingredients or has_title:
-        # First pass looks valid, use it
-        logger.debug("Using first pass (standard prompt) as primary text")
-        return primary_text
-
-    # First pass might be incomplete, try to find the best one
-    # Prefer texts that have proper structure (TITLE, INGREDIENTS sections)
-    best_text = primary_text
-    best_score = 0
-
-    for text in texts:
-        score = 0
-        if re.search(r'TITLE:', text):
-            score += 2
-        if re.search(r'INGREDIENTS?:', text, re.IGNORECASE):
-            score += 2
-        if re.search(r'INSTRUCTIONS?:', text, re.IGNORECASE):
-            score += 1
-        # Penalize very long texts (often hallucinated)
-        if len(text) > 3000:
-            score -= 1
-
-        if score > best_score:
-            best_score = score
-            best_text = text
-
-    logger.debug(f"Selected text with structure score {best_score}")
-    return best_text
+    return agreements
 
 
-async def extract_multi_pass(
-    image_b64: str,
-    vlm_service,
-    num_passes: int = 2,
-) -> MultiPassResult:
-    """
-    Run multi-pass extraction with different prompts.
+def _score_ingredient(ing: dict) -> int:
+    score = 0
+    if ing.get("quantity") is not None:
+        score += 3
+    if ing.get("unit"):
+        score += 2
+    if ing.get("notes"):
+        score += 1
+    return score
 
-    Args:
-        image_b64: Base64-encoded image
-        vlm_service: VLM service instance
-        num_passes: Number of passes (1-3)
 
-    Returns:
-        MultiPassResult with merged output
-    """
-    import time
-    start_time = time.time()
+def build_disagreement_prompt(disagreements: list[IngredientAgreement]) -> str:
+    """Build a targeted re-read prompt for ingredients that disagreed between passes."""
+    items = []
+    for d in disagreements:
+        desc = f"- The ingredient '{d.name}'"
+        if d.quantity is not None:
+            desc += f" (I read: {d.quantity} {d.unit or ''})"
+        items.append(desc)
 
-    num_passes = min(num_passes, len(EXTRACTION_PROMPTS))
-    passes: list[ExtractionPass] = []
-    all_ingredients: list[list[dict]] = []
-
-    for i in range(num_passes):
-        prompt_name, prompt = EXTRACTION_PROMPTS[i]
-
-        logger.info(f"Multi-pass extraction: pass {i+1}/{num_passes} ({prompt_name})")
-
-        result = vlm_service.describe_image(
-            image_base64=image_b64,
-            prompt=prompt,
-        )
-
-        pass_result = ExtractionPass(
-            prompt_name=prompt_name,
-            raw_text=result.raw_text,
-            processing_time_ms=result.processing_time_ms,
-            confidence=0.8,
-        )
-        passes.append(pass_result)
-
-        # Extract ingredients from this pass
-        ingredients = extract_ingredients_from_text(result.raw_text)
-        all_ingredients.append(ingredients)
-
-        logger.info(f"Pass {i+1} extracted {len(ingredients)} ingredients")
-
-    # Merge results
-    merged_text = merge_raw_texts([p.raw_text for p in passes])
-    merged_ingredients = merge_ingredients(all_ingredients)
-
-    total_processing_ms = int((time.time() - start_time) * 1000)
-
-    logger.info(
-        f"Multi-pass extraction complete: {num_passes} passes, "
-        f"{len(merged_ingredients)} merged ingredients, {total_processing_ms}ms"
-    )
-
-    return MultiPassResult(
-        passes=passes,
-        merged_text=merged_text,
-        merged_ingredients=merged_ingredients,
-        total_processing_ms=total_processing_ms,
-        pass_count=num_passes,
+    return VLM_TARGETED_REREAD_PROMPT.format(
+        items_to_recheck="\n".join(items)
     )
 
 
@@ -442,62 +344,136 @@ def extract_multi_pass_sync(
     num_passes: int = 2,
 ) -> MultiPassResult:
     """
-    Synchronous version of multi-pass extraction.
+    Run multi-pass extraction with cross-validation.
+
+    Pass 1: Full transcription
+    Pass 2: Ingredients-only focused extraction
+    Optional Pass 3: Targeted re-read of disagreements
 
     Args:
         image_b64: Base64-encoded image
         vlm_service: VLM service instance
-        num_passes: Number of passes (1-3)
+        num_passes: Number of base passes (2 for accurate, 3 for thorough)
 
     Returns:
-        MultiPassResult with merged output
+        MultiPassResult with cross-validated output
     """
-    import time
     start_time = time.time()
-
-    num_passes = min(num_passes, len(EXTRACTION_PROMPTS))
     passes: list[ExtractionPass] = []
-    all_ingredients: list[list[dict]] = []
 
-    for i in range(num_passes):
-        prompt_name, prompt = EXTRACTION_PROMPTS[i]
+    # Pass 1: Full transcription
+    logger.info("Multi-pass: pass 1/2 (full transcription)")
+    result1 = vlm_service.describe_image(
+        image_base64=image_b64,
+        prompt=VLM_TEXT_EXTRACTION_PROMPT,
+        temperature=0.1,
+    )
+    passes.append(ExtractionPass(
+        prompt_name="transcription",
+        raw_text=result1.raw_text,
+        processing_time_ms=result1.processing_time_ms,
+    ))
+    ingredients1 = extract_ingredients_from_text(result1.raw_text)
+    logger.info(f"Pass 1 extracted {len(ingredients1)} ingredients")
 
-        logger.info(f"Multi-pass extraction: pass {i+1}/{num_passes} ({prompt_name})")
+    # Pass 2: Ingredients-only
+    logger.info("Multi-pass: pass 2/2 (ingredients-only)")
+    result2 = vlm_service.describe_image(
+        image_base64=image_b64,
+        prompt=VLM_INGREDIENTS_PROMPT,
+        temperature=0.15,  # Slight variation for diversity
+    )
+    passes.append(ExtractionPass(
+        prompt_name="ingredients_only",
+        raw_text=result2.raw_text,
+        processing_time_ms=result2.processing_time_ms,
+    ))
+    ingredients2 = extract_ingredients_from_text(result2.raw_text)
+    logger.info(f"Pass 2 extracted {len(ingredients2)} ingredients")
 
-        result = vlm_service.describe_image(
+    # For thorough mode: additional full pass with different temperature
+    if num_passes >= 3:
+        logger.info("Multi-pass: pass 3 (thorough - varied temperature)")
+        result3 = vlm_service.describe_image(
             image_base64=image_b64,
-            prompt=prompt,
+            prompt=VLM_SECTION_BY_SECTION_PROMPT,
+            temperature=0.25,
         )
+        passes.append(ExtractionPass(
+            prompt_name="section_by_section",
+            raw_text=result3.raw_text,
+            processing_time_ms=result3.processing_time_ms,
+        ))
 
-        pass_result = ExtractionPass(
-            prompt_name=prompt_name,
-            raw_text=result.raw_text,
-            processing_time_ms=result.processing_time_ms,
-            confidence=0.8,
+    # Cross-validate ingredients between passes
+    agreements = cross_validate_ingredients(ingredients1, ingredients2)
+
+    # Check for disagreements that warrant targeted re-read
+    disagreements = [a for a in agreements if not a.passes_agree_qty and a.passes_found == 2]
+    if disagreements and len(disagreements) <= 5:
+        logger.info(f"Targeted re-read for {len(disagreements)} disagreements")
+        reread_prompt = build_disagreement_prompt(disagreements)
+        reread_result = vlm_service.describe_image(
+            image_base64=image_b64,
+            prompt=reread_prompt,
+            temperature=0.1,
         )
-        passes.append(pass_result)
+        passes.append(ExtractionPass(
+            prompt_name="targeted_reread",
+            raw_text=reread_result.raw_text,
+            processing_time_ms=reread_result.processing_time_ms,
+        ))
+        # Parse the re-read results and update agreements
+        reread_ingredients = extract_ingredients_from_text(reread_result.raw_text)
+        for reread_ing in reread_ingredients:
+            rname = reread_ing.get("name", "").lower()
+            for agreement in agreements:
+                if similarity(rname, agreement.name.lower()) > 0.6:
+                    # Update with re-read result
+                    if reread_ing.get("quantity") is not None:
+                        agreement.quantity = reread_ing["quantity"]
+                        agreement.unit = reread_ing.get("unit") or agreement.unit
+                        agreement.agreement_score = 0.8  # Improved by re-read
+                        agreement.needs_review = False
+                    break
 
-        # Extract ingredients from this pass
-        ingredients = extract_ingredients_from_text(result.raw_text)
-        all_ingredients.append(ingredients)
+    # Build merged ingredient list from agreements
+    merged_ingredients = []
+    for a in agreements:
+        merged_ingredients.append({
+            "name": a.name,
+            "quantity": a.quantity,
+            "unit": a.unit,
+            "notes": a.notes,
+            "confidence": a.agreement_score,
+        })
 
-        logger.info(f"Pass {i+1} extracted {len(ingredients)} ingredients")
-
-    # Merge results
-    merged_text = merge_raw_texts([p.raw_text for p in passes])
-    merged_ingredients = merge_ingredients(all_ingredients)
+    # Use pass 1 text as the base (has title + instructions)
+    merged_text = passes[0].raw_text
 
     total_processing_ms = int((time.time() - start_time) * 1000)
 
     logger.info(
-        f"Multi-pass extraction complete: {num_passes} passes, "
-        f"{len(merged_ingredients)} merged ingredients, {total_processing_ms}ms"
+        f"Multi-pass complete: {len(passes)} passes, "
+        f"{len(merged_ingredients)} ingredients, "
+        f"{len(disagreements)} disagreements, {total_processing_ms}ms"
     )
 
     return MultiPassResult(
         passes=passes,
         merged_text=merged_text,
         merged_ingredients=merged_ingredients,
+        ingredient_agreements=agreements,
         total_processing_ms=total_processing_ms,
-        pass_count=num_passes,
+        pass_count=len(passes),
     )
+
+
+# Keep async version for compatibility
+async def extract_multi_pass(
+    image_b64: str,
+    vlm_service,
+    num_passes: int = 2,
+) -> MultiPassResult:
+    """Async wrapper around sync multi-pass extraction."""
+    return extract_multi_pass_sync(image_b64, vlm_service, num_passes)

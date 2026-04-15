@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     ollama_host: str = Field(default="http://ollama:11434", alias="OLLAMA_HOST")
 
     # VLM settings (vision model for Stage 1)
-    vlm_model: str = Field(default="llava:7b", alias="VLM_MODEL")
+    vlm_model: str = Field(default="minicpm-v", alias="VLM_MODEL")
     vlm_model_cpu: str = Field(default="moondream", alias="VLM_MODEL_CPU")
 
     # LLM settings (text model for Stage 2)
@@ -641,7 +641,7 @@ async def extract_from_base64(request: Request, body: ExtractBase64Request):
         mode = body.extraction_mode
         do_preprocessing = body.enable_preprocessing and mode in ("accurate", "thorough")
         do_verification = body.enable_verification and mode in ("accurate", "thorough")
-        do_multi_pass = mode == "thorough"
+        do_multi_pass = mode in ("accurate", "thorough")
         num_passes = 3 if mode == "thorough" else (2 if mode == "accurate" else 1)
 
         logger.info(f"Extraction mode: {mode} (preprocess={do_preprocessing}, verify={do_verification}, passes={num_passes})")
@@ -726,33 +726,102 @@ async def extract_from_base64(request: Request, body: ExtractBase64Request):
             logger.info(f"VLM extracted {len(raw_text)} chars in {vlm_processing_ms}ms")
 
         # =====================================================================
-        # Stage 3: Verification Loop (optional)
+        # Stage 3: CRF Ingredient Validation (replaces VLM self-verification)
         # =====================================================================
-        if do_verification and raw_text:
+        crf_ingredients = None
+        crf_validation_ms = 0
+
+        if raw_text:
             try:
-                logger.info("Running verification pass...")
-                verification_prompt = VLM_VERIFICATION_PROMPT.format(
-                    extracted_text=raw_text[:2000]  # Limit to avoid context overflow
-                )
+                from ingredient_parser import parse_ingredient as crf_parse
+                from multi_pass import extract_ingredient_lines
 
-                verify_result = vlm_service.describe_image(
-                    image_base64=image_data,
-                    prompt=verification_prompt,
-                )
-                vlm_processing_ms += verify_result.processing_time_ms
+                crf_start = time.time()
+                ingredient_lines = extract_ingredient_lines(raw_text)
+                logger.info(f"Found {len(ingredient_lines)} ingredient lines for CRF validation")
 
-                is_verified, corrections = parse_verification_response(verify_result.raw_text)
-                verification_applied = True
+                if ingredient_lines:
+                    crf_ingredients = []
+                    for line in ingredient_lines:
+                        try:
+                            parsed = crf_parse(line)
 
-                if not is_verified and corrections:
-                    logger.info(f"Verification found {len(corrections)} corrections")
-                    raw_text = apply_text_corrections(raw_text, corrections)
-                    verification_corrections = len(corrections)
-                else:
-                    logger.info("Verification: no corrections needed")
+                            quantity = None
+                            if parsed.amount and parsed.amount[0].quantity is not None:
+                                try:
+                                    quantity = float(parsed.amount[0].quantity)
+                                except (ValueError, TypeError):
+                                    pass
 
+                            unit = None
+                            if parsed.amount and parsed.amount[0].unit:
+                                unit = str(parsed.amount[0].unit)
+
+                            name = line
+                            if parsed.name:
+                                if isinstance(parsed.name, list):
+                                    name = ", ".join(
+                                        item.text if hasattr(item, 'text') else str(item)
+                                        for item in parsed.name
+                                    )
+                                elif hasattr(parsed.name, 'text'):
+                                    name = parsed.name.text
+                                else:
+                                    name = str(parsed.name)
+
+                            notes = None
+                            notes_parts = []
+                            if parsed.preparation:
+                                notes_parts.append(
+                                    parsed.preparation.text if hasattr(parsed.preparation, 'text')
+                                    else str(parsed.preparation)
+                                )
+                            if parsed.comment:
+                                notes_parts.append(
+                                    parsed.comment.text if hasattr(parsed.comment, 'text')
+                                    else str(parsed.comment)
+                                )
+                            if notes_parts:
+                                notes = ", ".join(notes_parts)
+
+                            conf = 0.9
+                            if parsed.name and isinstance(parsed.name, list):
+                                confs = [item.confidence for item in parsed.name if hasattr(item, 'confidence')]
+                                if confs:
+                                    conf = sum(confs) / len(confs)
+
+                            crf_ingredients.append({
+                                "name": name.strip(),
+                                "quantity": round(quantity, 3) if quantity is not None else None,
+                                "unit": unit,
+                                "notes": notes,
+                                "confidence": round(conf, 4),
+                                "needs_review": conf < 0.7,
+                            })
+                        except Exception as e:
+                            logger.warning(f"CRF failed for '{line}': {e}")
+                            crf_ingredients.append({
+                                "name": line.strip(),
+                                "quantity": None,
+                                "unit": None,
+                                "notes": None,
+                                "confidence": 0.3,
+                                "needs_review": True,
+                            })
+
+                    crf_validation_ms = int((time.time() - crf_start) * 1000)
+                    verification_applied = True
+                    verification_corrections = len([i for i in crf_ingredients if not i.get("needs_review")])
+                    logger.info(
+                        f"CRF validated {len(crf_ingredients)} ingredients in {crf_validation_ms}ms "
+                        f"({verification_corrections} confident, "
+                        f"{len(crf_ingredients) - verification_corrections} needs review)"
+                    )
+
+            except ImportError:
+                logger.warning("ingredient-parser-nlp not available, skipping CRF validation")
             except Exception as e:
-                logger.warning(f"Verification failed, continuing with original extraction: {e}")
+                logger.warning(f"CRF validation failed: {e}")
 
         # =====================================================================
         # Stage 4: Content Type Detection
@@ -776,11 +845,12 @@ async def extract_from_base64(request: Request, body: ExtractBase64Request):
             if llm_service.is_available:
                 llm_start = time.time()
 
-                # Build structuring prompt
+                # Build structuring prompt (with CRF ingredients as reference if available)
                 prompt = build_llm_structuring_prompt(
                     detected_type=detected_type,
                     raw_text=raw_text,
                     hint_type=body.hint_type,
+                    crf_ingredients=crf_ingredients,
                 )
 
                 # Get structured output
@@ -813,13 +883,35 @@ Remember: Start your response with {'{'}"""
 
                 logger.info(f"LLM structured in {llm_processing_ms}ms")
 
-                # Update confidence from LLM result if available
-                if structured and isinstance(structured, dict) and "confidence" in structured:
-                    confidence = structured["confidence"]
+                # Compute quality-based confidence instead of using flat LLM value
+                if structured and isinstance(structured, dict):
+                    # Per-ingredient confidence from CRF
+                    crf_score = 0.5  # default when no CRF
+                    if crf_ingredients:
+                        confident_count = sum(1 for i in crf_ingredients if not i.get("needs_review"))
+                        crf_score = confident_count / len(crf_ingredients) if crf_ingredients else 0.5
 
-                # Boost confidence if we used accuracy enhancements
-                if preprocessing_applied or verification_applied or pass_count > 1:
-                    confidence = min(0.95, confidence + 0.05)
+                    # Structural completeness
+                    has_title = bool(structured.get("title"))
+                    has_instructions = bool(structured.get("instructions"))
+                    has_temp = structured.get("ovenTempF") is not None
+                    has_ingredients = bool(structured.get("ingredients"))
+                    struct_score = (
+                        (0.3 if has_title else 0) +
+                        (0.3 if has_instructions else 0) +
+                        (0.2 if has_ingredients else 0) +
+                        (0.2 if has_temp else 0)
+                    )
+
+                    # Weighted confidence
+                    confidence = min(0.95, crf_score * 0.6 + struct_score * 0.4)
+
+                    # Inject per-ingredient confidence into structured data
+                    if crf_ingredients and isinstance(structured.get("ingredients"), list):
+                        for i, ing in enumerate(structured["ingredients"]):
+                            if isinstance(ing, dict) and i < len(crf_ingredients):
+                                ing["confidence"] = crf_ingredients[i].get("confidence", 0.5)
+                                ing["needs_review"] = crf_ingredients[i].get("needs_review", False)
 
             else:
                 logger.warning("LLM not available, returning VLM output only")

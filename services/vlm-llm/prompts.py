@@ -22,46 +22,46 @@ ExtractionMode = Literal["fast", "accurate", "thorough"]
 # VLM PROMPTS (Stage 1 - Vision Model)
 # =============================================================================
 
-VLM_TEXT_EXTRACTION_PROMPT = """This is a handwritten recipe card. I need you to transcribe it very carefully.
+VLM_TEXT_EXTRACTION_PROMPT = """Transcribe exactly what is written in this image.
 
-CRITICAL: Pay close attention to FRACTIONS. Handwritten fractions can be tricky to read.
-Common recipe fractions:
-- 1/4 (one quarter) = 0.25
-- 1/2 (one half) = 0.5
-- 3/4 (three quarters) = 0.75
-- 1/3 (one third)
-- 2/3 (two thirds)
-- 1 1/2 (one and a half) = 1.5
+Rules:
+- Copy every word, number, and symbol EXACTLY as written
+- Preserve the original layout — one line per line in the image
+- Do NOT interpret, correct spelling, restructure, or add anything
+- Do NOT add labels like "TITLE:", "INGREDIENTS:", etc. unless they are in the image
+- If you cannot read a word clearly, write [unclear] in its place
+- Pay close attention to fractions and numbers — write them exactly as shown
+- Include abbreviations as written (C., tsp., Tbsp., lbs., etc.)
 
-Now transcribe the recipe:
-1. Recipe title at the top
-2. All ingredients with their EXACT quantities and units (C. = cup, tsp = teaspoon)
-3. The oven temperature
-4. Any instructions
-
-Focus on accuracy of the numbers and fractions."""
+Transcribe the entire image, line by line, and nothing else."""
 
 
-# Alternative prompts for multi-pass extraction
-VLM_QUANTITY_FOCUSED_PROMPT = """Focus on the INGREDIENTS section of this recipe.
+# Ingredients-only focused prompt for cross-validation pass
+VLM_INGREDIENTS_PROMPT = """Focus ONLY on the ingredients list in this recipe image.
 
-For EACH ingredient, list:
-- The exact quantity (number, fraction, or range)
-- The unit of measurement (cups, tablespoons, teaspoons, ounces, etc.)
-- The ingredient name
-- Any notes (chopped, melted, room temperature, etc.)
+For each ingredient line, transcribe EXACTLY what is written.
+Pay special attention to:
+- Numbers and fractions: 1/2, 1/4, 3/4, 1 1/2, 2/3
+- Abbreviations: C., tsp., Tbsp., oz., lbs., pkg.
+- Ingredient names — spell exactly as written
 
-Format each as: [quantity] [unit] [ingredient] ([notes if any])
-
-Read carefully. Some quantities may be written in unusual ways:
-- Fractions like 1/2, 1/4, 3/4
-- Mixed numbers like 1 1/2
-- Ranges like "2-3"
-- "a pinch", "to taste", "as needed"
-
-List every single ingredient. Do not skip any."""
+Write one ingredient per line, exactly as it appears in the image.
+Do NOT add anything that is not written. Do NOT skip any ingredient.
+If you cannot read a character, write [?] in its place."""
 
 
+# Targeted re-read prompt for resolving disagreements between passes
+VLM_TARGETED_REREAD_PROMPT = """I need you to re-read specific parts of this recipe image.
+
+I got two different readings for these items:
+{items_to_recheck}
+
+For each item above, look at the image again very carefully and tell me
+EXACTLY what you see written. Focus on the numbers and fractions.
+Write one answer per line."""
+
+
+# Kept for backward compatibility and thorough mode
 VLM_SECTION_BY_SECTION_PROMPT = """Read this recipe image in sections.
 
 SECTION 1 - TITLE:
@@ -130,6 +130,7 @@ def build_llm_structuring_prompt(
     detected_type: ContentType,
     raw_text: str,
     hint_type: ContentType | None = None,
+    crf_ingredients: list[dict] | None = None,
 ) -> str:
     """
     Build an LLM prompt for structuring raw text from VLM output.
@@ -138,6 +139,7 @@ def build_llm_structuring_prompt(
         detected_type: The content type detected from the raw text
         raw_text: The raw text extracted by VLM
         hint_type: Optional user-provided hint about the content type
+        crf_ingredients: Optional CRF-parsed ingredients to use as reference
 
     Returns:
         A prompt string for the LLM
@@ -147,7 +149,7 @@ def build_llm_structuring_prompt(
     if target_type == "list":
         return _build_list_prompt(raw_text)
     elif target_type == "recipe":
-        return _build_recipe_prompt(raw_text)
+        return _build_recipe_prompt(raw_text, crf_ingredients)
     elif target_type == "calendar_event":
         return _build_calendar_prompt(raw_text)
     else:
@@ -184,12 +186,31 @@ Rules:
 - Output only valid JSON, no explanation."""
 
 
-def _build_recipe_prompt(raw_text: str) -> str:
+def _build_recipe_prompt(raw_text: str, crf_ingredients: list[dict] | None = None) -> str:
+    crf_section = ""
+    if crf_ingredients:
+        crf_lines = []
+        for ing in crf_ingredients:
+            parts = []
+            if ing.get("quantity"):
+                parts.append(str(ing["quantity"]))
+            if ing.get("unit"):
+                parts.append(ing["unit"])
+            parts.append(ing.get("name", ""))
+            if ing.get("notes"):
+                parts.append(f"({ing['notes']})")
+            crf_lines.append("- " + " ".join(parts))
+        crf_section = f"""
+Pre-parsed ingredients (use these quantities and units as the authoritative source):
+{chr(10).join(crf_lines)}
+
+"""
+
     return f"""Parse this recipe text into JSON. Output ONLY valid JSON, no explanation.
 
 Raw text:
 {raw_text}
-
+{crf_section}
 Output this JSON structure:
 {{
   "type": "recipe",
@@ -204,8 +225,9 @@ Output this JSON structure:
 }}
 
 RULES:
-- ovenTempF: Look for "375°F", "350 degrees", "oven" + number. Extract the number. If "375°F" is mentioned, ovenTempF should be 375.
-- Convert fractions: 1/2=0.5, 1/4=0.25, 3/4=0.75, 1 1/2=1.5
+- ovenTempF: Look for "375°F", "350 degrees", "oven" + number. Extract the number.
+- If pre-parsed ingredients are provided above, use their quantities and units.
+- Otherwise convert fractions: 1/2=0.5, 1/4=0.25, 3/4=0.75, 1 1/2=1.5
 - Normalize units: C.=cup, tsp.=tsp, Tbsp.=tbsp
 - Include ALL ingredients from the text
 
