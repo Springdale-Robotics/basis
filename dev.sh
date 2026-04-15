@@ -65,6 +65,8 @@ VLM_LLM_SERVICE_URL=http://localhost:$vlm_llm_port
 OLLAMA_HOST=http://localhost:11434
 OLLAMA_VLM_MODEL=minicpm-v
 OLLAMA_LLM_MODEL=qwen2.5:7b
+# HandwritingOCR API (handwritingocr.com) — set key to enable for handwritten recipes
+# HANDWRITING_OCR_API_KEY=
 EOF
 }
 

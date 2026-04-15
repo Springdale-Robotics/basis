@@ -76,8 +76,12 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   LLM_RECIPE_MODEL: z.string().default('claude-haiku-4-5-20251001'),
 
+  // Handwriting OCR API (handwritingocr.com)
+  HANDWRITING_OCR_API_KEY: z.string().optional(),
+  HANDWRITING_OCR_API_URL: z.string().default('https://api.handwritingocr.com'),
+
   // Image parsing configuration
-  IMAGE_PARSE_PROVIDER: z.enum(['vlm-llm', 'auto']).default('auto'),
+  IMAGE_PARSE_PROVIDER: z.enum(['vlm-llm', 'handwriting-ocr', 'auto']).default('auto'),
   IMAGE_PARSE_TIMEOUT_MS: z.coerce.number().default(180000), // 3 minutes for CPU processing
   IMAGE_PARSE_MAX_SIZE_MB: z.coerce.number().default(10),
   IMAGE_PARSE_SESSION_TTL_HOURS: z.coerce.number().default(24),

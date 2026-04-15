@@ -45,19 +45,38 @@ export interface AllProvidersStatus {
  * Factory function to get the configured vision provider.
  *
  * Provider selection logic:
- * - 'vlm-llm': Use VLM+LLM two-stage service only (preferred)
- * - 'auto' (default): Use VLM-LLM service
- *
- * The VLM-LLM service supports both GPU and CPU modes:
- * - GPU mode: ~45 seconds processing time
- * - CPU mode: ~150 seconds (2.5 minutes) processing time
+ * - 'handwriting-ocr': Use HandwritingOCR API only
+ * - 'vlm-llm': Use VLM+LLM two-stage service only
+ * - 'auto' (default): Try HandwritingOCR first (if API key configured), fall back to VLM-LLM
  *
  * Returns null if no provider is available.
  */
 export async function getVisionProvider(): Promise<VisionProvider | null> {
   const providerConfig = config.IMAGE_PARSE_PROVIDER;
 
-  // Try VLM-LLM provider (only provider now)
+  // HandwritingOCR provider (explicit or auto with API key)
+  if (providerConfig === 'handwriting-ocr' || providerConfig === 'auto') {
+    if (config.HANDWRITING_OCR_API_KEY) {
+      try {
+        const { HandwritingOcrProvider } = await import('./handwriting-ocr-provider.js');
+        const ocrProvider = new HandwritingOcrProvider();
+
+        if (await ocrProvider.isAvailable()) {
+          logger.info({ provider: 'handwriting-ocr' }, 'Using HandwritingOCR API provider');
+          return ocrProvider;
+        }
+      } catch (error) {
+        logger.debug({ error }, 'HandwritingOCR provider not available');
+      }
+
+      if (providerConfig === 'handwriting-ocr') {
+        logger.warn('HandwritingOCR provider configured but not available');
+        return null;
+      }
+    }
+  }
+
+  // VLM-LLM provider (explicit or auto fallback)
   if (providerConfig === 'vlm-llm' || providerConfig === 'auto') {
     try {
       const { VlmLlmProvider } = await import('./vlm-llm-provider.js');
@@ -80,9 +99,6 @@ export async function getVisionProvider(): Promise<VisionProvider | null> {
     } catch (error) {
       logger.debug({ error }, 'VLM-LLM provider not available');
     }
-
-    logger.warn('VLM-LLM provider not available - no fallback available');
-    return null;
   }
 
   logger.warn('No vision provider available');
@@ -103,7 +119,15 @@ export async function getVisionProviderStatus(): Promise<VisionProviderStatus> {
     };
   }
 
-  // VLM-LLM provider (only provider now)
+  if (provider.name === 'handwriting-ocr') {
+    return {
+      available: true,
+      name: provider.name,
+      model: provider.getModel(),
+      expectedProcessingMs: 15000, // ~15s for API transcription + LLM structuring
+    };
+  }
+
   if (provider.name === 'vlm-llm') {
     const { VlmLlmProvider } = await import('./vlm-llm-provider.js');
     const vlmLlmProvider = provider as InstanceType<typeof VlmLlmProvider>;
@@ -131,14 +155,41 @@ export async function getVisionProviderStatus(): Promise<VisionProviderStatus> {
 }
 
 /**
- * Get status of the VLM-LLM provider.
+ * Get status of all vision providers.
  * Useful for debugging and monitoring.
  */
 export async function getAllProvidersStatus(): Promise<AllProvidersStatus> {
   let primaryStatus: VisionProviderStatus | null = null;
+  let fallbackStatus: VisionProviderStatus | null = null;
   let activeProvider: string | null = null;
 
-  // Check VLM-LLM provider (only provider)
+  // Check HandwritingOCR provider
+  if (config.HANDWRITING_OCR_API_KEY) {
+    try {
+      const { HandwritingOcrProvider } = await import('./handwriting-ocr-provider.js');
+      const ocrProvider = new HandwritingOcrProvider();
+      const available = await ocrProvider.isAvailable();
+
+      const ocrStatus: VisionProviderStatus = {
+        available,
+        name: 'handwriting-ocr',
+        model: 'handwriting-ocr-api',
+        expectedProcessingMs: 15000,
+        error: available ? undefined : 'HandwritingOCR API not reachable or invalid key',
+      };
+
+      if (available && !activeProvider) {
+        primaryStatus = ocrStatus;
+        activeProvider = 'handwriting-ocr';
+      } else {
+        fallbackStatus = ocrStatus;
+      }
+    } catch {
+      // HandwritingOCR not available
+    }
+  }
+
+  // Check VLM-LLM provider
   try {
     const { VlmLlmProvider } = await import('./vlm-llm-provider.js');
     const vlmLlmProvider = new VlmLlmProvider();
@@ -152,7 +203,7 @@ export async function getAllProvidersStatus(): Promise<AllProvidersStatus> {
       expectedProcessingMs = await vlmLlmProvider.getExpectedProcessingMs();
     }
 
-    primaryStatus = {
+    const vlmStatus: VisionProviderStatus = {
       available,
       name: 'vlm-llm',
       model: available ? vlmLlmProvider.getModel() : undefined,
@@ -162,20 +213,26 @@ export async function getAllProvidersStatus(): Promise<AllProvidersStatus> {
       error: available ? undefined : 'VLM-LLM service not available',
     };
 
-    if (available) {
-      activeProvider = 'vlm-llm';
+    if (!primaryStatus) {
+      primaryStatus = vlmStatus;
+      if (available) activeProvider = 'vlm-llm';
+    } else {
+      fallbackStatus = vlmStatus;
+      if (available && !activeProvider) activeProvider = 'vlm-llm';
     }
   } catch {
-    primaryStatus = {
+    const vlmError: VisionProviderStatus = {
       available: false,
       name: 'vlm-llm',
       error: 'VLM-LLM provider module not loaded',
     };
+    if (!primaryStatus) primaryStatus = vlmError;
+    else fallbackStatus = vlmError;
   }
 
   return {
     primary: primaryStatus,
-    fallback: null, // No fallback provider
+    fallback: fallbackStatus,
     activeProvider,
   };
 }
