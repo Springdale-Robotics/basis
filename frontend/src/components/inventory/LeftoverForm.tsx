@@ -25,6 +25,7 @@ import {
 import { leftoverFormSchema, type LeftoverFormData } from '@/types/forms';
 import type { Leftover, StorageArea, LeftoverSource } from '@/types/models';
 import { recipesApi } from '@/api/recipes';
+import { useInventoryTier } from '@/hooks/useInventoryTier';
 
 interface LeftoverFormProps {
   open: boolean;
@@ -64,6 +65,7 @@ export function LeftoverForm({
   isSubmitting,
 }: LeftoverFormProps) {
   const isEditing = !!leftover;
+  const { isAdvanced } = useInventoryTier();
 
   const { data: recipesData } = useQuery({
     queryKey: ['recipes'],
@@ -255,28 +257,30 @@ export function LeftoverForm({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="portions">Portions</Label>
-              <Input
-                id="portions"
-                type="number"
-                step="0.5"
-                min="0.5"
-                {...register('portions', { valueAsNumber: true })}
-              />
+          {isAdvanced && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="portions">Portions</Label>
+                <Input
+                  id="portions"
+                  type="number"
+                  step="0.5"
+                  min="0.5"
+                  {...register('portions', { valueAsNumber: true })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="quantityNotes">Quantity Notes</Label>
+                <Input
+                  id="quantityNotes"
+                  placeholder="e.g., 2 cups"
+                  {...register('quantityNotes')}
+                />
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="quantityNotes">Quantity Notes</Label>
-              <Input
-                id="quantityNotes"
-                placeholder="e.g., 2 cups"
-                {...register('quantityNotes')}
-              />
-            </div>
-          </div>
+          )}
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className={isAdvanced ? 'grid grid-cols-2 gap-4' : ''}>
             <div className="space-y-2">
               <Label htmlFor="preparedAt">Prepared Date</Label>
               <Input
@@ -285,17 +289,19 @@ export function LeftoverForm({
                 {...register('preparedAt')}
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="expiryDate">Expiry Date</Label>
-              <Input
-                id="expiryDate"
-                type="date"
-                {...register('expiryDate')}
-              />
-              {errors.expiryDate && (
-                <p className="text-sm text-destructive">{errors.expiryDate.message}</p>
-              )}
-            </div>
+            {isAdvanced && (
+              <div className="space-y-2">
+                <Label htmlFor="expiryDate">Expiry Date</Label>
+                <Input
+                  id="expiryDate"
+                  type="date"
+                  {...register('expiryDate')}
+                />
+                {errors.expiryDate && (
+                  <p className="text-sm text-destructive">{errors.expiryDate.message}</p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">

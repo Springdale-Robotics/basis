@@ -120,8 +120,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
     logout: async () => {
       await logoutMutation.mutateAsync();
     },
-    refetch: () => {
-      refetch();
+    refetch: async () => {
+      const authResult = await refetch();
+      if (authResult.data?.user) {
+        const householdResult = await householdsApi.getCurrent();
+        setAuth(authResult.data.user, householdResult.household);
+      }
     },
   };
 

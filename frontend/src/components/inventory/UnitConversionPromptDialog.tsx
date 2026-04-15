@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Loader2, ArrowLeftRight } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -12,55 +12,40 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
-interface UnitConversionPromptDialogProps {
+interface QuantityWeightPromptDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   itemName: string;
-  fromUnit: string;
-  toUnit: string;
-  suggestedFactor?: number;
-  onConfirm: (factor: number, saveForFuture: boolean) => Promise<void>;
+  unit: string;
+  onConfirm: (grams: number) => Promise<void>;
   onSkip: () => void;
 }
 
-export function UnitConversionPromptDialog({
+export function QuantityWeightPromptDialog({
   open,
   onOpenChange,
   itemName,
-  fromUnit,
-  toUnit,
-  suggestedFactor,
+  unit,
   onConfirm,
   onSkip,
-}: UnitConversionPromptDialogProps) {
-  const [factor, setFactor] = useState(suggestedFactor?.toString() ?? '');
+}: QuantityWeightPromptDialogProps) {
+  const [grams, setGrams] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSwapped, setIsSwapped] = useState(false);
 
-  // Update factor when suggestedFactor changes
   useEffect(() => {
-    if (suggestedFactor !== undefined) {
-      setFactor(suggestedFactor.toString());
+    if (open) {
+      setGrams('');
     }
-  }, [suggestedFactor]);
-
-  // Display units based on swap state
-  const displayFromUnit = isSwapped ? toUnit : fromUnit;
-  const displayToUnit = isSwapped ? fromUnit : toUnit;
+  }, [open]);
 
   const handleConfirm = async () => {
-    const factorNum = parseFloat(factor);
-    if (isNaN(factorNum) || factorNum <= 0) return;
+    const gramsNum = parseFloat(grams);
+    if (isNaN(gramsNum) || gramsNum <= 0) return;
 
     setIsSubmitting(true);
     try {
-      // If swapped, we need to invert the factor
-      // User entered: 1 toUnit = factorNum fromUnit
-      // We need: 1 fromUnit = (1/factorNum) toUnit
-      const actualFactor = isSwapped ? 1 / factorNum : factorNum;
-      await onConfirm(actualFactor, true); // Always save for future
-      setFactor('');
-      setIsSwapped(false);
+      await onConfirm(gramsNum);
+      setGrams('');
     } finally {
       setIsSubmitting(false);
     }
@@ -68,62 +53,39 @@ export function UnitConversionPromptDialog({
 
   const handleSkip = () => {
     onSkip();
-    setFactor('');
-    setIsSwapped(false);
-  };
-
-  const handleSwap = () => {
-    setIsSwapped(!isSwapped);
-    setFactor(''); // Clear factor when swapping to avoid confusion
+    setGrams('');
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>Unit Conversion Needed</DialogTitle>
+          <DialogTitle>Quantity Weight Needed</DialogTitle>
           <DialogDescription>
-            The recipe uses <strong>{fromUnit}</strong>, but <strong>{itemName}</strong> is stored in <strong>{toUnit}</strong>.
+            To convert between units, we need to know the weight of <strong>{itemName}</strong> per <strong>{unit}</strong>.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="conversion-factor">
-                How many {displayToUnit} is 1 {displayFromUnit}?
-              </Label>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={handleSwap}
-                className="h-8 px-2 text-muted-foreground"
-              >
-                <ArrowLeftRight className="h-4 w-4 mr-1" />
-                Swap
-              </Button>
-            </div>
+            <Label htmlFor="grams-per-unit">
+              How many grams does 1 {unit} of {itemName} weigh?
+            </Label>
             <div className="flex items-center gap-2">
-              <span className="text-muted-foreground whitespace-nowrap">1 {displayFromUnit} =</span>
+              <span className="text-muted-foreground whitespace-nowrap">1 {unit} =</span>
               <Input
-                id="conversion-factor"
+                id="grams-per-unit"
                 type="number"
                 step="any"
                 min="0"
-                value={factor}
-                onChange={(e) => setFactor(e.target.value)}
-                placeholder="e.g., 120"
+                value={grams}
+                onChange={(e) => setGrams(e.target.value)}
+                placeholder="e.g., 500"
                 className="w-24"
                 autoFocus
               />
-              <span className="text-muted-foreground">{displayToUnit}</span>
+              <span className="text-muted-foreground">g</span>
             </div>
-            {suggestedFactor && !isSwapped && (
-              <p className="text-xs text-muted-foreground">
-                Standard conversion: 1 {fromUnit} = {suggestedFactor} {toUnit}
-              </p>
-            )}
           </div>
         </div>
 
@@ -133,7 +95,7 @@ export function UnitConversionPromptDialog({
           </Button>
           <Button
             onClick={handleConfirm}
-            disabled={!factor || parseFloat(factor) <= 0 || isSubmitting}
+            disabled={!grams || parseFloat(grams) <= 0 || isSubmitting}
           >
             {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Save

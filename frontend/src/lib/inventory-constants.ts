@@ -1,206 +1,137 @@
 // Shared constants for inventory items
 
-export const categoryOptions = [
+import {
+  ALL_UNITS,
+  WEIGHT_UNITS,
+  VOLUME_UNITS,
+  COUNT_UNITS,
+  NEGLIGIBLE_UNITS,
+  resolveUnit,
+  convert,
+  type UnitDefinition,
+} from './units';
+
+export const defaultCategories = [
   'Produce',
-  'Dairy',
+  'Dairy & Eggs',
   'Meat',
   'Seafood',
+  'Deli',
   'Bakery',
   'Frozen',
   'Canned Goods',
-  'Dry Goods',
-  'Beverages',
+  'Pasta & Grains',
+  'Breakfast',
+  'Baking',
   'Snacks',
-  'Condiments',
-  'Spices',
+  'Beverages',
+  'Condiments & Sauces',
+  'Spices & Herbs',
   'Cleaning',
+  'Paper Goods',
   'Personal Care',
   'Other',
 ] as const;
 
-export const unitOptions = [
-  // Count/quantity
-  'count',
-  'pieces',
-  'each',
-  // Weight
-  'lbs',
-  'oz',
-  'kg',
-  'g',
-  'mg',
-  // Volume - large
-  'gallons',
-  'liters',
-  'quarts',
-  'pints',
-  // Volume - medium
-  'cups',
-  'fl oz',
-  // Volume - small
-  'tbsp',
-  'tsp',
-  'ml',
-  // Packaging
-  'boxes',
-  'bags',
-  'cans',
-  'bottles',
-  'jars',
-  'packs',
-  'packages',
-  // Cooking-specific
-  'cloves',
-  'heads',
-  'bunches',
-  'stalks',
-  'sprigs',
-  'slices',
-  'sticks',
-  'pinches',
-  'dashes',
-  'drops',
-  // Size descriptors (for produce)
-  'large',
-  'medium',
-  'small',
-] as const;
+/** @deprecated Use defaultCategories instead */
+export const categoryOptions = defaultCategories;
 
-// Mapping from various unit forms to canonical forms
-export const unitAliases: Record<string, string> = {
-  // Tablespoon variations
-  'tablespoon': 'tbsp',
-  'tablespoons': 'tbsp',
-  'tbs': 'tbsp',
-  't': 'tbsp',
-  // Teaspoon variations
-  'teaspoon': 'tsp',
-  'teaspoons': 'tsp',
-  // Cup variations
-  'cup': 'cups',
-  'c': 'cups',
-  // Ounce variations
-  'ounce': 'oz',
-  'ounces': 'oz',
-  // Pound variations
-  'pound': 'lbs',
-  'pounds': 'lbs',
-  'lb': 'lbs',
-  // Gram variations
-  'gram': 'g',
-  'grams': 'g',
-  'gm': 'g',
-  // Kilogram variations
-  'kilogram': 'kg',
-  'kilograms': 'kg',
-  // Milliliter variations
-  'milliliter': 'ml',
-  'milliliters': 'ml',
-  // Liter variations
-  'liter': 'liters',
-  'litre': 'liters',
-  'litres': 'liters',
-  'l': 'liters',
-  // Piece variations
-  'piece': 'pieces',
-  'pcs': 'pieces',
-  'pc': 'pieces',
-  // Other
-  'clove': 'cloves',
-  'head': 'heads',
-  'bunch': 'bunches',
-  'stalk': 'stalks',
-  'sprig': 'sprigs',
-  'slice': 'slices',
-  'stick': 'sticks',
-  'pinch': 'pinches',
-  'dash': 'dashes',
-  'drop': 'drops',
-  'package': 'packages',
-  'pkg': 'packages',
-  'can': 'cans',
-  'tin': 'cans',
-  'tins': 'cans',
-  'bottle': 'bottles',
-  'jar': 'jars',
-  'box': 'boxes',
-  'bag': 'bags',
-  'pack': 'packs',
-  'gallon': 'gallons',
-  'quart': 'quarts',
-  'pint': 'pints',
-  'fluid ounce': 'fl oz',
-  'fluid ounces': 'fl oz',
+export const categoryIcons: Record<string, string> = {
+  'Produce': '🥬',
+  'Dairy & Eggs': '🥛',
+  'Meat': '🥩',
+  'Seafood': '🐟',
+  'Deli': '🥪',
+  'Bakery': '🍞',
+  'Frozen': '🧊',
+  'Canned Goods': '🥫',
+  'Pasta & Grains': '🍝',
+  'Breakfast': '🥣',
+  'Baking': '🧁',
+  'Snacks': '🍿',
+  'Beverages': '🥤',
+  'Condiments & Sauces': '🫙',
+  'Spices & Herbs': '🌶️',
+  'Cleaning': '🧹',
+  'Paper Goods': '🧻',
+  'Personal Care': '🧴',
+  'Other': '📦',
+  // Legacy categories (still show icons if data exists)
+  'Dairy': '🥛',
+  'Dry Goods': '🌾',
+  'Condiments': '🧂',
+  'Spices': '🌶️',
+  'Oils': '🫒',
 };
 
+export function getItemIcon(item: { icon?: string; category?: string }): string {
+  if (item.icon) return item.icon;
+  if (item.category && categoryIcons[item.category]) return categoryIcons[item.category];
+  return '📦';
+}
+
 /**
- * Normalize a unit string to its canonical form.
- * Returns the canonical unit if an alias exists, otherwise returns the lowercase trimmed input.
+ * All unit option keys for UI dropdowns.
+ * Ordered: weight, volume, count, negligible.
+ */
+export const unitOptions = ALL_UNITS.map(u => u.key);
+
+/**
+ * Get unit options filtered by category for targeted dropdowns.
+ */
+export function getUnitOptionsByCategory(category: 'weight' | 'volume' | 'count' | 'negligible'): string[] {
+  const map = { weight: WEIGHT_UNITS, volume: VOLUME_UNITS, count: COUNT_UNITS, negligible: NEGLIGIBLE_UNITS };
+  return (map[category] ?? []).map(u => u.key);
+}
+
+/**
+ * Get the display name for a unit key.
+ */
+export function getUnitDisplayName(key: string): string {
+  const unit = ALL_UNITS.find(u => u.key === key);
+  return unit?.name ?? key;
+}
+
+/**
+ * Mapping from various unit forms to canonical keys.
+ * Built from the unit registry's alias lists.
+ */
+export const unitAliases: Record<string, string> = (() => {
+  const aliases: Record<string, string> = {};
+  for (const unit of ALL_UNITS) {
+    for (const alias of unit.aliases) {
+      aliases[alias.toLowerCase()] = unit.key;
+    }
+    // Also add the key itself (lowercase)
+    aliases[unit.key.toLowerCase()] = unit.key;
+  }
+  return aliases;
+})();
+
+/**
+ * Normalize a unit string to its canonical key.
  */
 export function normalizeUnit(unit: string | undefined | null): string {
   if (!unit) return '';
-  const lower = unit.toLowerCase().trim();
-  return unitAliases[lower] || lower;
+  return resolveUnit(unit);
 }
 
 export type CategoryOption = (typeof categoryOptions)[number];
-export type UnitOption = (typeof unitOptions)[number];
-
-// Unit conversion types and utilities
-export interface UnitConversion {
-  fromUnit: string;
-  toUnit: string;
-  factor: number;
-}
-
-// Import global conversions for fallback
-import { findConversionChain } from './unit-conversions';
 
 /**
- * Convert a quantity from one unit to another.
- * Priority:
- *   1. Item-specific conversions (takes precedence)
- *   2. Global standard conversions (fallback for weight/volume)
+ * Convert a quantity from one unit to another using density-based system.
+ * Handles same-category, cross-category (weight<->volume via density in g/cup),
+ * and quantity units (via quantityUnitWeights in grams per unit).
  * Returns null if no conversion path is found.
  */
 export function convertQuantity(
   quantity: number,
   fromUnit: string,
   toUnit: string,
-  conversions: UnitConversion[] = []
+  densityGPerCup?: number | null,
+  quantityUnitWeights?: Record<string, number>
 ): number | null {
-  const normFrom = normalizeUnit(fromUnit);
-  const normTo = normalizeUnit(toUnit);
-
-  // Same unit, no conversion needed
-  if (normFrom === normTo) {
-    return quantity;
-  }
-
-  // 1. Try item-specific direct conversion
-  const direct = conversions.find(
-    (c) => normalizeUnit(c.fromUnit) === normFrom && normalizeUnit(c.toUnit) === normTo
-  );
-  if (direct) {
-    return quantity * direct.factor;
-  }
-
-  // 2. Try item-specific reverse conversion
-  const reverse = conversions.find(
-    (c) => normalizeUnit(c.fromUnit) === normTo && normalizeUnit(c.toUnit) === normFrom
-  );
-  if (reverse) {
-    return quantity / reverse.factor;
-  }
-
-  // 3. Try global standard conversions (for weight/volume)
-  const globalFactor = findConversionChain(normFrom, normTo);
-  if (globalFactor !== null) {
-    return quantity * globalFactor;
-  }
-
-  // No conversion found
-  return null;
+  return convert(quantity, fromUnit, toUnit, densityGPerCup, quantityUnitWeights);
 }
 
 /**
@@ -210,7 +141,8 @@ export function convertQuantity(
 export function calculateTotalStock(
   entries: Array<{ quantity: number | string; unit?: string }>,
   targetUnit: string,
-  conversions: UnitConversion[] = []
+  densityGPerCup?: number | null,
+  quantityUnitWeights?: Record<string, number>
 ): { total: number; allConverted: boolean; unconvertedUnits: string[] } {
   let total = 0;
   let allConverted = true;
@@ -220,14 +152,13 @@ export function calculateTotalStock(
     const qty = typeof entry.quantity === 'string' ? parseFloat(entry.quantity) : entry.quantity;
     const entryUnit = entry.unit || targetUnit;
 
-    if (entryUnit === targetUnit) {
+    if (resolveUnit(entryUnit) === resolveUnit(targetUnit)) {
       total += qty;
     } else {
-      const converted = convertQuantity(qty, entryUnit, targetUnit, conversions);
+      const converted = convert(qty, entryUnit, targetUnit, densityGPerCup, quantityUnitWeights);
       if (converted !== null) {
         total += converted;
       } else {
-        // Can't convert - track this unit but don't add to total
         allConverted = false;
         if (!unconvertedUnits.includes(entryUnit)) {
           unconvertedUnits.push(entryUnit);

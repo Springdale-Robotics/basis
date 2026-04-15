@@ -13,11 +13,20 @@ import {
   ShoppingCart,
   Settings,
   Soup,
+  MapPin,
+  List,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  ClipboardCheck,
+  MoreVertical,
 } from 'lucide-react';
+import { useInventoryTier } from '@/hooks/useInventoryTier';
+import { ConfidenceBadge, type ConfidenceBand } from '@/components/inventory/ConfidenceBadge';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { EditGate } from '@/components/permissions';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -31,11 +40,14 @@ import { ManageStockDialog } from '@/components/inventory/ManageStockDialog';
 import { LeftoverCard } from '@/components/inventory/LeftoverCard';
 import { LeftoverForm } from '@/components/inventory/LeftoverForm';
 import { FixIncompleteItemDialog } from '@/components/inventory/FixIncompleteItemDialog';
+import { ReconcileDialog } from '@/components/inventory/ReconcileDialog';
+import { RelinkDialog } from '@/components/inventory/RelinkDialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { inventoryApi } from '@/api/inventory';
 import { formatDate, cn } from '@/lib/utils';
-import { categoryOptions, calculateTotalStock } from '@/lib/inventory-constants';
+import { calculateTotalStock, getItemIcon, categoryIcons } from '@/lib/inventory-constants';
+import { useCategories } from '@/hooks/useCategories';
 import type { StorageAreaFormData, InventoryItemFormData, LeftoverFormData } from '@/types/forms';
 import type { InventoryItem, StockEntry, StorageArea, Leftover } from '@/types/models';
 import {
@@ -63,7 +75,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-type SortOption = 'name-asc' | 'name-desc' | 'category' | 'quantity-asc' | 'quantity-desc' | 'area';
+type SortOption = 'name-asc' | 'name-desc' | 'category' | 'quantity-asc' | 'quantity-desc' | 'area' | 'expiry';
 type DeleteType = 'stock_only' | 'catalog';
 
 interface DeleteDialogState {
@@ -72,8 +84,24 @@ interface DeleteDialogState {
   isBulk: boolean;
 }
 
+/** Simple fuzzy search — matches if all characters of the query appear in order in the target */
+function fuzzyMatch(target: string, query: string): boolean {
+  const t = target.toLowerCase();
+  const q = query.toLowerCase().trim();
+  if (!q) return true;
+  // First try substring match (covers most cases)
+  if (t.includes(q)) return true;
+  // Then try character-by-character fuzzy (handles typos like "chckn" for "chicken")
+  let ti = 0;
+  for (let qi = 0; qi < q.length; qi++) {
+    const found = t.indexOf(q[qi], ti);
+    if (found === -1) return false;
+    ti = found + 1;
+  }
+  return true;
+}
+
 function getDaysUntilExpiry(expiryDate: string): number {
-  // Parse as local date to avoid timezone issues
   const [year, month, day] = expiryDate.split('T')[0].split('-').map(Number);
   const expiry = new Date(year, month - 1, day);
   const today = new Date();
@@ -83,17 +111,14 @@ function getDaysUntilExpiry(expiryDate: string): number {
 }
 
 function getExpiryBadgeVariant(days: number): 'destructive' | 'secondary' | 'outline' {
-  if (days <= 0) return 'destructive';
   if (days <= 3) return 'destructive';
   return 'secondary';
 }
 
 function isItemIncomplete(item: InventoryItem): boolean {
-  // Check required data fields (excludes icon and barcode)
   if (!item.category) return true;
   if (!item.defaultUnit) return true;
   if (!item.defaultAreaId) return true;
-  // Check minStockQuantity (what API returns) or legacy field names
   const minStock = item.minStockQuantity ?? item.minStockLevel ?? item.keepInStockThreshold;
   if (item.keepInStock && minStock == null) return true;
   return false;
@@ -101,13 +126,16 @@ function isItemIncomplete(item: InventoryItem): boolean {
 
 export function InventoryPage() {
   const queryClient = useQueryClient();
+  const { isAdvanced } = useInventoryTier();
+  const { categories } = useCategories();
   const [search, setSearch] = useState('');
   const [selectedArea, setSelectedArea] = useState<string | undefined>();
   const [areaFormOpen, setAreaFormOpen] = useState(false);
   const [editingArea, setEditingArea] = useState<StorageArea | null>(null);
   const [itemFormOpen, setItemFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
-  const [sortOption, setSortOption] = useState<SortOption>('name-asc');
+  const [sortOption, setSortOption] = useState<SortOption>(isAdvanced ? 'name-asc' : 'expiry');
+  const [stockFilter, setStockFilter] = useState<'all' | 'in-stock' | 'not-in-stock'>('all');
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [bulkMode, setBulkMode] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState>({
@@ -123,17 +151,20 @@ export function InventoryPage() {
   const [leftoverFormOpen, setLeftoverFormOpen] = useState(false);
   const [editingLeftover, setEditingLeftover] = useState<Leftover | null>(null);
   const [fixIncompleteDialogOpen, setFixIncompleteDialogOpen] = useState(false);
+  const [collapsedAreas, setCollapsedAreas] = useState<Set<string>>(new Set());
+  const [reconcileItem, setReconcileItem] = useState<InventoryItem | null>(null);
+  const [relinkItem, setRelinkItem] = useState<InventoryItem | null>(null);
 
+  // Queries
   const { data: areas, isLoading: areasLoading } = useQuery({
     queryKey: ['inventory', 'areas'],
     queryFn: inventoryApi.getAreas,
   });
 
   const { data: items, isLoading: itemsLoading } = useQuery({
-    queryKey: ['inventory', 'items', search, selectedCategory],
+    queryKey: ['inventory', 'items', selectedCategory],
     queryFn: () =>
       inventoryApi.getItems({
-        search: search || undefined,
         category: selectedCategory,
       }),
   });
@@ -158,7 +189,23 @@ export function InventoryPage() {
     queryFn: () => inventoryApi.getExpiringLeftovers(3),
   });
 
-  // Create item lookup for unit conversions
+  const { data: expiringItems } = useQuery({
+    queryKey: ['inventory', 'expiring'],
+    queryFn: () => inventoryApi.getExpiringItems(7),
+  });
+
+  const { data: lowStockItems } = useQuery({
+    queryKey: ['inventory', 'low-stock'],
+    queryFn: inventoryApi.getLowStockItems,
+  });
+
+  const { data: confidenceData } = useQuery({
+    queryKey: ['inventory', 'confidence'],
+    queryFn: inventoryApi.getConfidenceMap,
+    enabled: isAdvanced,
+  });
+
+  // Lookups
   const itemLookup = useMemo(() => {
     const lookup: Record<string, InventoryItem> = {};
     if (items?.items) {
@@ -169,56 +216,41 @@ export function InventoryPage() {
     return lookup;
   }, [items]);
 
-  // Calculate stock totals per item with unit conversions
   const itemStockTotals = useMemo(() => {
-    const totals: Record<string, { quantity: number; unit: string | undefined; areaId?: string; allConverted: boolean }> = {};
+    const totals: Record<string, { quantity: number; unit: string | undefined; allConverted: boolean }> = {};
     if (stock?.stock) {
-      // Group entries by item ID first
       const entriesByItem: Record<string, StockEntry[]> = {};
       for (const entry of stock.stock) {
         const itemId = entry.itemId || entry.inventoryItemId;
         if (!itemId) continue;
-        if (!entriesByItem[itemId]) {
-          entriesByItem[itemId] = [];
-        }
+        if (!entriesByItem[itemId]) entriesByItem[itemId] = [];
         entriesByItem[itemId].push(entry);
       }
-
-      // Calculate totals using unit conversions
       for (const [itemId, entries] of Object.entries(entriesByItem)) {
         const item = itemLookup[itemId];
         const targetUnit = item?.defaultUnit || entries[0]?.unit || 'pieces';
-        const conversions = item?.unitConversions || [];
-        const result = calculateTotalStock(entries, targetUnit, conversions);
-
-        totals[itemId] = {
-          quantity: result.total,
-          unit: targetUnit,
-          areaId: entries[0]?.areaId,
-          allConverted: result.allConverted,
-        };
+        const density = item?.density ?? null;
+        const quantityUnitWeights = item?.quantityUnitWeights || {};
+        const result = calculateTotalStock(entries, targetUnit, density, quantityUnitWeights);
+        totals[itemId] = { quantity: result.total, unit: targetUnit, allConverted: result.allConverted };
       }
     }
     return totals;
   }, [stock, itemLookup]);
 
-  // Get items stock entries per item for area lookup
   const itemStockEntries = useMemo(() => {
     const entries: Record<string, StockEntry[]> = {};
     if (stock?.stock) {
       for (const entry of stock.stock) {
         const itemId = entry.itemId || entry.inventoryItemId;
         if (!itemId) continue;
-        if (!entries[itemId]) {
-          entries[itemId] = [];
-        }
+        if (!entries[itemId]) entries[itemId] = [];
         entries[itemId].push(entry);
       }
     }
     return entries;
   }, [stock]);
 
-  // Get area name lookup
   const areaLookup = useMemo(() => {
     const lookup: Record<string, StorageArea> = {};
     if (areas?.areas) {
@@ -229,16 +261,92 @@ export function InventoryPage() {
     return lookup;
   }, [areas]);
 
-  // Calculate incomplete items
+  // Apply search filter to items
+  const filteredItems = useMemo(() => {
+    const allItems = items?.items || [];
+    if (!search.trim()) return allItems;
+    return allItems.filter((item) =>
+      fuzzyMatch(item.name, search) ||
+      (item.category && fuzzyMatch(item.category, search))
+    );
+  }, [items, search]);
+
+  // Apply search filter to leftovers
+  const filteredLeftovers = useMemo(() => {
+    const allLeftovers = leftoversData?.leftovers || [];
+    if (!search.trim()) return allLeftovers;
+    return allLeftovers.filter((lo) =>
+      fuzzyMatch(lo.name, search) ||
+      (lo.description && fuzzyMatch(lo.description, search)) ||
+      (lo.restaurantName && fuzzyMatch(lo.restaurantName, search))
+    );
+  }, [leftoversData, search]);
+
   const incompleteItems = useMemo(
     () => (items?.items || []).filter(isItemIncomplete),
     [items]
   );
 
-  // Combobox options for filters
+  // Group stock entries by area for the "By Location" view
+  const filteredItemIds = useMemo(() => new Set(filteredItems.map(i => i.id)), [filteredItems]);
+
+  const stockByArea = useMemo(() => {
+    const groups: Record<string, { entry: StockEntry; item: InventoryItem }[]> = {};
+    const unassigned: { entry: StockEntry; item: InventoryItem }[] = [];
+
+    if (!stock?.stock || !items?.items) return { groups, unassigned };
+
+    for (const entry of stock.stock) {
+      const quantity = parseFloat(String(entry.quantity));
+      if (quantity <= 0) continue;
+      const itemId = entry.itemId || entry.inventoryItemId;
+      const item = itemId ? itemLookup[itemId] : null;
+      if (!item || !filteredItemIds.has(item.id)) continue;
+
+      if (entry.areaId) {
+        if (!groups[entry.areaId]) groups[entry.areaId] = [];
+        groups[entry.areaId].push({ entry, item });
+      } else {
+        unassigned.push({ entry, item });
+      }
+    }
+
+    // Sort items within each group by name
+    for (const key of Object.keys(groups)) {
+      groups[key].sort((a, b) => a.item.name.localeCompare(b.item.name));
+    }
+    unassigned.sort((a, b) => a.item.name.localeCompare(b.item.name));
+
+    return { groups, unassigned };
+  }, [stock, items, itemLookup, filteredItemIds]);
+
+  // Items not in stock but in catalog, grouped by default area
+  const unstockedByArea = useMemo(() => {
+    const groups: Record<string, InventoryItem[]> = {};
+    const unassigned: InventoryItem[] = [];
+    const stockedItemIds = new Set(Object.keys(itemStockTotals).filter(id => itemStockTotals[id].quantity > 0));
+
+    for (const item of filteredItems) {
+      if (stockedItemIds.has(item.id)) continue;
+      if (item.defaultAreaId) {
+        if (!groups[item.defaultAreaId]) groups[item.defaultAreaId] = [];
+        groups[item.defaultAreaId].push(item);
+      } else {
+        unassigned.push(item);
+      }
+    }
+
+    return { groups, unassigned };
+  }, [filteredItems, itemStockTotals]);
+
+  // Filter options
   const categoryFilterOptions: ComboboxOption[] = useMemo(
-    () => categoryOptions.map((cat) => ({ value: cat, label: cat })),
-    []
+    () => categories.map((cat) => ({
+      value: cat,
+      label: cat,
+      icon: categoryIcons[cat] ? <span>{categoryIcons[cat]}</span> : undefined,
+    })),
+    [categories]
   );
 
   const areaFilterOptions: ComboboxOption[] = useMemo(
@@ -282,6 +390,26 @@ export function InventoryPage() {
             const bArea = bEntries[0]?.areaId ? areaLookup[bEntries[0].areaId]?.name || '' : '';
             return aArea.localeCompare(bArea);
           });
+        case 'expiry':
+          return sorted.sort((a, b) => {
+            const aEntries = itemStockEntries[a.id] || [];
+            const bEntries = itemStockEntries[b.id] || [];
+            const aExpiry = aEntries
+              .filter(e => e.expiryDate)
+              .map(e => new Date(e.expiryDate!).getTime())
+              .sort()[0];
+            const bExpiry = bEntries
+              .filter(e => e.expiryDate)
+              .map(e => new Date(e.expiryDate!).getTime())
+              .sort()[0];
+            if (aExpiry && bExpiry) return aExpiry - bExpiry;
+            if (aExpiry && !bExpiry) return -1;
+            if (!aExpiry && bExpiry) return 1;
+            const aShelf = a.defaultShelfLifeDays ?? Infinity;
+            const bShelf = b.defaultShelfLifeDays ?? Infinity;
+            if (aShelf !== bShelf) return aShelf - bShelf;
+            return a.name.localeCompare(b.name);
+          });
         default:
           return sorted;
       }
@@ -289,7 +417,6 @@ export function InventoryPage() {
     [sortOption, itemStockTotals, itemStockEntries, areaLookup]
   );
 
-  // Get items currently in stock (sorted) - used for bulk operations
   const inStockItems = useMemo(() => {
     const itemList = items?.items || [];
     const filtered = itemList.filter((item) => {
@@ -299,72 +426,26 @@ export function InventoryPage() {
     return sortItems(filtered);
   }, [items, itemStockTotals, sortItems]);
 
-  // Get stock entries with item info for the "In Stock" tab (shows each location separately)
-  const inStockEntries = useMemo(() => {
-    if (!stock?.stock || !items?.items) return [];
-
-    // Create a lookup for items
-    const itemLookup: Record<string, InventoryItem> = {};
-    for (const item of items.items) {
-      itemLookup[item.id] = item;
-    }
-
-    // Map stock entries to include item info
-    const entries = stock.stock
-      .filter((entry) => {
-        const quantity = parseFloat(String(entry.quantity));
-        if (quantity <= 0) return false;
-        // Filter by selected area if set (filter by where stock is actually stored)
-        if (selectedArea && entry.areaId !== selectedArea) return false;
-        return true;
-      })
-      .map((entry) => {
-        const itemId = entry.itemId || entry.inventoryItemId;
-        const item = itemId ? itemLookup[itemId] : null;
-        const area = entry.areaId ? areaLookup[entry.areaId] : null;
-        return { entry, item, area };
-      })
-      .filter((e): e is { entry: StockEntry; item: InventoryItem; area: StorageArea | null } => e.item != null);
-
-    // Sort based on current sort option
-    switch (sortOption) {
-      case 'name-asc':
-        return entries.sort((a, b) => (a.item?.name || '').localeCompare(b.item?.name || ''));
-      case 'name-desc':
-        return entries.sort((a, b) => (b.item?.name || '').localeCompare(a.item?.name || ''));
-      case 'category':
-        return entries.sort((a, b) => (a.item?.category || '').localeCompare(b.item?.category || ''));
-      case 'quantity-asc':
-        return entries.sort((a, b) => parseFloat(String(a.entry.quantity)) - parseFloat(String(b.entry.quantity)));
-      case 'quantity-desc':
-        return entries.sort((a, b) => parseFloat(String(b.entry.quantity)) - parseFloat(String(a.entry.quantity)));
-      case 'area':
-        return entries.sort((a, b) => (a.area?.name || '').localeCompare(b.area?.name || ''));
-      default:
-        return entries;
-    }
-  }, [stock, items, areaLookup, sortOption, selectedArea]);
-
-  // Get all catalog items (sorted and filtered by area)
   const catalogItems = useMemo(() => {
-    let itemList = items?.items || [];
-    // Filter by selected area if set (filter by item's default area)
+    let itemList = filteredItems;
     if (selectedArea) {
       itemList = itemList.filter((item) => item.defaultAreaId === selectedArea);
     }
+    if (stockFilter === 'in-stock') {
+      itemList = itemList.filter((item) => {
+        const stockInfo = itemStockTotals[item.id];
+        return stockInfo && stockInfo.quantity > 0;
+      });
+    } else if (stockFilter === 'not-in-stock') {
+      itemList = itemList.filter((item) => {
+        const stockInfo = itemStockTotals[item.id];
+        return !stockInfo || stockInfo.quantity <= 0;
+      });
+    }
     return sortItems(itemList);
-  }, [items, sortItems, selectedArea]);
+  }, [filteredItems, sortItems, selectedArea, stockFilter, itemStockTotals]);
 
-  const { data: expiringItems } = useQuery({
-    queryKey: ['inventory', 'expiring'],
-    queryFn: () => inventoryApi.getExpiringItems(7),
-  });
-
-  const { data: lowStockItems } = useQuery({
-    queryKey: ['inventory', 'low-stock'],
-    queryFn: inventoryApi.getLowStockItems,
-  });
-
+  // Mutations
   const createAreaMutation = useMutation({
     mutationFn: (data: StorageAreaFormData) => inventoryApi.createArea(data),
     onSuccess: () => {
@@ -402,6 +483,7 @@ export function InventoryPage() {
         keepInStock: data.keepInStock,
         minStockQuantity: data.keepInStock ? data.keepInStockThreshold : undefined,
         defaultAreaId: data.defaultAreaId || undefined,
+        defaultShelfLifeDays: data.defaultShelfLifeDays || undefined,
       };
       return inventoryApi.createItem(apiData);
     },
@@ -421,7 +503,8 @@ export function InventoryPage() {
         keepInStock: data.keepInStock,
         minStockQuantity: data.keepInStock ? data.keepInStockThreshold : undefined,
         defaultAreaId: data.defaultAreaId || undefined,
-        unitConversions: data.unitConversions,
+        density: data.density,
+        defaultShelfLifeDays: data.defaultShelfLifeDays || undefined,
       };
       return inventoryApi.updateItem(id, apiData);
     },
@@ -502,7 +585,6 @@ export function InventoryPage() {
     },
   });
 
-  // Leftover mutations
   const createLeftoverMutation = useMutation({
     mutationFn: (data: LeftoverFormData) =>
       inventoryApi.createLeftover({
@@ -546,6 +628,7 @@ export function InventoryPage() {
     },
   });
 
+  // Handlers
   const handleFixIncompleteItem = async (
     itemId: string,
     updates: {
@@ -562,11 +645,8 @@ export function InventoryPage() {
   const handleSelectItem = (itemId: string, checked: boolean) => {
     setSelectedItems((prev) => {
       const next = new Set(prev);
-      if (checked) {
-        next.add(itemId);
-      } else {
-        next.delete(itemId);
-      }
+      if (checked) next.add(itemId);
+      else next.delete(itemId);
       return next;
     });
   };
@@ -587,7 +667,6 @@ export function InventoryPage() {
       });
     } else {
       if (deleteType === 'stock_only') {
-        // Delete all stock entries for this item
         const entries = itemStockEntries[deleteDialog.items[0]?.id] || [];
         Promise.all(entries.map((entry) => inventoryApi.deleteStock(entry.id))).then(() => {
           queryClient.invalidateQueries({ queryKey: ['inventory'] });
@@ -597,6 +676,14 @@ export function InventoryPage() {
         deleteItemMutation.mutate(deleteDialog.items[0]?.id, {
           onSuccess: () => {
             setDeleteDialog({ open: false, items: [], isBulk: false });
+          },
+          onError: (err: any) => {
+            // Check if deletion was blocked because item is linked to recipes
+            const errorCode = err?.response?.data?.error?.code || err?.data?.error?.code;
+            if (errorCode === 'ITEM_LINKED' || err?.message?.includes('linked')) {
+              setDeleteDialog({ open: false, items: [], isBulk: false });
+              setRelinkItem(deleteDialog.items[0]);
+            }
           },
         });
       }
@@ -608,18 +695,54 @@ export function InventoryPage() {
     setItemFormOpen(true);
   };
 
-  const handleItemFormSubmit = (data: InventoryItemFormData) => {
+  const handleItemFormSubmit = async (data: InventoryItemFormData) => {
     if (editingItem) {
       updateItemMutation.mutate({ id: editingItem.id, data });
+
+      // Handle expiry date: create/update a stock entry for this item
+      if (data.expiryDate) {
+        const existingEntries = itemStockEntries[editingItem.id] || [];
+        const areaId = data.defaultAreaId || editingItem.defaultAreaId || areas?.areas?.[0]?.id;
+        if (areaId) {
+          if (existingEntries.length > 0) {
+            // Update the first stock entry's expiry
+            inventoryApi.updateStock(existingEntries[0].id, { expiryDate: data.expiryDate }).then(() => {
+              queryClient.invalidateQueries({ queryKey: ['inventory'] });
+            });
+          } else {
+            // Create a stock entry to hold the expiry (quantity 1 for Basic mode)
+            inventoryApi.addStock({
+              itemId: editingItem.id,
+              areaId,
+              quantity: 1,
+              unit: editingItem.defaultUnit || 'pieces',
+              expiryDate: data.expiryDate,
+            }).then(() => {
+              queryClient.invalidateQueries({ queryKey: ['inventory'] });
+            });
+          }
+        }
+      }
     } else {
-      createItemMutation.mutate(data);
+      const result = await createItemMutation.mutateAsync(data);
+      if (data.expiryDate && result?.item?.id) {
+        const areaId = data.defaultAreaId || areas?.areas?.[0]?.id;
+        if (areaId) {
+          await inventoryApi.addStock({
+            itemId: result.item.id,
+            areaId,
+            quantity: 1,
+            unit: data.unit || 'pieces',
+            expiryDate: data.expiryDate,
+          });
+          queryClient.invalidateQueries({ queryKey: ['inventory'] });
+        }
+      }
     }
   };
 
   const handleItemFormClose = (open: boolean) => {
-    if (!open) {
-      setEditingItem(null);
-    }
+    if (!open) setEditingItem(null);
     setItemFormOpen(open);
   };
 
@@ -637,250 +760,229 @@ export function InventoryPage() {
     setSelectedItems(new Set());
   };
 
-  const isLoading = areasLoading || itemsLoading || stockLoading;
-
-  // Get primary storage area for an item
-  const getItemPrimaryArea = (item: InventoryItem) => {
-    const entries = itemStockEntries[item.id] || [];
-    if (entries.length > 0 && entries[0].areaId) {
-      return areaLookup[entries[0].areaId];
-    }
-    if (item.defaultAreaId) {
-      return areaLookup[item.defaultAreaId];
-    }
-    return null;
+  const toggleAreaCollapse = (areaId: string) => {
+    setCollapsedAreas((prev) => {
+      const next = new Set(prev);
+      if (next.has(areaId)) next.delete(areaId);
+      else next.add(areaId);
+      return next;
+    });
   };
 
-  const renderItemCard = (item: InventoryItem, showQuantity: boolean = true) => {
+  const isLoading = areasLoading || itemsLoading || stockLoading;
+
+  // Alert counts
+  const expiringCount = (expiringItems?.expiring?.length || 0) + (expiringLeftoversData?.leftovers?.length || 0);
+  const lowStockCount = isAdvanced ? (lowStockItems?.lowStock?.length || 0) : 0;
+  const totalAlerts = expiringCount + lowStockCount;
+
+  // Render helpers
+  const renderItemRow = (item: InventoryItem, entry?: StockEntry, area?: StorageArea | null) => {
     const stockInfo = itemStockTotals[item.id];
     const hasStock = stockInfo && stockInfo.quantity > 0;
-    const entries = itemStockEntries[item.id] || [];
+    const quantity = entry ? parseFloat(String(entry.quantity)) : stockInfo?.quantity;
+    const unit = entry?.unit || stockInfo?.unit || item.defaultUnit || 'units';
+    const confidence = confidenceData?.confidence?.[item.id];
 
-    // Get unique areas where this item is stored
-    const uniqueAreaIds = [...new Set(entries.map((e) => e.areaId).filter(Boolean))];
-    const stockAreas = uniqueAreaIds.map((id) => areaLookup[id]).filter(Boolean);
-    const primaryArea = stockAreas[0] || (item.defaultAreaId ? areaLookup[item.defaultAreaId] : null);
-    const additionalAreasCount = stockAreas.length > 1 ? stockAreas.length - 1 : 0;
+    // In Basic mode, find earliest expiry from this item's stock entries
+    const itemEntries = itemStockEntries[item.id] || [];
+    const earliestExpiry = !entry ? itemEntries
+      .filter(e => e.expiryDate)
+      .sort((a, b) => new Date(a.expiryDate!).getTime() - new Date(b.expiryDate!).getTime())[0]?.expiryDate
+      : undefined;
+    const displayExpiry = entry?.expiryDate || earliestExpiry;
 
     return (
-      <Card
-        key={item.id}
+      <div
+        key={entry?.id || item.id}
         className={cn(
-          'cursor-pointer hover:bg-muted/50 transition-colors',
-          !hasStock && 'border-dashed'
+          'flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer border-b last:border-b-0',
+          !hasStock && !entry && 'text-muted-foreground'
         )}
-        onClick={() => !bulkMode && handleEditItem(item)}
+        onClick={(e) => {
+          const target = e.target as HTMLElement;
+          if (target.closest('[role="menu"]') || target.closest('[data-radix-popper-content-wrapper]')) return;
+          handleEditItem(item);
+        }}
       >
-        <CardContent className="flex items-center justify-between p-4">
-          <div className="flex items-center gap-3">
-            {bulkMode && (
-              <Checkbox
-                checked={selectedItems.has(item.id)}
-                onCheckedChange={(checked) => handleSelectItem(item.id, !!checked)}
-                onClick={(e) => e.stopPropagation()}
-              />
-            )}
-            <div>
-              <p className={cn('font-medium', !hasStock && 'text-muted-foreground')}>
-                {item.name}
-              </p>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                {item.category && <span>{item.category}</span>}
-                {primaryArea && (
-                  <>
-                    {item.category && <span>•</span>}
-                    <span className="flex items-center gap-1">
-                      {primaryArea.icon} {primaryArea.name}
-                      {additionalAreasCount > 0 && (
-                        <span className="text-primary font-medium">
-                          +{additionalAreasCount} more
-                        </span>
-                      )}
-                    </span>
-                  </>
-                )}
-              </div>
+        <div className="flex items-center gap-3 min-w-0">
+          {bulkMode && (
+            <Checkbox
+              checked={selectedItems.has(item.id)}
+              onCheckedChange={(checked) => handleSelectItem(item.id, !!checked)}
+              onClick={(e) => e.stopPropagation()}
+            />
+          )}
+          {isAdvanced && confidence && (
+            <ConfidenceBadge band={confidence.band as ConfidenceBand} score={confidence.confidence} />
+          )}
+          <span className="text-base shrink-0">{getItemIcon(item)}</span>
+          <div className="min-w-0">
+            <p className="font-medium truncate">
+              {item.name}
+            </p>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {item.category && <span>{item.category}</span>}
+              {displayExpiry && (
+                <>
+                  {item.category && <span>·</span>}
+                  <span className="flex items-center gap-0.5">
+                    <Clock className="h-3 w-3" />
+                    Expires {formatDate(displayExpiry)}
+                  </span>
+                </>
+              )}
+              {!displayExpiry && item.defaultShelfLifeDays && (
+                <>
+                  {item.category && <span>·</span>}
+                  <span className="flex items-center gap-0.5">
+                    <Clock className="h-3 w-3" />
+                    {item.defaultShelfLifeDays}d shelf life
+                  </span>
+                </>
+              )}
+              {!hasStock && !entry && (
+                <>
+                  {(item.category || displayExpiry || item.defaultShelfLifeDays) && <span>·</span>}
+                  <span className="italic">Not in stock</span>
+                </>
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {showQuantity && (
-              <>
-                {hasStock ? (
-                  <Badge
-                    variant="secondary"
-                    className="font-mono cursor-pointer hover:bg-secondary/80 transition-colors"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setManageStockItem(item);
-                    }}
-                    title="Click to adjust stock"
-                  >
-                    <Edit className="h-3 w-3 mr-1" />
-                    {stockInfo.quantity.toFixed(1)} {stockInfo.unit || item.defaultUnit || 'units'}
-                  </Badge>
-                ) : (
-                  <Badge
-                    variant="outline"
-                    className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setManageStockItem(item);
-                    }}
-                    title="Click to add stock"
-                  >
-                    <Plus className="h-3 w-3 mr-1" />
-                    Add stock
-                  </Badge>
-                )}
-              </>
-            )}
-            {item.keepInStock && (
-              <Badge variant="outline" className="text-xs">
-                <RefreshCcw className="mr-1 h-3 w-3" />
-                Keep stocked
-              </Badge>
-            )}
-            {!bulkMode && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                  <Button variant="ghost" size="icon" className="h-8 w-8">
-                    <Edit className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {isAdvanced && (
+            <>
+              {quantity != null && quantity > 0 ? (
+                <Badge
+                  variant="secondary"
+                  className="font-mono cursor-pointer hover:bg-secondary/80 transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setManageStockItem(item);
+                  }}
+                >
+                  {quantity.toFixed(1)} {unit}
+                </Badge>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setManageStockItem(item);
+                  }}
+                >
+                  <Plus className="h-3 w-3 mr-1" />
+                  Add stock
+                </Badge>
+              )}
+            </>
+          )}
+          {isAdvanced && item.keepInStock && (
+            <Badge variant="outline" className="text-xs hidden sm:flex">
+              <RefreshCcw className="mr-1 h-3 w-3" />
+              Auto
+            </Badge>
+          )}
+          {!bulkMode && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                <Button variant="ghost" size="icon" className="h-8 w-8 text-foreground">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {isAdvanced && (
                   <DropdownMenuItem onClick={() => setManageStockItem(item)}>
                     <Package className="mr-2 h-4 w-4" />
                     Manage Stock
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleEditItem(item)}>
-                    <Edit className="mr-2 h-4 w-4" />
-                    Edit Item
+                )}
+                <DropdownMenuItem onClick={() => handleEditItem(item)}>
+                  <Edit className="mr-2 h-4 w-4" />
+                  Edit Item
+                </DropdownMenuItem>
+                {isAdvanced && (
+                  <DropdownMenuItem onClick={() => setReconcileItem(item)}>
+                    <ClipboardCheck className="mr-2 h-4 w-4" />
+                    Verify Stock
                   </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => addToShoppingListMutation.mutate(item.id)}
-                    disabled={addToShoppingListMutation.isPending}
-                  >
-                    <ShoppingCart className="mr-2 h-4 w-4" />
-                    Add to Shopping List
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => handleDeleteClick(item)}
-                    className="text-destructive"
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    Delete
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+                )}
+                <DropdownMenuItem
+                  onClick={() => addToShoppingListMutation.mutate(item.id)}
+                  disabled={addToShoppingListMutation.isPending}
+                >
+                  <ShoppingCart className="mr-2 h-4 w-4" />
+                  Add to Shopping List
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => handleDeleteClick(item)}
+                  className="text-destructive"
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+      </div>
     );
   };
 
-  // Render a stock entry card (for the "In Stock" tab showing each location)
-  const renderStockEntryCard = (
-    entry: StockEntry,
-    item: InventoryItem,
-    area: StorageArea | null
-  ) => {
-    const quantity = parseFloat(String(entry.quantity));
+  const renderAreaCard = (area: StorageArea) => {
+    const stockedItems = stockByArea.groups[area.id] || [];
+    const itemCount = stockedItems.length;
+    const isCollapsed = collapsedAreas.has(area.id);
 
     return (
-      <Card
-        key={entry.id}
-        className="cursor-pointer hover:bg-muted/50 transition-colors"
-        onClick={() => setManageStockItem(item)}
-      >
-        <CardContent className="flex items-center justify-between p-4">
-          <div className="flex items-center gap-3">
-            {bulkMode && (
-              <Checkbox
-                checked={selectedItems.has(item.id)}
-                onCheckedChange={(checked) => handleSelectItem(item.id, !!checked)}
-                onClick={(e) => e.stopPropagation()}
-              />
-            )}
-            <div>
-              <p className="font-medium">{item.name}</p>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                {area && (
-                  <span className="flex items-center gap-1">
-                    {area.icon} {area.name}
-                  </span>
-                )}
-                {item.category && (
-                  <>
-                    {area && <span>•</span>}
-                    <span>{item.category}</span>
-                  </>
-                )}
-                {entry.expiryDate && (
-                  <>
-                    <span>•</span>
-                    <span>Expires {formatDate(entry.expiryDate)}</span>
-                  </>
-                )}
-              </div>
+      <Card key={area.id} className="overflow-hidden">
+        <CardHeader
+          className="cursor-pointer hover:bg-muted/30 transition-colors py-3 px-4"
+          onClick={() => toggleAreaCollapse(area.id)}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {isCollapsed ? (
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              )}
+              <span className="text-lg">{area.icon || '📦'}</span>
+              <CardTitle className="text-base">{area.name}</CardTitle>
+              <Badge variant="secondary" className="text-xs">
+                {itemCount} item{itemCount !== 1 ? 's' : ''}
+              </Badge>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Badge
-              variant="secondary"
-              className="font-mono cursor-pointer hover:bg-secondary/80 transition-colors"
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
               onClick={(e) => {
                 e.stopPropagation();
-                setManageStockItem(item);
+                setEditingArea(area);
+                setAreaFormOpen(true);
               }}
-              title="Click to adjust stock"
             >
-              <Edit className="h-3 w-3 mr-1" />
-              {quantity.toFixed(1)} {entry.unit || item.defaultUnit || 'units'}
-            </Badge>
-            {item.keepInStock && (
-              <Badge variant="outline" className="text-xs">
-                <RefreshCcw className="mr-1 h-3 w-3" />
-                Keep stocked
-              </Badge>
-            )}
-            {!bulkMode && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                  <Button variant="ghost" size="icon" className="h-8 w-8">
-                    <Edit className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setManageStockItem(item)}>
-                    <Package className="mr-2 h-4 w-4" />
-                    Manage Stock
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleEditItem(item)}>
-                    <Edit className="mr-2 h-4 w-4" />
-                    Edit Item
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => addToShoppingListMutation.mutate(item.id)}
-                    disabled={addToShoppingListMutation.isPending}
-                  >
-                    <ShoppingCart className="mr-2 h-4 w-4" />
-                    Add to Shopping List
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => deleteStockMutation.mutate(entry.id)}
-                    className="text-destructive"
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    Remove from {area?.name || 'location'}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+              <Settings className="h-4 w-4" />
+            </Button>
           </div>
-        </CardContent>
+        </CardHeader>
+        {!isCollapsed && (
+          <CardContent className="p-0">
+            {itemCount === 0 ? (
+              <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+                No items in this area
+              </div>
+            ) : (
+              <>
+                {stockedItems.map(({ entry, item }) => renderItemRow(item, entry, area))}
+              </>
+            )}
+          </CardContent>
+        )}
       </Card>
     );
   };
@@ -909,13 +1011,13 @@ export function InventoryPage() {
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm">
                     <Edit className="mr-2 h-4 w-4" />
-                    Change Category
+                    Category
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
                   <DropdownMenuLabel>Select Category</DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  {categoryOptions.map((cat) => (
+                  {categories.map((cat) => (
                     <DropdownMenuItem
                       key={cat}
                       onClick={() => {
@@ -925,6 +1027,7 @@ export function InventoryPage() {
                         });
                       }}
                     >
+                      {categoryIcons[cat] && <span className="mr-1">{categoryIcons[cat]}</span>}
                       {cat}
                     </DropdownMenuItem>
                   ))}
@@ -934,7 +1037,7 @@ export function InventoryPage() {
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm">
                     <Package className="mr-2 h-4 w-4" />
-                    Change Area
+                    Area
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
@@ -965,38 +1068,40 @@ export function InventoryPage() {
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <RefreshCcw className="mr-2 h-4 w-4" />
-                    Keep in Stock
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent>
-                  <DropdownMenuItem
-                    onClick={() => {
-                      batchUpdateMutation.mutate({
-                        itemIds: Array.from(selectedItems),
-                        updates: { keepInStock: true },
-                      });
-                    }}
-                  >
-                    <Check className="mr-2 h-4 w-4" />
-                    Enable Keep in Stock
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => {
-                      batchUpdateMutation.mutate({
-                        itemIds: Array.from(selectedItems),
-                        updates: { keepInStock: false },
-                      });
-                    }}
-                  >
-                    <X className="mr-2 h-4 w-4" />
-                    Disable Keep in Stock
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              {isAdvanced && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <RefreshCcw className="mr-2 h-4 w-4" />
+                      Keep in Stock
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        batchUpdateMutation.mutate({
+                          itemIds: Array.from(selectedItems),
+                          updates: { keepInStock: true },
+                        });
+                      }}
+                    >
+                      <Check className="mr-2 h-4 w-4" />
+                      Enable
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        batchUpdateMutation.mutate({
+                          itemIds: Array.from(selectedItems),
+                          updates: { keepInStock: false },
+                        });
+                      }}
+                    >
+                      <X className="mr-2 h-4 w-4" />
+                      Disable
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
               <Button
                 variant="destructive"
                 size="sm"
@@ -1019,23 +1124,22 @@ export function InventoryPage() {
   const renderSortAndFilter = () => (
     <div className="mb-4 space-y-3">
       <div className="flex flex-wrap items-center gap-3">
-        <SearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="Search items..."
-          className="max-w-sm"
-        />
         <Select value={sortOption} onValueChange={(value) => setSortOption(value as SortOption)}>
           <SelectTrigger className="w-[180px]">
             <ArrowUpDown className="mr-2 h-4 w-4" />
             <SelectValue placeholder="Sort by" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="expiry">Expiring Soon</SelectItem>
             <SelectItem value="name-asc">Name (A-Z)</SelectItem>
             <SelectItem value="name-desc">Name (Z-A)</SelectItem>
             <SelectItem value="category">Category</SelectItem>
-            <SelectItem value="quantity-desc">Quantity (High-Low)</SelectItem>
-            <SelectItem value="quantity-asc">Quantity (Low-High)</SelectItem>
+            {isAdvanced && (
+              <>
+                <SelectItem value="quantity-desc">Quantity (High-Low)</SelectItem>
+                <SelectItem value="quantity-asc">Quantity (Low-High)</SelectItem>
+              </>
+            )}
             <SelectItem value="area">Storage Area</SelectItem>
           </SelectContent>
         </Select>
@@ -1065,6 +1169,18 @@ export function InventoryPage() {
         </div>
       </div>
       <div className="flex items-center gap-2">
+        {(['all', 'in-stock', 'not-in-stock'] as const).map((filter) => (
+          <Button
+            key={filter}
+            variant={stockFilter === filter ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setStockFilter(filter)}
+          >
+            {filter === 'all' ? 'All' : filter === 'in-stock' ? 'In Stock' : 'Not in Stock'}
+          </Button>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
         {!bulkMode && (
           <>
             <Button variant="outline" size="sm" onClick={() => setBulkMode(true)}>
@@ -1084,6 +1200,108 @@ export function InventoryPage() {
       </div>
     </div>
   );
+
+  // Render alerts section
+  const renderAlerts = () => {
+    if (totalAlerts === 0 && incompleteItems.length === 0) return null;
+
+    return (
+      <div className="mb-6 space-y-3">
+        {/* Expiring + Low stock in a compact row */}
+        {totalAlerts > 0 && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {expiringCount > 0 && (
+              <Card className="border-warning/30 bg-warning-muted">
+                <CardContent className="flex items-center gap-3 p-3">
+                  <AlertTriangle className="h-5 w-5 text-warning shrink-0" />
+                  <div className="min-w-0">
+                    <p className="font-medium text-sm text-warning-muted-foreground">
+                      {expiringCount} item{expiringCount !== 1 ? 's' : ''} expiring soon
+                    </p>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {expiringItems?.expiring?.slice(0, 3).map((se) => {
+                        const days = se.expiryDate ? getDaysUntilExpiry(se.expiryDate) : null;
+                        return (
+                          <Badge
+                            key={se.id}
+                            variant={days !== null ? getExpiryBadgeVariant(days) : 'secondary'}
+                            className="text-xs cursor-pointer hover:opacity-80"
+                            onClick={() => { if (se.item) handleEditItem(se.item as InventoryItem); }}
+                          >
+                            {se.item?.name || 'Unknown'}
+                            {days !== null && ` (${days <= 0 ? 'expired' : `${days}d`})`}
+                          </Badge>
+                        );
+                      })}
+                      {expiringLeftoversData?.leftovers?.slice(0, 2).map((lo) => (
+                        <Badge
+                          key={lo.id}
+                          variant="destructive"
+                          className="text-xs cursor-pointer hover:opacity-80"
+                          onClick={() => {
+                            setEditingLeftover(lo);
+                            setLeftoverFormOpen(true);
+                          }}
+                        >
+                          {lo.name} (leftover)
+                        </Badge>
+                      ))}
+                      {expiringCount > 5 && (
+                        <Badge variant="outline" className="text-xs">+{expiringCount - 5} more</Badge>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+            {lowStockCount > 0 && (
+              <Card className="border-info/30 bg-info-muted">
+                <CardContent className="flex items-center gap-3 p-3">
+                  <RefreshCcw className="h-5 w-5 text-info shrink-0" />
+                  <div className="min-w-0">
+                    <p className="font-medium text-sm text-info-muted-foreground">
+                      {lowStockCount} item{lowStockCount !== 1 ? 's' : ''} running low
+                    </p>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {lowStockItems?.lowStock?.slice(0, 4).map((entry) => (
+                        <Badge
+                          key={entry.item.id}
+                          variant="outline"
+                          className="text-xs cursor-pointer hover:bg-primary hover:text-primary-foreground"
+                          onClick={() => addToShoppingListMutation.mutate(entry.item.id)}
+                        >
+                          <ShoppingCart className="h-3 w-3 mr-1" />
+                          {entry.item.name}
+                        </Badge>
+                      ))}
+                      {lowStockCount > 4 && (
+                        <Badge variant="outline" className="text-xs">+{lowStockCount - 4} more</Badge>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {/* Incomplete items */}
+        {incompleteItems.length > 0 && (
+          <Alert>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription className="flex items-center justify-between">
+              <span>
+                {incompleteItems.length} item{incompleteItems.length !== 1 ? 's' : ''} need attention (missing category, unit, or storage area)
+              </span>
+              <Button size="sm" onClick={() => setFixIncompleteDialogOpen(true)}>
+                Fix Items
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -1113,7 +1331,7 @@ export function InventoryPage() {
                   {areas?.areas && areas.areas.length > 0 && (
                     <>
                       <DropdownMenuSeparator />
-                      <DropdownMenuLabel>Edit Area</DropdownMenuLabel>
+                      <DropdownMenuLabel>Manage Areas</DropdownMenuLabel>
                       {areas.areas.map((area) => (
                         <DropdownMenuItem
                           key={area.id}
@@ -1121,9 +1339,13 @@ export function InventoryPage() {
                             setEditingArea(area);
                             setAreaFormOpen(true);
                           }}
+                          className="flex items-center justify-between"
                         >
-                          <span className="mr-2">{area.icon || '📦'}</span>
-                          {area.name}
+                          <span className="flex items-center">
+                            <span className="mr-2">{area.icon || '📦'}</span>
+                            {area.name}
+                          </span>
+                          <Edit className="h-3.5 w-3.5 text-muted-foreground ml-4" />
                         </DropdownMenuItem>
                       ))}
                     </>
@@ -1139,81 +1361,34 @@ export function InventoryPage() {
         }
       />
 
-      {/* Alerts */}
-      <div className="mb-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {expiringItems?.expiring && expiringItems.expiring.length > 0 && (
-          <Card className="border-warning/30 bg-warning-muted">
-            <CardContent className="flex items-center gap-3 p-4">
-              <AlertTriangle className="h-5 w-5 text-warning" />
-              <div>
-                <p className="font-medium text-warning-muted-foreground">
-                  {expiringItems.expiring.length} items expiring soon
-                </p>
-                <p className="text-sm text-warning-muted-foreground/80">
-                  Check your inventory
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-        {expiringLeftoversData?.leftovers && expiringLeftoversData.leftovers.length > 0 && (
-          <Card className="border-error/30 bg-error-muted">
-            <CardContent className="flex items-center gap-3 p-4">
-              <Soup className="h-5 w-5 text-error" />
-              <div>
-                <p className="font-medium text-error-muted-foreground">
-                  {expiringLeftoversData.leftovers.length} leftover{expiringLeftoversData.leftovers.length !== 1 ? 's' : ''} expiring soon
-                </p>
-                <p className="text-sm text-error-muted-foreground/80">
-                  Finish them before they go bad
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-        {lowStockItems?.lowStock && lowStockItems.lowStock.length > 0 && (
-          <Card className="border-info/30 bg-info-muted">
-            <CardContent className="flex items-center gap-3 p-4">
-              <RefreshCcw className="h-5 w-5 text-info" />
-              <div>
-                <p className="font-medium text-info-muted-foreground">
-                  {lowStockItems.lowStock.length} items running low
-                </p>
-                <p className="text-sm text-info-muted-foreground/80">
-                  Consider adding to shopping list
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+      {renderAlerts()}
+
+      <div className="mb-4">
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search items and leftovers..."
+          className="max-w-md"
+        />
       </div>
 
-      {/* Incomplete Items Alert */}
-      {incompleteItems.length > 0 && (
-        <Alert className="mb-6">
-          <AlertTriangle className="h-4 w-4" />
-          <AlertDescription className="flex items-center justify-between">
-            <span>
-              {incompleteItems.length} item{incompleteItems.length !== 1 ? 's' : ''} need attention (missing category, unit, or storage area)
-            </span>
-            <Button size="sm" onClick={() => setFixIncompleteDialogOpen(true)}>
-              Fix Incomplete Items
-            </Button>
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <Tabs defaultValue="all">
+      <Tabs defaultValue="by-location">
         <TabsList className="mb-4">
-          <TabsTrigger value="all">
-            In Stock
-            {inStockEntries.length > 0 && (
-              <Badge className="ml-2" variant="secondary">
-                {inStockEntries.length}
+          <TabsTrigger value="by-location">
+            <MapPin className="mr-1.5 h-4 w-4" />
+            By Location
+          </TabsTrigger>
+          <TabsTrigger value="all-items">
+            <List className="mr-1.5 h-4 w-4" />
+            All Items
+            {(items?.items?.length || 0) > 0 && (
+              <Badge className="ml-2" variant="outline">
+                {items?.items?.length || 0}
               </Badge>
             )}
           </TabsTrigger>
           <TabsTrigger value="leftovers">
+            <Soup className="mr-1.5 h-4 w-4" />
             Leftovers
             {leftoversData?.leftovers && leftoversData.leftovers.length > 0 && (
               <Badge className="ml-2" variant="secondary">
@@ -1221,43 +1396,90 @@ export function InventoryPage() {
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="catalog">
-            Catalog
-            {(items?.items?.length || 0) > 0 && (
-              <Badge className="ml-2" variant="outline">
-                {items?.items?.length || 0}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="expiring">
-            Expiring
-            {expiringItems?.expiring && expiringItems.expiring.length > 0 && (
-              <Badge className="ml-2" variant="destructive">
-                {expiringItems.expiring.length}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="low-stock">
-            Low Stock
-            {lowStockItems?.lowStock && lowStockItems.lowStock.length > 0 && (
-              <Badge className="ml-2" variant="secondary">
-                {lowStockItems.lowStock.length}
-              </Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="keep-in-stock">
-            Keep in Stock
-            {keepInStockItems?.items && keepInStockItems.items.length > 0 && (
-              <Badge className="ml-2" variant="outline">
-                {keepInStockItems.items.length}
-              </Badge>
-            )}
-          </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="all">
+        {/* By Location View */}
+        <TabsContent value="by-location">
+          {isLoading ? (
+            <div className="space-y-4">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-32" />
+              ))}
+            </div>
+          ) : (areas?.areas?.length || 0) === 0 ? (
+            <EmptyState
+              icon={<MapPin className="h-12 w-12" />}
+              title="No storage areas yet"
+              description="Create storage areas like Fridge, Pantry, or Freezer to organize your inventory by location"
+              action={
+                <Button onClick={() => { setEditingArea(null); setAreaFormOpen(true); }}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Area
+                </Button>
+              }
+            />
+          ) : (
+            <div className="space-y-4">
+              {areas?.areas?.map((area) => renderAreaCard(area))}
+
+              {/* Unassigned items */}
+              {stockByArea.unassigned.length > 0 && (
+                <Card className="overflow-hidden border-dashed">
+                  <CardHeader
+                    className="cursor-pointer hover:bg-muted/30 transition-colors py-3 px-4"
+                    onClick={() => toggleAreaCollapse('__unassigned')}
+                  >
+                    <div className="flex items-center gap-2">
+                      {collapsedAreas.has('__unassigned') ? (
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      )}
+                      <span className="text-lg">📋</span>
+                      <CardTitle className="text-base text-muted-foreground">Unassigned</CardTitle>
+                      <Badge variant="outline" className="text-xs">
+                        {stockByArea.unassigned.length}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  {!collapsedAreas.has('__unassigned') && (
+                    <CardContent className="p-0">
+                      {stockByArea.unassigned.map(({ entry, item }) => renderItemRow(item, entry))}
+                    </CardContent>
+                  )}
+                </Card>
+              )}
+
+              {/* Search returned no results */}
+              {search.trim() && filteredItems.length === 0 && (items?.items?.length || 0) > 0 && (
+                <EmptyState
+                  title="No matching items"
+                  description={`No items match "${search}"`}
+                />
+              )}
+
+              {/* No items at all */}
+              {!search.trim() && (items?.items?.length || 0) === 0 && (
+                <EmptyState
+                  icon={<Package className="h-12 w-12" />}
+                  title="No items yet"
+                  description="Add items to your inventory to see them organized by location"
+                  action={
+                    <Button onClick={() => setItemFormOpen(true)}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Item
+                    </Button>
+                  }
+                />
+              )}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* All Items View */}
+        <TabsContent value="all-items">
           {renderSortAndFilter()}
-          {renderBulkToolbar(inStockItems)}
+          {renderBulkToolbar(catalogItems)}
 
           {isLoading ? (
             <div className="space-y-2">
@@ -1265,11 +1487,11 @@ export function InventoryPage() {
                 <Skeleton key={i} className="h-16" />
               ))}
             </div>
-          ) : inStockEntries.length === 0 ? (
+          ) : !catalogItems.length ? (
             <EmptyState
               icon={<Package className="h-12 w-12" />}
-              title="No items in stock"
-              description="Add stock to your inventory items, or create a new item"
+              title="No items in catalog"
+              description="Add items to your catalog to track inventory"
               action={
                 <Button onClick={() => setItemFormOpen(true)}>
                   <Plus className="mr-2 h-4 w-4" />
@@ -1278,14 +1500,15 @@ export function InventoryPage() {
               }
             />
           ) : (
-            <div className="space-y-2">
-              {inStockEntries.map(({ entry, item, area }) =>
-                item && renderStockEntryCard(entry, item, area)
-              )}
-            </div>
+            <Card className="overflow-hidden">
+              <CardContent className="p-0">
+                {catalogItems.map((item) => renderItemRow(item))}
+              </CardContent>
+            </Card>
           )}
         </TabsContent>
 
+        {/* Leftovers View */}
         <TabsContent value="leftovers">
           <div className="mb-4 flex justify-end">
             <Button onClick={() => setLeftoverFormOpen(true)}>
@@ -1312,13 +1535,28 @@ export function InventoryPage() {
                 </Button>
               }
             />
+          ) : filteredLeftovers.length === 0 ? (
+            <EmptyState
+              title="No matching leftovers"
+              description={`No leftovers match "${search}"`}
+            />
           ) : (
             <div className="space-y-2">
-              {leftoversData.leftovers.map((leftover) => (
+              {filteredLeftovers.map((leftover) => (
                 <LeftoverCard
                   key={leftover.id}
                   leftover={leftover}
                   onFinish={() => finishLeftoverMutation.mutate(leftover.id)}
+                  onUsePortion={() => {
+                    const current = typeof leftover.portions === 'string' ? parseFloat(leftover.portions) : leftover.portions;
+                    if (current <= 1) {
+                      finishLeftoverMutation.mutate(leftover.id);
+                    } else {
+                      inventoryApi.updateLeftover(leftover.id, { portions: current - 1 }).then(() => {
+                        queryClient.invalidateQueries({ queryKey: ['inventory', 'leftovers'] });
+                      });
+                    }
+                  }}
                   onEdit={() => {
                     setEditingLeftover(leftover);
                     setLeftoverFormOpen(true);
@@ -1329,182 +1567,9 @@ export function InventoryPage() {
             </div>
           )}
         </TabsContent>
-
-        <TabsContent value="catalog">
-          {renderSortAndFilter()}
-          {renderBulkToolbar(catalogItems)}
-
-          {isLoading ? (
-            <div className="space-y-2">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <Skeleton key={i} className="h-16" />
-              ))}
-            </div>
-          ) : !catalogItems.length ? (
-            <EmptyState
-              icon={<Package className="h-12 w-12" />}
-              title="No items in catalog"
-              description="Add items to your catalog to track inventory"
-              action={
-                <Button onClick={() => setItemFormOpen(true)}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Item
-                </Button>
-              }
-            />
-          ) : (
-            <div className="space-y-2">
-              {catalogItems.map((item) => renderItemCard(item))}
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="expiring">
-          {!expiringItems?.expiring?.length ? (
-            <EmptyState
-              title="No items expiring soon"
-              description="All your items are fresh"
-            />
-          ) : (
-            <div className="space-y-2">
-              {expiringItems.expiring.map((stockEntry) => {
-                const daysUntil = stockEntry.expiryDate ? getDaysUntilExpiry(stockEntry.expiryDate) : null;
-                const daysLabel = daysUntil === null ? '' :
-                  daysUntil < 0 ? `${Math.abs(daysUntil)}d ago` :
-                  daysUntil === 0 ? 'Today' :
-                  daysUntil === 1 ? '1 day' :
-                  `${daysUntil} days`;
-
-                return (
-                  <Card key={stockEntry.id}>
-                    <CardContent className="flex items-center justify-between p-4">
-                      <div>
-                        <p className="font-medium">{stockEntry.item?.name || 'Unknown'}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {stockEntry.expiryDate &&
-                            `Expires ${formatDate(stockEntry.expiryDate)}`}
-                          {stockEntry.area && (
-                            <span className="ml-2">
-                              • {stockEntry.area.icon} {stockEntry.area.name}
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {daysUntil !== null && (
-                          <Badge variant={getExpiryBadgeVariant(daysUntil)}>
-                            {daysLabel}
-                          </Badge>
-                        )}
-                        <Badge variant="outline" className="font-mono">
-                          {parseFloat(String(stockEntry.quantity)).toFixed(1)} {stockEntry.unit}
-                        </Badge>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="low-stock">
-          {!lowStockItems?.lowStock?.length ? (
-            <EmptyState
-              title="All items are well stocked"
-              description="No items are running low"
-            />
-          ) : (
-            <div className="space-y-2">
-              {lowStockItems.lowStock.map((entry) => (
-                <Card key={entry.item.id}>
-                  <CardContent className="flex items-center justify-between p-4">
-                    <div>
-                      <p className="font-medium">{entry.item.name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        Current: {entry.currentQuantity} / Min: {entry.minQuantity}
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      onClick={() => addToShoppingListMutation.mutate(entry.item.id)}
-                      disabled={addToShoppingListMutation.isPending}
-                    >
-                      <ShoppingCart className="mr-2 h-4 w-4" />
-                      Add to List
-                    </Button>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="keep-in-stock">
-          {!keepInStockItems?.items?.length ? (
-            <EmptyState
-              icon={<RefreshCcw className="h-12 w-12" />}
-              title="No keep-in-stock items"
-              description="Mark items as 'keep in stock' to track their levels and get reminders to restock"
-            />
-          ) : (
-            <div className="space-y-2">
-              {keepInStockItems.items.map((entry) => {
-                const statusColor =
-                  entry.status === 'out'
-                    ? 'text-error bg-error-muted border-error/30'
-                    : entry.status === 'low'
-                    ? 'text-warning bg-warning-muted border-warning/30'
-                    : '';
-                return (
-                  <Card key={entry.item.id} className={cn(statusColor)}>
-                    <CardContent className="flex items-center justify-between p-4">
-                      <div>
-                        <p className="font-medium">{entry.item.name}</p>
-                        <p className="text-sm text-muted-foreground">
-                          Current: {entry.currentQuantity} / Min: {entry.minQuantity} {entry.unit}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {entry.status === 'out' && (
-                          <Badge variant="destructive">Out of stock</Badge>
-                        )}
-                        {entry.status === 'low' && (
-                          <Badge variant="secondary" className="bg-warning-muted text-warning-muted-foreground">
-                            Low
-                          </Badge>
-                        )}
-                        {entry.status === 'ok' && (
-                          <Badge variant="secondary" className="bg-success-muted text-success-muted-foreground">
-                            Good
-                          </Badge>
-                        )}
-                        {entry.onShoppingList && (
-                          <Badge variant="outline" className="text-xs">
-                            On list
-                          </Badge>
-                        )}
-                        {!entry.onShoppingList && entry.status !== 'ok' && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => addToShoppingListMutation.mutate(entry.item.id)}
-                            disabled={addToShoppingListMutation.isPending}
-                          >
-                            <ShoppingCart className="mr-2 h-4 w-4" />
-                            Add to List
-                          </Button>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
-        </TabsContent>
       </Tabs>
 
+      {/* Dialogs */}
       <AreaForm
         open={areaFormOpen}
         onOpenChange={(open) => {
@@ -1528,12 +1593,18 @@ export function InventoryPage() {
         onOpenChange={handleItemFormClose}
         item={editingItem}
         areas={areas?.areas || []}
+        currentExpiryDate={
+          editingItem
+            ? (itemStockEntries[editingItem.id] || [])
+                .filter(e => e.expiryDate)
+                .sort((a, b) => new Date(a.expiryDate!).getTime() - new Date(b.expiryDate!).getTime())[0]?.expiryDate || null
+            : null
+        }
         onSubmit={handleItemFormSubmit}
         onDelete={editingItem ? () => handleDeleteClick(editingItem) : undefined}
         isSubmitting={createItemMutation.isPending || updateItemMutation.isPending}
       />
 
-      {/* Delete Confirmation Dialog */}
       <AlertDialog
         open={deleteDialog.open}
         onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
@@ -1546,42 +1617,52 @@ export function InventoryPage() {
                 : `Delete "${deleteDialog.items[0]?.name}"?`}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Choose how you want to remove {deleteDialog.isBulk ? 'these items' : 'this item'}:
+              {isAdvanced
+                ? `Choose how you want to remove ${deleteDialog.isBulk ? 'these items' : 'this item'}:`
+                : `This will permanently remove ${deleteDialog.isBulk ? 'these items' : 'this item'}. This cannot be undone.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="grid gap-4 py-4">
-            <Card
-              className="cursor-pointer border-2 hover:border-primary transition-colors"
-              onClick={() => handleDeleteItems('stock_only')}
-            >
-              <CardContent className="p-4">
-                <p className="font-medium">Remove from stock only</p>
-                <p className="text-sm text-muted-foreground">
-                  Keep {deleteDialog.isBulk ? 'items' : 'item'} in the catalog but set quantity to zero.
-                  You can add stock again later.
-                </p>
-              </CardContent>
-            </Card>
-            <Card
-              className="cursor-pointer border-2 hover:border-destructive transition-colors"
-              onClick={() => handleDeleteItems('catalog')}
-            >
-              <CardContent className="p-4">
-                <p className="font-medium text-destructive">Remove from catalog completely</p>
-                <p className="text-sm text-muted-foreground">
-                  Permanently delete {deleteDialog.isBulk ? 'items' : 'item'} and all associated stock entries.
-                  This cannot be undone.
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-          </AlertDialogFooter>
+          {isAdvanced ? (
+            <div className="grid gap-4 py-4">
+              <Card
+                className="cursor-pointer border-2 hover:border-primary transition-colors"
+                onClick={() => handleDeleteItems('stock_only')}
+              >
+                <CardContent className="p-4">
+                  <p className="font-medium">Remove from stock only</p>
+                  <p className="text-sm text-muted-foreground">
+                    Keep {deleteDialog.isBulk ? 'items' : 'item'} in the catalog but set quantity to zero.
+                  </p>
+                </CardContent>
+              </Card>
+              <Card
+                className="cursor-pointer border-2 hover:border-destructive transition-colors"
+                onClick={() => handleDeleteItems('catalog')}
+              >
+                <CardContent className="p-4">
+                  <p className="font-medium text-destructive">Remove from catalog completely</p>
+                  <p className="text-sm text-muted-foreground">
+                    Permanently delete {deleteDialog.isBulk ? 'items' : 'item'} and all stock entries. Cannot be undone.
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          ) : (
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <Button variant="destructive" onClick={() => handleDeleteItems('catalog')}>
+                Delete
+              </Button>
+            </AlertDialogFooter>
+          )}
+          {isAdvanced && (
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+            </AlertDialogFooter>
+          )}
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Bulk Add Dialog */}
       <BulkAddDialog
         open={bulkAddDialogOpen}
         onOpenChange={setBulkAddDialogOpen}
@@ -1590,7 +1671,6 @@ export function InventoryPage() {
         isSubmitting={batchCreateMutation.isPending}
       />
 
-      {/* Manage Stock Dialog */}
       <ManageStockDialog
         open={!!manageStockItem}
         onOpenChange={(open) => !open && setManageStockItem(null)}
@@ -1603,7 +1683,6 @@ export function InventoryPage() {
         isSubmitting={addStockMutation.isPending || updateStockMutation.isPending || deleteStockMutation.isPending}
       />
 
-      {/* Leftover Form */}
       <LeftoverForm
         open={leftoverFormOpen}
         onOpenChange={(open) => {
@@ -1623,13 +1702,45 @@ export function InventoryPage() {
         isSubmitting={createLeftoverMutation.isPending || updateLeftoverMutation.isPending}
       />
 
-      {/* Fix Incomplete Items Dialog */}
       <FixIncompleteItemDialog
         open={fixIncompleteDialogOpen}
         onOpenChange={setFixIncompleteDialogOpen}
         incompleteItems={incompleteItems}
         areas={areas?.areas || []}
         onSave={handleFixIncompleteItem}
+      />
+
+      {isAdvanced && (
+        <ReconcileDialog
+          open={!!reconcileItem}
+          onOpenChange={(open) => !open && setReconcileItem(null)}
+          item={reconcileItem}
+          areas={areas?.areas || []}
+          currentConfidence={
+            reconcileItem && confidenceData?.confidence?.[reconcileItem.id]
+              ? {
+                  ...confidenceData.confidence[reconcileItem.id],
+                  band: confidenceData.confidence[reconcileItem.id].band as 'high' | 'medium' | 'low',
+                }
+              : null
+          }
+        />
+      )}
+
+      <RelinkDialog
+        open={!!relinkItem}
+        onOpenChange={(open) => !open && setRelinkItem(null)}
+        item={relinkItem}
+        onRelinked={() => {
+          // After relinking, try deleting again
+          if (relinkItem) {
+            deleteItemMutation.mutate(relinkItem.id, {
+              onSuccess: () => {
+                setRelinkItem(null);
+              },
+            });
+          }
+        }}
       />
     </div>
   );

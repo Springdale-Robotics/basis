@@ -14,10 +14,10 @@ import {
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import { UnitConversionPromptDialog } from './UnitConversionPromptDialog';
+import { QuantityWeightPromptDialog } from './UnitConversionPromptDialog';
 import type { StorageArea, InventoryItem, StockEntry } from '@/types/models';
 import { unitOptions, calculateTotalStock, convertQuantity, normalizeUnit } from '@/lib/inventory-constants';
-import { hasGlobalConversion } from '@/lib/unit-conversions';
+import { isCountUnit as isQuantityUnit } from '@/lib/units';
 import { formatDate, cn } from '@/lib/utils';
 import { inventoryApi } from '@/api/inventory';
 
@@ -48,9 +48,8 @@ interface EditingStock {
   notes: string;
 }
 
-interface ConversionPrompt {
-  fromUnit: string;
-  toUnit: string;
+interface QuantityWeightPrompt {
+  unit: string;
   pendingStock: AddStockForm;
 }
 
@@ -74,16 +73,13 @@ export function ManageStockDialog({
     expiryDate: '',
   });
   const [editingStock, setEditingStock] = useState<EditingStock | null>(null);
-  const [conversionPrompt, setConversionPrompt] = useState<ConversionPrompt | null>(null);
-  // Track locally added conversions for immediate UI update (before query refetch)
-  const [localConversions, setLocalConversions] = useState<Array<{ fromUnit: string; toUnit: string; factor: number }>>([]);
+  const [quantityWeightPrompt, setQuantityWeightPrompt] = useState<QuantityWeightPrompt | null>(null);
 
-  // Mutation for adding unit conversions
-  const addConversionMutation = useMutation({
-    mutationFn: (data: { fromUnit: string; toUnit: string; factor: number }) =>
-      inventoryApi.addUnitConversion(item!.id, data),
+  // Mutation for saving quantity unit weights
+  const saveQuantityWeightMutation = useMutation({
+    mutationFn: (data: { unit: string; grams: number }) =>
+      inventoryApi.saveQuantityUnitWeight(item!.id, data.unit, data.grams),
     onSuccess: () => {
-      // Invalidate all inventory queries to refresh conversion data
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
     },
@@ -98,17 +94,13 @@ export function ManageStockDialog({
     });
   }, [stockEntries, item]);
 
-  // Merge item conversions with locally added ones for immediate updates
-  const allConversions = useMemo(() => {
-    const itemConversions = item?.unitConversions || [];
-    return [...itemConversions, ...localConversions];
-  }, [item?.unitConversions, localConversions]);
-
-  // Calculate total quantity with unit conversions
+  // Calculate total quantity with density-based conversions
   const stockTotal = useMemo(() => {
     const targetUnit = item?.defaultUnit || 'pieces';
-    return calculateTotalStock(itemStock, targetUnit, allConversions);
-  }, [itemStock, item?.defaultUnit, allConversions]);
+    const density = item?.density ?? null;
+    const quantityUnitWeights = item?.quantityUnitWeights || {};
+    return calculateTotalStock(itemStock, targetUnit, density, quantityUnitWeights);
+  }, [itemStock, item?.defaultUnit, item?.density, item?.quantityUnitWeights]);
 
   // Area lookup
   const areaLookup = useMemo(() => {
@@ -138,8 +130,10 @@ export function ManageStockDialog({
   // Check if a conversion exists between two units
   const hasConversion = useCallback((fromUnit: string, toUnit: string): boolean => {
     if (fromUnit === toUnit) return true;
-    return convertQuantity(1, fromUnit, toUnit, allConversions) !== null;
-  }, [allConversions]);
+    const density = item?.density ?? null;
+    const quantityUnitWeights = item?.quantityUnitWeights || {};
+    return convertQuantity(1, fromUnit, toUnit, density, quantityUnitWeights) !== null;
+  }, [item?.density, item?.quantityUnitWeights]);
 
   // Actually add the stock (after conversion check passes)
   const doAddStock = useCallback((formData: AddStockForm) => {
@@ -177,42 +171,41 @@ export function ManageStockDialog({
 
     // Check if we need a conversion
     if (stockUnit !== defaultUnit && !hasConversion(stockUnit, defaultUnit)) {
-      // Prompt for conversion
-      setConversionPrompt({
-        fromUnit: stockUnit,
-        toUnit: defaultUnit,
-        pendingStock: { ...addForm },
-      });
-      return;
+      // Check if the stock unit is a quantity unit that needs a weight
+      const normUnit = normalizeUnit(stockUnit);
+      if (isQuantityUnit(normUnit)) {
+        setQuantityWeightPrompt({
+          unit: normUnit,
+          pendingStock: { ...addForm },
+        });
+        return;
+      }
+      // For other unconvertible units, just add the stock anyway
     }
 
-    // Conversion exists or same unit, proceed with adding stock
     doAddStock(addForm);
   }, [item, addForm, hasConversion, doAddStock]);
 
-  const handleConversionConfirm = async (factor: number) => {
-    if (!conversionPrompt || !item) return;
+  const handleQuantityWeightConfirm = async (grams: number) => {
+    if (!quantityWeightPrompt || !item) return;
 
-    const newConversion = {
-      fromUnit: conversionPrompt.fromUnit,
-      toUnit: conversionPrompt.toUnit,
-      factor,
-    };
-
-    // Save the conversion to the server
-    await addConversionMutation.mutateAsync(newConversion);
-
-    // Add to local conversions for immediate UI update
-    setLocalConversions(prev => [...prev, newConversion]);
+    // Save the quantity unit weight to the server
+    await saveQuantityWeightMutation.mutateAsync({
+      unit: quantityWeightPrompt.unit,
+      grams,
+    });
 
     // Now add the stock
-    doAddStock(conversionPrompt.pendingStock);
-    setConversionPrompt(null);
+    doAddStock(quantityWeightPrompt.pendingStock);
+    setQuantityWeightPrompt(null);
   };
 
-  const handleConversionSkip = () => {
-    // User chose to skip - don't add the stock
-    setConversionPrompt(null);
+  const handleQuantityWeightSkip = () => {
+    if (quantityWeightPrompt) {
+      // Add stock without conversion
+      doAddStock(quantityWeightPrompt.pendingStock);
+    }
+    setQuantityWeightPrompt(null);
   };
 
   const handleStartEdit = (entry: StockEntry) => {
@@ -248,7 +241,6 @@ export function ManageStockDialog({
   const handleClose = () => {
     setShowAddForm(false);
     setEditingStock(null);
-    setLocalConversions([]);
     setAddForm({
       areaId: '',
       quantity: '1',
@@ -261,8 +253,6 @@ export function ManageStockDialog({
   // Reset form when item changes
   const handleOpenChange = (isOpen: boolean) => {
     if (isOpen && item) {
-      // Reset state when opening for a new item
-      setLocalConversions([]);
       setAddForm({
         areaId: item.defaultAreaId || '',
         quantity: '1',
@@ -302,7 +292,7 @@ export function ManageStockDialog({
             </p>
             {!stockTotal.allConverted && (
               <p className="text-xs text-amber-600 mt-1">
-                + items in {stockTotal.unconvertedUnits.join(', ')} (no conversion defined)
+                + items in {stockTotal.unconvertedUnits.join(', ')} (no conversion available)
               </p>
             )}
           </div>
@@ -524,16 +514,15 @@ export function ManageStockDialog({
       </DialogContent>
     </Dialog>
 
-    {/* Unit Conversion Prompt */}
-    {item && conversionPrompt && (
-      <UnitConversionPromptDialog
-        open={!!conversionPrompt}
-        onOpenChange={(open) => !open && setConversionPrompt(null)}
+    {/* Quantity Weight Prompt */}
+    {item && quantityWeightPrompt && (
+      <QuantityWeightPromptDialog
+        open={!!quantityWeightPrompt}
+        onOpenChange={(open) => !open && setQuantityWeightPrompt(null)}
         itemName={item.name}
-        fromUnit={conversionPrompt.fromUnit}
-        toUnit={conversionPrompt.toUnit}
-        onConfirm={handleConversionConfirm}
-        onSkip={handleConversionSkip}
+        unit={quantityWeightPrompt.unit}
+        onConfirm={handleQuantityWeightConfirm}
+        onSkip={handleQuantityWeightSkip}
       />
     )}
     </>

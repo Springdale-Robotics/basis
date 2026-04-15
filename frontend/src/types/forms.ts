@@ -76,11 +76,16 @@ export const recipeFormSchema = z.object({
   difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
   ingredients: z.array(z.object({
     name: z.string(),
-    amount: z.number().min(0),
+    amount: z.preprocess(
+      (val) => (val === undefined || val === '' || (typeof val === 'number' && Number.isNaN(val)) ? 0 : Number(val)),
+      z.number().min(0)
+    ),
     unit: z.string(),
     notes: z.string().optional(),
     optional: z.boolean().optional(),
     inventoryItemId: z.string().optional(),
+    rawText: z.string().optional(),
+    linkedItemName: z.string().optional(),
   })),
   instructions: z.array(z.object({
     step: z.number(),
@@ -102,12 +107,11 @@ export const storageAreaFormSchema = z.object({
 });
 export type StorageAreaFormData = z.infer<typeof storageAreaFormSchema>;
 
-export const unitConversionSchema = z.object({
-  fromUnit: z.string().min(1),
-  toUnit: z.string().min(1),
-  factor: z.number().positive(),
-});
-export type UnitConversionFormData = z.infer<typeof unitConversionSchema>;
+const optionalNumber = (schema: z.ZodNumber) =>
+  z.preprocess(
+    (val) => (val === undefined || val === '' || val === null || (typeof val === 'number' && Number.isNaN(val)) ? undefined : Number(val)),
+    schema.optional()
+  );
 
 export const inventoryItemFormSchema = z.object({
   name: z.string().min(1, 'Name is required').max(255),
@@ -117,10 +121,12 @@ export const inventoryItemFormSchema = z.object({
   unit: z.string().optional(),
   icon: z.string().optional(),
   keepInStock: z.boolean(),
-  keepInStockThreshold: z.number().min(0).optional(),
-  minStockLevel: z.number().min(0).optional(),
+  keepInStockThreshold: optionalNumber(z.number().min(0)),
+  minStockLevel: optionalNumber(z.number().min(0)),
   defaultAreaId: z.string().optional(),
-  unitConversions: z.array(unitConversionSchema).optional(),
+  density: optionalNumber(z.number().positive()),
+  defaultShelfLifeDays: optionalNumber(z.number().int().positive()),
+  expiryDate: z.string().optional(),
 });
 export const inventoryItemSchema = inventoryItemFormSchema;
 export type InventoryItemFormData = z.infer<typeof inventoryItemFormSchema>;
@@ -144,7 +150,7 @@ export const leftoverFormSchema = z.object({
   portions: z.number().min(0.1).default(1),
   quantityNotes: z.string().max(255).optional(),
   preparedAt: z.string().optional(),
-  expiryDate: z.string().min(1, 'Expiry date is required'),
+  expiryDate: z.string().optional(),
 });
 export const leftoverSchema = leftoverFormSchema;
 export type LeftoverFormData = z.infer<typeof leftoverFormSchema>;

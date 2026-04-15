@@ -13,11 +13,13 @@ import { PutAwayDialog } from '@/components/inventory/PutAwayDialog';
 import { AddToListDialog } from '@/components/inventory/AddToListDialog';
 import { CheckOffItemDialog } from '@/components/inventory/CheckOffItemDialog';
 import { inventoryApi } from '@/api/inventory';
+import { useInventoryTier } from '@/hooks/useInventoryTier';
 import { cn } from '@/lib/utils';
 import type { ShoppingListItem } from '@/types/models';
 
 export function ShoppingListPage() {
   const queryClient = useQueryClient();
+  const { isAdvanced } = useInventoryTier();
   const [putAwayDialogOpen, setPutAwayDialogOpen] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [checkOffDialogOpen, setCheckOffDialogOpen] = useState(false);
@@ -212,18 +214,20 @@ export function ShoppingListPage() {
                           {item.quantity} {item.unit}
                         </p>
                       </div>
-                      <Badge
-                        variant={
-                          item.source === 'meal_plan'
-                            ? 'default'
-                            : item.source === 'low_stock'
-                            ? 'secondary'
-                            : 'outline'
-                        }
-                        className="text-xs"
-                      >
-                        {item.source.replace('_', ' ')}
-                      </Badge>
+                      {(item.source !== 'low_stock' || isAdvanced) && (
+                        <Badge
+                          variant={
+                            item.source === 'meal_plan'
+                              ? 'default'
+                              : item.source === 'low_stock'
+                              ? 'secondary'
+                              : 'outline'
+                          }
+                          className="text-xs"
+                        >
+                          {item.source.replace('_', ' ')}
+                        </Badge>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"

@@ -53,6 +53,14 @@ export interface HouseholdSettings {
       sslConfigured: boolean;
     };
   };
+  inventory?: {
+    /** basic = manual shopping list, advanced = full inventory tracking with confidence */
+    tier: 'basic' | 'advanced';
+    /** Confidence thresholds for shopping list behavior. Defaults: high=80, medium=40 */
+    confidenceThresholds?: { high: number; medium: number };
+    /** Which unit keys are enabled for this household. null = use defaults from units.ts */
+    enabledUnits?: string[] | null;
+  };
   roleDefaults?: Record<
     string,
     {

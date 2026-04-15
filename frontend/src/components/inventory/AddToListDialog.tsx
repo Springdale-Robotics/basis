@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Plus, Search, Package, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, Search, Package } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,18 +13,13 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { inventoryApi } from '@/api/inventory';
-import type { StorageArea, InventoryItem, UnitConversion } from '@/types/models';
+import type { StorageArea, InventoryItem } from '@/types/models';
 import { categoryOptions, unitOptions } from '@/lib/inventory-constants';
-import { UnitConversionsEditor } from './UnitConversionsEditor';
+import { lookupDensity } from '@/lib/ingredient-densities';
 
 interface AddToListDialogProps {
   open: boolean;
@@ -44,7 +39,7 @@ interface NewItemForm {
   keepInStock: boolean;
   keepInStockThreshold: number;
   defaultAreaId: string;
-  unitConversions: UnitConversion[];
+  density?: number;
 }
 
 const defaultNewItemForm: NewItemForm = {
@@ -56,7 +51,7 @@ const defaultNewItemForm: NewItemForm = {
   keepInStock: false,
   keepInStockThreshold: 1,
   defaultAreaId: '',
-  unitConversions: [],
+  density: undefined,
 };
 
 export function AddToListDialog({
@@ -71,7 +66,6 @@ export function AddToListDialog({
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [quantity, setQuantity] = useState('1');
   const [unit, setUnit] = useState('');
-  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // New item form state
   const [newItem, setNewItem] = useState<NewItemForm>(defaultNewItemForm);
@@ -111,6 +105,15 @@ export function AddToListDialog({
     []
   );
 
+  // Auto-suggest density for new items
+  const densitySuggestion = useMemo(() => {
+    if (newItem.name && newItem.name.length >= 2) {
+      const d = lookupDensity(newItem.name);
+      if (d !== null) return d;
+    }
+    return null;
+  }, [newItem.name]);
+
   const addToListMutation = useMutation({
     mutationFn: (data: { itemId: string; quantity: number; unit?: string }) =>
       inventoryApi.addToShoppingList({
@@ -135,6 +138,7 @@ export function AddToListDialog({
         minStockQuantity: data.keepInStock ? data.keepInStockThreshold : undefined,
         defaultAreaId: data.defaultAreaId || undefined,
         icon: data.icon || undefined,
+        density: data.density || undefined,
       };
       return inventoryApi.createItem(apiData);
     },
@@ -179,7 +183,6 @@ export function AddToListDialog({
     setQuantity('1');
     setUnit('');
     setNewItem(defaultNewItemForm);
-    setAdvancedOpen(false);
     onOpenChange(false);
   };
 
@@ -301,7 +304,7 @@ export function AddToListDialog({
             )}
           </>
         ) : (
-          /* Create new item form - mirrors ItemForm */
+          /* Create new item form */
           <div className="flex-1 overflow-y-auto space-y-4 pr-1">
             <div className="space-y-2">
               <Label htmlFor="newItemName">Name *</Label>
@@ -375,6 +378,35 @@ export function AddToListDialog({
               </div>
             </div>
 
+            <div className="space-y-2">
+              <Label htmlFor="newItemDensity">Density (g/ml)</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="newItemDensity"
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value={newItem.density ?? ''}
+                  onChange={(e) => updateNewItem({ density: e.target.value ? parseFloat(e.target.value) : undefined })}
+                  placeholder="e.g., 0.529"
+                  className="w-32"
+                />
+                {densitySuggestion && !newItem.density && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => updateNewItem({ density: densitySuggestion })}
+                  >
+                    Suggested: {densitySuggestion}
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Used for weight/volume conversions
+              </p>
+            </div>
+
             {/* Quantity to add to shopping list */}
             <div className="space-y-2 border rounded-lg p-3 bg-muted/30">
               <Label htmlFor="quantityToAdd">Quantity to Add to List *</Label>
@@ -422,29 +454,6 @@ export function AddToListDialog({
                 </div>
               )}
             </div>
-
-            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-              <CollapsibleTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="w-full justify-between px-4"
-                >
-                  Advanced Settings
-                  {advancedOpen ? (
-                    <ChevronDown className="h-4 w-4" />
-                  ) : (
-                    <ChevronRight className="h-4 w-4" />
-                  )}
-                </Button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="border rounded-lg p-4 mt-2">
-                <UnitConversionsEditor
-                  conversions={newItem.unitConversions}
-                  onChange={(newConversions) => updateNewItem({ unitConversions: newConversions })}
-                />
-              </CollapsibleContent>
-            </Collapsible>
 
             <Button
               variant="ghost"

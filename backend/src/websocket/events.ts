@@ -64,6 +64,16 @@ export interface SyncEventPayload {
   fromHouseholdId: string;
 }
 
+export interface InventoryConfidencePayload {
+  itemId: string;
+  itemName: string;
+  confidence: number;
+  band: 'high' | 'medium' | 'low';
+  totalQuantity: number;
+  unit: string;
+  action: 'depleted' | 'reconciled' | 'out_of_stock' | 'tranche_created';
+}
+
 export interface CookingDeductionEventPayload {
   recipeId: string;
   recipeName: string;
@@ -247,4 +257,34 @@ export function emitAchievementUnlocked(
 ): void {
   emitToHousehold(householdId, 'achievement:unlocked', { userId, ...payload });
   emitToUser(userId, 'achievement:unlocked', payload);
+}
+
+// ===== INVENTORY CONFIDENCE EVENTS =====
+
+export function emitInventoryConfidenceUpdate(
+  householdId: string,
+  payload: InventoryConfidencePayload
+): void {
+  emitToHousehold(householdId, 'inventory:confidence-updated', payload);
+}
+
+export function emitInventoryReconciled(
+  householdId: string,
+  payload: InventoryConfidencePayload
+): void {
+  emitToHousehold(householdId, 'inventory:reconciled', payload);
+}
+
+export function emitInventoryOutOfStock(
+  householdId: string,
+  payload: { itemId: string; itemName: string }
+): void {
+  emitToHousehold(householdId, 'inventory:out-of-stock', payload);
+}
+
+export function emitShoppingLookAheadSuggestion(
+  householdId: string,
+  payload: { recipeId: string; recipeTitle: string; sharedCount: number }
+): void {
+  emitToHousehold(householdId, 'shopping:look-ahead-suggestion', payload);
 }

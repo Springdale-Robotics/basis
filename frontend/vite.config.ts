@@ -11,14 +11,24 @@ export default defineConfig({
   },
   server: {
     host: true,
-    port: 5173,
+    port: parseInt(process.env.VITE_PORT || '5173', 10),
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: process.env.VITE_BACKEND_URL || 'http://localhost:3000',
         changeOrigin: true,
+        // Handle SSE streaming properly - don't buffer responses
+        configure: (proxy) => {
+          proxy.on('proxyRes', (proxyRes, req) => {
+            // For SSE endpoints, ensure no buffering
+            if (req.url?.includes('/counsel/stream')) {
+              proxyRes.headers['cache-control'] = 'no-cache';
+              proxyRes.headers['x-accel-buffering'] = 'no';
+            }
+          });
+        },
       },
       '/socket.io': {
-        target: 'http://localhost:3000',
+        target: process.env.VITE_BACKEND_URL || 'http://localhost:3000',
         changeOrigin: true,
         ws: true,
       },

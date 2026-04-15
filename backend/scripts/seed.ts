@@ -92,10 +92,10 @@ async function seed() {
 
     // Create default inventory areas
     const areas = [
-      { name: 'Refrigerator', icon: 'refrigerator' },
-      { name: 'Freezer', icon: 'snowflake' },
-      { name: 'Pantry', icon: 'cabinet' },
-      { name: 'Bathroom Cabinet', icon: 'cabinet' },
+      { name: 'Refrigerator', icon: '❄️' },
+      { name: 'Freezer', icon: '❄️' },
+      { name: 'Pantry', icon: '🗄️' },
+      { name: 'Bathroom Cabinet', icon: '🚿' },
     ];
 
     for (const area of areas) {

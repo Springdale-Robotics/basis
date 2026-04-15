@@ -1,7 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/dialog';
 import { storageAreaFormSchema, type StorageAreaFormData } from '@/types/forms';
 import type { StorageArea } from '@/types/models';
+import { searchEmojis } from '@/lib/emoji-picker-data';
+import { cn } from '@/lib/utils';
 
 interface AreaFormProps {
   open: boolean;
@@ -24,8 +26,6 @@ interface AreaFormProps {
   isSubmitting?: boolean;
 }
 
-const iconOptions = ['🏠', '🍳', '❄️', '🚿', '🛏️', '🧹', '📦', '🗄️', '🚗', '🌳'];
-
 export function AreaForm({
   open,
   onOpenChange,
@@ -35,6 +35,7 @@ export function AreaForm({
   isSubmitting,
 }: AreaFormProps) {
   const isEditing = !!area;
+  const [iconSearch, setIconSearch] = useState('');
 
   const {
     register,
@@ -46,19 +47,13 @@ export function AreaForm({
   } = useForm<StorageAreaFormData>({
     resolver: zodResolver(storageAreaFormSchema),
     defaultValues: area
-      ? {
-          name: area.name,
-          icon: area.icon || '📦',
-        }
-      : {
-          name: '',
-          icon: '📦',
-        },
+      ? { name: area.name, icon: area.icon || '📦' }
+      : { name: '', icon: '📦' },
   });
 
   const icon = watch('icon');
+  const name = watch('name');
 
-  // Reset form when area changes or dialog opens
   useEffect(() => {
     if (open) {
       reset(
@@ -66,8 +61,13 @@ export function AreaForm({
           ? { name: area.name, icon: area.icon || '📦' }
           : { name: '', icon: '📦' }
       );
+      setIconSearch('');
     }
   }, [open, area, reset]);
+
+  // Default icon search to the area name
+  const effectiveSearch = iconSearch || name || '';
+  const matchingEmojis = useMemo(() => searchEmojis(effectiveSearch, 36), [effectiveSearch]);
 
   const handleFormSubmit = (data: StorageAreaFormData) => {
     onSubmit(data);
@@ -81,7 +81,7 @@ export function AreaForm({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[400px]">
+      <DialogContent className="sm:max-w-[450px]">
         <DialogHeader>
           <DialogTitle>
             {isEditing ? 'Edit Storage Area' : 'Add Storage Area'}
@@ -89,12 +89,18 @@ export function AreaForm({
         </DialogHeader>
         <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="name">Name</Label>
-            <Input
-              id="name"
-              placeholder="e.g., Kitchen Pantry"
-              {...register('name')}
-            />
+            <Label htmlFor="area-name">Name</Label>
+            <div className="flex items-center gap-2">
+              <span className="text-2xl w-10 h-10 flex items-center justify-center rounded-md border bg-muted/50">
+                {icon}
+              </span>
+              <Input
+                id="area-name"
+                placeholder="e.g., Kitchen Pantry"
+                {...register('name')}
+                className="flex-1"
+              />
+            </div>
             {errors.name && (
               <p className="text-sm text-destructive">{errors.name.message}</p>
             )}
@@ -102,19 +108,42 @@ export function AreaForm({
 
           <div className="space-y-2">
             <Label>Icon</Label>
-            <div className="flex flex-wrap gap-2">
-              {iconOptions.map((emoji) => (
-                <Button
-                  key={emoji}
-                  type="button"
-                  variant={icon === emoji ? 'default' : 'outline'}
-                  size="icon"
-                  onClick={() => setValue('icon', emoji)}
-                >
-                  {emoji}
-                </Button>
-              ))}
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search icons..."
+                value={iconSearch}
+                onChange={(e) => setIconSearch(e.target.value)}
+                className="pl-9"
+              />
             </div>
+            <div className="grid grid-cols-9 gap-1 max-h-[180px] overflow-y-auto rounded-md border p-2">
+              {matchingEmojis.length > 0 ? (
+                matchingEmojis.map((entry, i) => (
+                  <button
+                    key={`${entry.emoji}-${i}`}
+                    type="button"
+                    className={cn(
+                      'h-8 w-8 flex items-center justify-center rounded text-lg hover:bg-muted transition-colors',
+                      icon === entry.emoji && 'bg-primary/15 ring-1 ring-primary'
+                    )}
+                    onClick={() => setValue('icon', entry.emoji)}
+                    title={entry.name}
+                  >
+                    {entry.emoji}
+                  </button>
+                ))
+              ) : (
+                <p className="col-span-9 text-center text-xs text-muted-foreground py-4">
+                  No matching icons
+                </p>
+              )}
+            </div>
+            {!iconSearch && name && (
+              <p className="text-xs text-muted-foreground">
+                Showing icons matching "{name}"
+              </p>
+            )}
           </div>
 
           <DialogFooter className="flex justify-between">

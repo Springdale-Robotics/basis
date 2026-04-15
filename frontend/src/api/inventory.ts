@@ -26,7 +26,9 @@ export interface CreateItemRequest {
   minStockQuantity?: number;
   defaultAreaId?: string;
   icon?: string;
-  unitConversions?: Array<{ fromUnit: string; toUnit: string; factor: number }>;
+  density?: number;
+  defaultShelfLifeDays?: number;
+  quantityUnitWeights?: Record<string, number>;
 }
 
 export interface UpdateItemRequest extends Partial<CreateItemRequest> {}
@@ -55,12 +57,6 @@ export interface BatchUpdateItemsRequest {
     minStockQuantity?: number;
     defaultAreaId?: string | null;
   };
-}
-
-export interface AddUnitConversionRequest {
-  fromUnit: string;
-  toUnit: string;
-  factor: number;
 }
 
 export interface GetItemsParams {
@@ -114,7 +110,7 @@ export interface CreateLeftoverRequest {
   portions?: number;
   quantityNotes?: string;
   preparedAt?: string;
-  expiryDate: string;
+  expiryDate?: string;
 }
 
 export interface UpdateLeftoverRequest extends Partial<CreateLeftoverRequest> {}
@@ -166,8 +162,8 @@ export const inventoryApi = {
   batchUpdateItems: (data: BatchUpdateItemsRequest) =>
     apiPost<{ items: InventoryItem[] }>('/inventory/items/batch-update', data),
 
-  addUnitConversion: (itemId: string, data: AddUnitConversionRequest) =>
-    apiPatch<{ item: InventoryItem }>(`/inventory/items/${itemId}/conversions`, data),
+  saveQuantityUnitWeight: (itemId: string, unit: string, grams: number) =>
+    apiPatch<{ item: InventoryItem }>(`/inventory/items/${itemId}/quantity-weight`, { unit, grams }),
 
   // Stock
   getStock: () =>
@@ -314,4 +310,28 @@ export const inventoryApi = {
     apiGet<{ leftovers: Leftover[] }>('/inventory/leftovers/expiring', {
       params: { days }
     }),
+
+  // Confidence & Reconciliation
+  getConfidenceMap: () =>
+    apiGet<{ confidence: Record<string, { itemId: string; confidence: number; band: 'high' | 'medium' | 'low'; totalQuantity: number; unit: string }> }>('/inventory/confidence'),
+
+  getItemConfidence: (id: string) =>
+    apiGet<{ itemId: string; confidence: number; band: 'high' | 'medium' | 'low'; totalQuantity: number; unit: string }>(`/inventory/items/${id}/confidence`),
+
+  reconcileItem: (id: string, data: { quantity: number; unit: string; areaId: string }) =>
+    apiPost<{ message: string }>(`/inventory/items/${id}/reconcile`, data),
+
+  depleteItem: (id: string, data: { quantity: number; unit: string }) =>
+    apiPost<{ depleted: number; remaining: number }>(`/inventory/items/${id}/deplete`, data),
+
+  markOutOfStock: (id: string, data?: { addToShoppingList?: boolean; quantity?: number; unit?: string }) =>
+    apiPost<{ message: string }>(`/inventory/items/${id}/out-of-stock`, data || {}),
+
+  // Linked recipes check
+  getLinkedRecipes: (itemId: string) =>
+    apiGet<{ linkedRecipes: Array<{ recipeId: string; recipeName: string; ingredientName: string }> }>(`/inventory/items/${itemId}/linked-recipes`),
+
+  // Relink: swap all recipe references from one item to another
+  relinkItem: (oldItemId: string, newItemId: string) =>
+    apiPost<{ message: string; updatedCount: number }>(`/inventory/items/${oldItemId}/relink`, { newItemId }),
 };

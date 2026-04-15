@@ -67,10 +67,14 @@ const envSchema = z.object({
   OLLAMA_HOST: z.string().default('http://localhost:11434'),
 
   // VLM + LLM Service (two-stage pipeline)
-  VLM_LLM_SERVICE_URL: z.string().default('http://localhost:8000'),
+  VLM_LLM_SERVICE_URL: z.string().default('http://localhost:8010'),
   VLM_LLM_TIMEOUT_MS: z.coerce.number().default(180000), // 3 minutes for CPU mode
   OLLAMA_VLM_MODEL: z.string().default('llava:7b'),      // Vision model for reading images
   OLLAMA_LLM_MODEL: z.string().default('qwen2.5:7b'),    // Text model for structuring
+
+  // Anthropic API (for LLM recipe parsing fallback)
+  ANTHROPIC_API_KEY: z.string().optional(),
+  LLM_RECIPE_MODEL: z.string().default('claude-haiku-4-5-20251001'),
 
   // Image parsing configuration
   IMAGE_PARSE_PROVIDER: z.enum(['vlm-llm', 'auto']).default('auto'),

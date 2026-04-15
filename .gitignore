@@ -85,3 +85,10 @@ plan/
 # LLM models (large binary files)
 models/
 *.gguf
+
+# Testing screenshots
+*.png
+!frontend/public/**/*.png
+.playwright-mcp/
+walkthrough/
+.mcp.json

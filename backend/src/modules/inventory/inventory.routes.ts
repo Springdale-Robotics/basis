@@ -1,66 +1,31 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../../config/database.js';
-import { inventoryAreas, inventoryItems, inventoryStock, shoppingList, leftovers, type UnitConversion } from '../../db/schema/index.js';
+import { inventoryAreas, inventoryItems, inventoryStock, shoppingList, leftovers, recipeIngredients, recipes } from '../../db/schema/index.js';
 import { eq, and, lt, lte, sql, isNotNull, isNull } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
 import { requireInventoryAccess, requireShoppingListAccess } from '../../middleware/permission.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { randomBytes } from 'crypto';
 import { shoppingListSourceSchema } from '../../lib/validators.js';
-import { findConversionChain, normalizeUnit } from '../../lib/unit-conversions.js';
-
-/**
- * Convert a quantity from one unit to another using item-specific conversions first,
- * then falling back to global conversions.
- */
-function convertQuantity(
-  quantity: number,
-  fromUnit: string,
-  toUnit: string,
-  itemConversions: UnitConversion[] = []
-): number | null {
-  const normFrom = normalizeUnit(fromUnit);
-  const normTo = normalizeUnit(toUnit);
-
-  // Same unit, no conversion needed
-  if (normFrom === normTo) {
-    return quantity;
-  }
-
-  // Try item-specific direct conversion
-  const direct = itemConversions.find(
-    (c) => normalizeUnit(c.fromUnit) === normFrom && normalizeUnit(c.toUnit) === normTo
-  );
-  if (direct) {
-    return quantity * direct.factor;
-  }
-
-  // Try item-specific reverse conversion
-  const reverse = itemConversions.find(
-    (c) => normalizeUnit(c.fromUnit) === normTo && normalizeUnit(c.toUnit) === normFrom
-  );
-  if (reverse) {
-    return quantity / reverse.factor;
-  }
-
-  // Fall back to global conversions
-  const globalFactor = findConversionChain(normFrom, normTo);
-  if (globalFactor !== null) {
-    return quantity * globalFactor;
-  }
-
-  return null;
-}
+import { convertWithDensity, normalizeUnit } from '../../lib/unit-conversions.js';
+import {
+  getItemConfidence,
+  getInventoryConfidenceMap,
+  depleteTranches,
+  reconcileItem,
+  markOutOfStock,
+} from '../../services/inventory-confidence.service.js';
 
 /**
  * Calculate total stock quantity for an item, converting all stock entries to the target unit.
- * Returns the total and tracks any units that couldn't be converted.
+ * Uses density for weight↔volume and quantityUnitWeights for quantity units.
  */
 function calculateTotalStockWithConversions(
   stockEntries: Array<{ quantity: string; unit: string | null }>,
   targetUnit: string,
-  itemConversions: UnitConversion[] = []
+  density: number | null,
+  quantityUnitWeights: Record<string, number> = {}
 ): { total: number; allConverted: boolean; unconvertedUnits: string[] } {
   let total = 0;
   let allConverted = true;
@@ -73,11 +38,10 @@ function calculateTotalStockWithConversions(
     if (normalizeUnit(entryUnit) === normalizeUnit(targetUnit)) {
       total += qty;
     } else {
-      const converted = convertQuantity(qty, entryUnit, targetUnit, itemConversions);
+      const converted = convertWithDensity(qty, entryUnit, targetUnit, density, quantityUnitWeights);
       if (converted !== null) {
         total += converted;
       } else {
-        // Can't convert - add raw quantity and track the unit
         allConverted = false;
         if (!unconvertedUnits.includes(entryUnit)) {
           unconvertedUnits.push(entryUnit);
@@ -95,12 +59,6 @@ const createAreaSchema = z.object({
   sortOrder: z.number().int().default(0),
 });
 
-const unitConversionSchema = z.object({
-  fromUnit: z.string().min(1).max(50),
-  toUnit: z.string().min(1).max(50),
-  factor: z.number().positive(),
-});
-
 const createItemSchema = z.object({
   name: z.string().min(1).max(255),
   barcode: z.string().max(255).optional(),
@@ -110,7 +68,8 @@ const createItemSchema = z.object({
   keepInStock: z.boolean().default(false),
   minStockQuantity: z.number().positive().optional(),
   defaultAreaId: z.string().uuid().optional(),
-  unitConversions: z.array(unitConversionSchema).optional(),
+  density: z.number().positive().optional(),
+  quantityUnitWeights: z.record(z.string(), z.number().positive()).optional(),
 });
 
 const addStockSchema = z.object({
@@ -170,7 +129,7 @@ const createLeftoverSchema = z.object({
   portions: z.number().positive().default(1),
   quantityNotes: z.string().max(255).optional(),
   preparedAt: z.coerce.date().optional(),
-  expiryDate: z.coerce.date(),
+  expiryDate: z.coerce.date().optional(),
 });
 
 const updateLeftoverSchema = createLeftoverSchema.partial();
@@ -326,7 +285,8 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           keepInStock: input.keepInStock,
           minStockQuantity: input.minStockQuantity?.toString(),
           defaultAreaId: input.defaultAreaId,
-          unitConversions: input.unitConversions || [],
+          density: input.density?.toString(),
+          quantityUnitWeights: input.quantityUnitWeights || {},
         })
         .returning();
 
@@ -367,7 +327,8 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
       if (input.keepInStock !== undefined) updateData.keepInStock = input.keepInStock;
       if (input.minStockQuantity !== undefined) updateData.minStockQuantity = input.minStockQuantity.toString();
       if (input.defaultAreaId !== undefined) updateData.defaultAreaId = input.defaultAreaId;
-      if (input.unitConversions !== undefined) updateData.unitConversions = input.unitConversions;
+      if (input.density !== undefined) updateData.density = input.density.toString();
+      if (input.quantityUnitWeights !== undefined) updateData.quantityUnitWeights = input.quantityUnitWeights;
 
       const [updated] = await db
         .update(inventoryItems)
@@ -386,14 +347,16 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
-  // Add a single unit conversion to an item
+  // Save a quantity unit weight for an item (e.g., 1 bag = 500g)
   app.patch<{ Params: { id: string } }>(
-    '/items/:id/conversions',
+    '/items/:id/quantity-weight',
     { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
-      const input = unitConversionSchema.parse(request.body);
+      const input = z.object({
+        unit: z.string().min(1).max(50),
+        grams: z.number().positive(),
+      }).parse(request.body);
 
-      // Get the current item
       const item = await db.query.inventoryItems.findFirst({
         where: and(
           eq(inventoryItems.id, request.params.id),
@@ -403,26 +366,12 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
       if (!item) throw Errors.notFound('Item');
 
-      // Check if this conversion already exists (same fromUnit and toUnit)
-      const existingConversions = (item.unitConversions || []) as { fromUnit: string; toUnit: string; factor: number }[];
-      const existingIndex = existingConversions.findIndex(
-        c => c.fromUnit.toLowerCase() === input.fromUnit.toLowerCase() &&
-             c.toUnit.toLowerCase() === input.toUnit.toLowerCase()
-      );
-
-      let updatedConversions;
-      if (existingIndex >= 0) {
-        // Update existing conversion
-        updatedConversions = [...existingConversions];
-        updatedConversions[existingIndex] = input;
-      } else {
-        // Add new conversion
-        updatedConversions = [...existingConversions, input];
-      }
+      const currentWeights = (item.quantityUnitWeights as Record<string, number>) || {};
+      const updatedWeights = { ...currentWeights, [input.unit.toLowerCase()]: input.grams };
 
       const [updated] = await db
         .update(inventoryItems)
-        .set({ unitConversions: updatedConversions, updatedAt: new Date() })
+        .set({ quantityUnitWeights: updatedWeights, updatedAt: new Date() })
         .where(eq(inventoryItems.id, request.params.id))
         .returning();
 
@@ -430,10 +379,66 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
+  // Get recipes linked to an inventory item
+  app.get<{ Params: { id: string } }>(
+    '/items/:id/linked-recipes',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const linkedRecipes = await db
+        .select({
+          recipeId: recipeIngredients.recipeId,
+          recipeName: recipes.title,
+          ingredientName: recipeIngredients.name,
+        })
+        .from(recipeIngredients)
+        .innerJoin(recipes, eq(recipeIngredients.recipeId, recipes.id))
+        .where(eq(recipeIngredients.inventoryItemId, request.params.id));
+
+      return { success: true, data: { linkedRecipes } };
+    }
+  );
+
+  // Relink: swap all recipe ingredient references from one item to another
+  app.post<{ Params: { id: string } }>(
+    '/items/:id/relink',
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
+    async (request) => {
+      const schema = z.object({
+        newItemId: z.string().uuid(),
+      });
+      const { newItemId } = schema.parse(request.body);
+
+      // Update all recipe ingredients pointing to old item
+      const result = await db
+        .update(recipeIngredients)
+        .set({ inventoryItemId: newItemId })
+        .where(eq(recipeIngredients.inventoryItemId, request.params.id));
+
+      return { success: true, data: { message: 'Relinked', updatedCount: result.rowCount } };
+    }
+  );
+
   app.delete<{ Params: { id: string } }>(
     '/items/:id',
     { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
+      // Check for recipe links before deleting
+      const linkedRecipes = await db
+        .select({ id: recipeIngredients.id })
+        .from(recipeIngredients)
+        .where(eq(recipeIngredients.inventoryItemId, request.params.id))
+        .limit(1);
+
+      if (linkedRecipes.length > 0) {
+        return {
+          success: false,
+          error: {
+            code: 'ITEM_LINKED',
+            message: 'This item is linked to recipe ingredients. Relink them before deleting.',
+          },
+        };
+      }
+
       await db
         .delete(inventoryItems)
         .where(
@@ -713,13 +718,14 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         });
 
         const targetUnit = item.defaultUnit || 'pieces';
-        const itemConversions = (item.unitConversions as UnitConversion[]) || [];
+        const density = item.density ? parseFloat(item.density) : null;
+        const quantityUnitWeights = (item.quantityUnitWeights as Record<string, number>) || {};
 
-        // Calculate total with unit conversions
         const { total: totalQuantity } = calculateTotalStockWithConversions(
           stock.map((s) => ({ quantity: s.quantity, unit: s.unit })),
           targetUnit,
-          itemConversions
+          density,
+          quantityUnitWeights
         );
 
         const minQuantity = item.minStockQuantity
@@ -760,13 +766,14 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         });
 
         const targetUnit = item.defaultUnit || 'pieces';
-        const itemConversions = (item.unitConversions as UnitConversion[]) || [];
+        const density = item.density ? parseFloat(item.density) : null;
+        const quantityUnitWeights = (item.quantityUnitWeights as Record<string, number>) || {};
 
-        // Calculate total with unit conversions
         const { total: totalQuantity } = calculateTotalStockWithConversions(
           stock.map((s) => ({ quantity: s.quantity, unit: s.unit })),
           targetUnit,
-          itemConversions
+          density,
+          quantityUnitWeights
         );
 
         const minQuantity = item.minStockQuantity
@@ -1178,7 +1185,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           portions: input.portions.toString(),
           quantityNotes: input.quantityNotes,
           preparedAt: input.preparedAt || new Date(),
-          expiryDate: input.expiryDate.toISOString().split('T')[0],
+          expiryDate: input.expiryDate ? input.expiryDate.toISOString().split('T')[0] : null,
           createdBy: request.user!.id,
         })
         .returning();
@@ -1260,6 +1267,100 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
       if (!updated) throw Errors.notFound('Leftover');
 
       return { success: true, data: { leftover: updated } };
+    }
+  );
+
+  // ===== CONFIDENCE & DEPLETION ENDPOINTS =====
+
+  // Get confidence map for all items in the household
+  app.get(
+    '/confidence',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const map = await getInventoryConfidenceMap(request.user!.householdId);
+      // Convert Map to plain object for JSON
+      const confidence: Record<string, { itemId: string; confidence: number; band: string; totalQuantity: number; unit: string }> = {};
+      for (const [key, value] of map) {
+        confidence[key] = value;
+      }
+      return { success: true, data: { confidence } };
+    }
+  );
+
+  // Get confidence for a single item
+  app.get<{ Params: { id: string } }>(
+    '/items/:id/confidence',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const result = await getItemConfidence(request.params.id);
+      if (!result) throw Errors.notFound('Item');
+      return { success: true, data: result };
+    }
+  );
+
+  // Ad-hoc deplete an item (not tied to a cooking session)
+  app.post<{ Params: { id: string } }>(
+    '/items/:id/deplete',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const schema = z.object({
+        quantity: z.number().positive(),
+        unit: z.string().min(1),
+      });
+      const { quantity, unit } = schema.parse(request.body);
+      const plan = await depleteTranches(request.params.id, quantity, unit);
+      return { success: true, data: plan };
+    }
+  );
+
+  // Reconcile an item ("I checked, I have X amount")
+  app.post<{ Params: { id: string } }>(
+    '/items/:id/reconcile',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const schema = z.object({
+        quantity: z.number().nonnegative(),
+        unit: z.string().min(1),
+        areaId: z.string().uuid(),
+      });
+      const { quantity, unit, areaId } = schema.parse(request.body);
+      await reconcileItem(request.params.id, quantity, unit, areaId, request.user!.id);
+      return { success: true, data: { message: 'Item reconciled' } };
+    }
+  );
+
+  // Mark item as out of stock (mid-cook discovery)
+  app.post<{ Params: { id: string } }>(
+    '/items/:id/out-of-stock',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const schema = z.object({
+        addToShoppingList: z.boolean().default(false),
+        quantity: z.number().positive().optional(),
+        unit: z.string().optional(),
+      });
+      const body = schema.parse(request.body || {});
+
+      await markOutOfStock(request.params.id);
+
+      // Optionally add to shopping list
+      if (body.addToShoppingList) {
+        const item = await db.query.inventoryItems.findFirst({
+          where: eq(inventoryItems.id, request.params.id),
+        });
+        if (item) {
+          await db.insert(shoppingList).values({
+            householdId: request.user!.householdId,
+            itemId: item.id,
+            quantity: body.quantity?.toString() ?? null,
+            unit: body.unit ?? item.defaultUnit ?? null,
+            addedBy: request.user!.id,
+            source: 'low_stock',
+          });
+        }
+      }
+
+      return { success: true, data: { message: 'Item marked out of stock' } };
     }
   );
 }

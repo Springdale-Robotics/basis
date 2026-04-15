@@ -29,6 +29,15 @@ export interface HouseholdSettings {
     files: boolean;
   };
   theme?: ThemeConfig;
+  inventory?: {
+    tier: 'basic' | 'advanced';
+    confidenceThresholds?: { high: number; medium: number };
+    enabledUnits?: string[] | null;
+    /** Additional categories added by the household (merged with defaults) */
+    customCategories?: string[];
+    /** Default categories hidden by the household */
+    hiddenCategories?: string[];
+  };
 }
 
 export interface ThemeConfig {
@@ -242,7 +251,8 @@ export interface RecipeIngredient {
   unit: string;
   notes?: string;
   optional: boolean;
-  linkedItemName?: string | null;  // Name from linked inventory item
+  groupName?: string | null;
+  linkedItemName?: string | null;
 }
 
 export interface RecipeInstruction {
@@ -265,6 +275,7 @@ export interface MealPlan {
   recipeId: string;
   recipe?: Recipe;
   servingsMultiplier?: string;
+  cookedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -277,12 +288,6 @@ export interface StorageArea {
   order: number;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface UnitConversion {
-  fromUnit: string;
-  toUnit: string;
-  factor: number;
 }
 
 export interface InventoryItem {
@@ -300,7 +305,9 @@ export interface InventoryItem {
   minStockLevel?: number;
   minStockQuantity?: number;
   defaultAreaId?: string;
-  unitConversions?: UnitConversion[];
+  density?: number;
+  defaultShelfLifeDays?: number | null;
+  quantityUnitWeights?: Record<string, number>;
   stockEntries?: StockEntry[];
   createdAt: string;
   updatedAt: string;

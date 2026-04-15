@@ -97,6 +97,30 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       queryClient.invalidateQueries({ queryKey: ['shopping-list'] });
     });
 
+    // Confidence-aware inventory events
+    socket.on('inventory:confidence-updated', () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['stock'] });
+      queryClient.invalidateQueries({ queryKey: ['item-confidence'] });
+    });
+
+    socket.on('inventory:reconciled', () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['stock'] });
+      queryClient.invalidateQueries({ queryKey: ['item-confidence'] });
+    });
+
+    socket.on('inventory:out-of-stock', () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['stock'] });
+      queryClient.invalidateQueries({ queryKey: ['shopping-list'] });
+    });
+
+    socket.on('shopping:look-ahead-suggestion', () => {
+      queryClient.invalidateQueries({ queryKey: ['shopping-list'] });
+      queryClient.invalidateQueries({ queryKey: ['look-ahead-suggestions'] });
+    });
+
     // Task events
     socket.on('task:update', (data) => {
       queryClient.invalidateQueries({ queryKey: ['tasks', data.taskId] });
