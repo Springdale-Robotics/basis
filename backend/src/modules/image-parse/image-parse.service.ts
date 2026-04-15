@@ -13,6 +13,7 @@ import {
   type ImageParseSession,
   type ParsedContentType,
   type ProcessingStage,
+  type ExtractionMode,
 } from '../../db/schema/image-parse.js';
 import { lists, listItems } from '../../db/schema/lists.js';
 import { recipes, recipeIngredients } from '../../db/schema/recipes.js';
@@ -30,7 +31,8 @@ import { queueImageParse } from '../../jobs/index.js';
 export async function createSession(
   householdId: string,
   userId: string,
-  targetType?: ParsedContentType
+  targetType?: ParsedContentType,
+  extractionMode: ExtractionMode = 'accurate'
 ): Promise<string> {
   const sessionId = randomUUID();
   const expiresAt = new Date(Date.now() + config.IMAGE_PARSE_SESSION_TTL_HOURS * 60 * 60 * 1000);
@@ -41,6 +43,7 @@ export async function createSession(
     userId,
     status: 'uploading',
     selectedType: targetType,
+    extractionMode,
     expiresAt,
   });
 
@@ -55,7 +58,8 @@ export async function processUploadedImage(
   householdId: string,
   imageBuffer: Buffer,
   mimeType: string,
-  targetType?: ParsedContentType
+  targetType?: ParsedContentType,
+  extractionMode: ExtractionMode = 'accurate'
 ): Promise<void> {
   logger.info({ sessionId, bufferSize: imageBuffer.length, mimeType }, 'processUploadedImage started');
 
@@ -84,16 +88,23 @@ export async function processUploadedImage(
       originalImagePath: imageBase64, // Store as base64 for now
       imageMimeType: mimeType,
       selectedType: targetType,
-      status: 'processing',
+      extractionMode,
+      status: extractionMode === 'counsel' ? 'processing' : 'processing', // Same for now, counsel uses SSE
       updatedAt: new Date(),
     })
     .where(
       and(eq(imageParseSessions.id, sessionId), eq(imageParseSessions.householdId, householdId))
     );
 
-  logger.info({ sessionId }, 'Database updated, queuing job');
+  logger.info({ sessionId, extractionMode }, 'Database updated, queuing job');
 
-  // Queue for processing
+  // Counsel mode uses SSE stream directly from frontend, not job queue
+  if (extractionMode === 'counsel') {
+    logger.info({ sessionId }, 'Counsel mode - skipping job queue, using SSE stream');
+    return;
+  }
+
+  // Queue for processing (non-counsel modes)
   await queueImageParse({
     sessionId,
     householdId,
@@ -164,112 +175,73 @@ export async function processImageWithAI(sessionId: string, householdId: string)
     // Decode image
     const imageBuffer = Buffer.from(session.originalImagePath, 'base64');
     const targetType = session.selectedType as ParsedContentType | null;
+    const extractionMode = session.extractionMode || 'accurate';
 
     logger.info({
       sessionId,
       targetType,
+      extractionMode,
       model: provider.getModel(),
-    }, 'Starting two-stage image parsing');
+    }, 'Starting combined VLM+LLM image parsing');
 
     // ==========================================================================
-    // STAGE 1: VLM - Extract raw text from image
+    // Use combined /extract/base64 endpoint for full pipeline with:
+    // - Image preprocessing (deskew, contrast, resize)
+    // - Multi-pass VLM extraction
+    // - Verification and self-correction
+    // - LLM structuring
     // ==========================================================================
     await updateProcessingStage(sessionId, 'vlm_started');
 
-    // Import the provider class to access vlmOnly and llmOnly methods
-    const { VlmLlmProvider } = await import('./ai-providers/vlm-llm-provider.js');
-    const vlmLlmProvider = provider as InstanceType<typeof VlmLlmProvider>;
-
     let rawText: string;
-    let vlmProcessingMs: number;
+    let detectedType: ParsedContentType;
+    let confidence: number;
+    let parsedContent: ParsedContent;
 
     try {
-      const vlmResult = await vlmLlmProvider.vlmOnly(imageBuffer);
-      rawText = vlmResult.text;
-      vlmProcessingMs = vlmResult.processingTimeMs;
+      // Use parseImage which calls the combined endpoint
+      const result = await provider.parseImage(imageBuffer, session.imageMimeType || 'image/jpeg', '');
+
+      rawText = result.rawText;
 
       logger.info({
         sessionId,
         rawTextLength: rawText.length,
-        vlmProcessingMs,
-        vlmModel: vlmResult.model,
-      }, 'VLM stage completed');
-    } catch (vlmError) {
-      logger.error({ sessionId, error: vlmError }, 'VLM stage failed');
-      throw vlmError;
-    }
+        hasStructured: !!result.structured,
+        processingTimeMs: result.processingTimeMs,
+      }, 'Combined VLM+LLM parsing completed');
 
-    await updateProcessingStage(sessionId, 'vlm_done');
+      await updateProcessingStage(sessionId, 'llm_done');
 
-    // Detect content type from raw text (heuristic)
-    const detected = detectContentType(rawText);
-    let detectedType = detected.type;
-    let confidence = detected.confidence;
+      // Use structured result if available
+      if (result.structured) {
+        detectedType = result.structured.type as ParsedContentType;
+        confidence = result.structured.confidence;
+        parsedContent = normalizeParsedContent(detectedType, result.structured.data);
 
-    logger.info({
-      sessionId,
-      detectedType,
-      confidence,
-      reasoning: detected.reasoning,
-    }, 'Content type detected from raw text');
-
-    // ==========================================================================
-    // STAGE 2: LLM - Structure the raw text into JSON
-    // ==========================================================================
-    await updateProcessingStage(sessionId, 'llm_started');
-
-    let parsedContent: ParsedContent;
-    let llmProcessingMs = 0;
-
-    // Check if LLM is available
-    const llmAvailable = await vlmLlmProvider.isLlmAvailable();
-
-    if (llmAvailable && rawText.length > 0) {
-      try {
-        const llmResult = await vlmLlmProvider.llmOnly(rawText, targetType || undefined);
-        llmProcessingMs = llmResult.processingTimeMs;
-
-        // Use structured result if available
-        if (llmResult.structured) {
-          const structuredData = llmResult.structured as Record<string, unknown>;
-          const structuredType = (structuredData.type as string) || llmResult.detectedType;
-
-          // Update detected type if LLM provides it
-          if (structuredType && structuredType !== 'unknown') {
-            detectedType = structuredType as ParsedContentType;
-          }
-
-          // Update confidence if provided
-          if (typeof structuredData.confidence === 'number') {
-            confidence = structuredData.confidence;
-          }
-
-          parsedContent = normalizeParsedContent(detectedType, structuredData);
-          logger.info({
-            sessionId,
-            detectedType,
-            confidence,
-            llmProcessingMs,
-          }, 'LLM stage completed with structured output');
-        } else {
-          // LLM didn't return structured data, fall back to heuristic parsing
-          warnings.push('LLM did not return structured data, using heuristic parsing');
-          parsedContent = parseFromRawText(detectedType, rawText);
-        }
-      } catch (llmError) {
-        logger.warn({ sessionId, error: llmError }, 'LLM stage failed, falling back to heuristic parsing');
-        warnings.push('LLM structuring failed, using heuristic parsing');
+        logger.info({
+          sessionId,
+          detectedType,
+          confidence,
+        }, 'Using structured output from combined endpoint');
+      } else {
+        // Fall back to heuristic parsing
+        const detected = detectContentType(rawText);
+        detectedType = detected.type;
+        confidence = detected.confidence;
         parsedContent = parseFromRawText(detectedType, rawText);
-      }
-    } else {
-      // No LLM available, use heuristic parsing
-      if (!llmAvailable) {
-        warnings.push('LLM not available, using heuristic parsing');
-      }
-      parsedContent = parseFromRawText(detectedType, rawText);
-    }
+        warnings.push('No structured data from AI, using heuristic parsing');
 
-    await updateProcessingStage(sessionId, 'llm_done');
+        logger.info({
+          sessionId,
+          detectedType,
+          confidence,
+        }, 'Falling back to heuristic parsing');
+      }
+    } catch (parseError) {
+      logger.error({ sessionId, error: parseError }, 'Combined parsing failed');
+      throw parseError;
+    }
 
     // ==========================================================================
     // COMPLETE - Update session with results
@@ -299,8 +271,6 @@ export async function processImageWithAI(sessionId: string, householdId: string)
         detectedType,
         selectedType: finalType,
         confidence,
-        vlmProcessingMs,
-        llmProcessingMs,
         totalProcessingMs,
       },
       'Image parsing completed'
@@ -609,6 +579,90 @@ function parseFromRawText(type: ParsedContentType, rawText: string): ParsedConte
     default:
       return { type: 'unknown', data: { rawText } };
   }
+}
+
+/**
+ * Validate that LLM returned the expected structure for a content type.
+ * Returns false if the LLM returned an array instead of an object,
+ * or if required fields are missing.
+ */
+function isValidLlmStructure(data: unknown, expectedType: ParsedContentType): boolean {
+  // Must be an object, not an array
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return false;
+  }
+
+  const obj = data as Record<string, unknown>;
+
+  // Check for required fields based on type
+  switch (expectedType) {
+    case 'recipe':
+      // Recipe must have ingredients array
+      return 'ingredients' in obj && Array.isArray(obj.ingredients);
+
+    case 'list':
+      // List must have items array
+      return 'items' in obj && Array.isArray(obj.items);
+
+    case 'calendar_event':
+      // Calendar must have events array
+      return 'events' in obj && Array.isArray(obj.events);
+
+    default:
+      return true;
+  }
+}
+
+/**
+ * Hybrid parsing: Use heuristic parser for structure but salvage ingredients from LLM array.
+ * This handles cases where the LLM returns just the ingredients as an array instead of
+ * a full recipe object.
+ */
+function parseFromRawTextWithLlmIngredients(
+  rawText: string,
+  llmIngredients: unknown[]
+): ParsedContent {
+  // Start with heuristic parsing for title, instructions, etc.
+  const heuristicResult = parseRecipeFromText(rawText);
+
+  // Try to extract valid ingredients from the LLM array
+  const validIngredients: typeof heuristicResult.ingredients = [];
+
+  for (const item of llmIngredients) {
+    if (item && typeof item === 'object' && !Array.isArray(item)) {
+      const ing = item as Record<string, unknown>;
+      const name = (ing.name as string) || (ing.ingredient as string);
+
+      if (name && typeof name === 'string') {
+        validIngredients.push({
+          name: name.trim(),
+          quantity: typeof ing.quantity === 'number' ? ing.quantity : undefined,
+          unit: typeof ing.unit === 'string' ? ing.unit : undefined,
+          notes: typeof ing.notes === 'string' ? ing.notes : undefined,
+          confidence: typeof ing.confidence === 'number' ? ing.confidence : 0.8,
+        });
+      }
+    }
+  }
+
+  // Use LLM ingredients if they look better than heuristic ones
+  // (more items, or items with quantities)
+  const llmHasQuantities = validIngredients.some(i => i.quantity !== undefined);
+  const heuristicHasQuantities = heuristicResult.ingredients.some(i => i.quantity !== undefined);
+
+  if (
+    validIngredients.length > 0 &&
+    (validIngredients.length >= heuristicResult.ingredients.length || llmHasQuantities && !heuristicHasQuantities)
+  ) {
+    logger.info({
+      llmCount: validIngredients.length,
+      heuristicCount: heuristicResult.ingredients.length,
+      usingLlm: true,
+    }, 'Using LLM ingredients over heuristic');
+    heuristicResult.ingredients = validIngredients;
+  }
+
+  return { type: 'recipe', data: heuristicResult };
 }
 
 async function createListFromContent(

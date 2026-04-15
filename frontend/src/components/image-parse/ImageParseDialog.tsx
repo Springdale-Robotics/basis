@@ -14,6 +14,8 @@ import {
   RotateCw,
   Cpu,
   Zap,
+  ChevronDown,
+  Bug,
 } from 'lucide-react';
 import {
   Dialog,
@@ -27,17 +29,24 @@ import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import {
   imageParseApi,
   type ParsedContentType,
   type ImageParseSession,
+  type ExtractionMode,
+  type CounselDiscussionMessage,
+  type CounselPersonaInterpretation,
+  type CounselVoteResult,
 } from '@/api/image-parse';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
 import { ListPreview } from './previews/ListPreview';
 import { RecipePreview } from './previews/RecipePreview';
 import { CalendarEventsPreview } from './previews/CalendarEventsPreview';
 
-type DialogStep = 'upload' | 'processing' | 'type-selection' | 'review' | 'confirm';
+type DialogStep = 'mode-selection' | 'upload' | 'processing' | 'counsel-processing' | 'type-selection' | 'review' | 'confirm';
 
 interface ImageParseDialogProps {
   open: boolean;
@@ -88,12 +97,23 @@ export function ImageParseDialog({
   targetListId,
   targetCalendarId,
 }: ImageParseDialogProps) {
-  const [step, setStep] = useState<DialogStep>('upload');
+  const [step, setStep] = useState<DialogStep>('mode-selection');
+  const [extractionMode, setExtractionMode] = useState<ExtractionMode>('accurate');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [dragActive, setDragActive] = useState(false);
   const [editedContent, setEditedContent] = useState<unknown>(null);
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
+  const [debugOpen, setDebugOpen] = useState(false);
+
+  // Counsel mode state
+  const [counselStage, setCounselStage] = useState<string>('');
+  const [counselMessages, setCounselMessages] = useState<CounselDiscussionMessage[]>([]);
+  const [counselInterpretations, setCounselInterpretations] = useState<CounselPersonaInterpretation[]>([]);
+  const [counselVotes, setCounselVotes] = useState<CounselVoteResult[]>([]);
+  const [counselCurrentTopic, setCounselCurrentTopic] = useState<string>('');
+  const [counselFinalResult, setCounselFinalResult] = useState<unknown>(null);
+  const counselScrollRef = useRef<HTMLDivElement>(null);
 
   // Force re-render for progress updates
   const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
@@ -157,19 +177,74 @@ export function ImageParseDialog({
     }
   }, [step]);
 
-  // Upload mutation
+  // Upload mutation - pass extractionMode as parameter to avoid stale closure
   const uploadMutation = useMutation({
-    mutationFn: async (file: File) => {
-      return imageParseApi.uploadImage(file, defaultType, setUploadProgress);
+    mutationFn: async ({ file, mode }: { file: File; mode: ExtractionMode }) => {
+      return imageParseApi.uploadImage(file, defaultType, setUploadProgress, mode);
     },
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       setSessionId(data.sessionId);
-      setStep('processing');
+      if (variables.mode === 'counsel') {
+        setStep('counsel-processing');
+        startCounselStream(data.sessionId);
+      } else {
+        setStep('processing');
+      }
     },
     onError: () => {
       setUploadProgress(0);
     },
   });
+
+  // Start counsel mode SSE stream
+  const startCounselStream = useCallback((sid: string) => {
+    setProcessingStartTime(Date.now());
+    setCounselStage('Starting counsel session...');
+
+    const es = imageParseApi.subscribeCounselStream(sid, {
+      onStage: (data) => {
+        setCounselStage(data.message);
+      },
+      onPersonaThinking: (data) => {
+        setCounselStage(`${data.persona_name} is analyzing...`);
+      },
+      onPersonaInterpretation: (data) => {
+        setCounselInterpretations((prev) => [...prev, data]);
+      },
+      onDiscussionTopic: (data) => {
+        setCounselCurrentTopic(data.topic);
+        setCounselStage(`Debating: ${data.topic}`);
+      },
+      onDiscussion: (data) => {
+        setCounselMessages((prev) => [...prev, data]);
+        // Auto-scroll to bottom
+        setTimeout(() => {
+          counselScrollRef.current?.scrollTo({
+            top: counselScrollRef.current.scrollHeight,
+            behavior: 'smooth',
+          });
+        }, 100);
+      },
+      onVote: (data) => {
+        setCounselVotes((prev) => [...prev, data]);
+      },
+      onFinalResult: (data) => {
+        setCounselFinalResult(data);
+        setCounselStage('The counsel has reached a decision!');
+        setProcessingStartTime(null);
+        // Don't auto-transition - let user click "Continue" to see the discussion
+        // Just refetch the session data in the background
+        refetchSession();
+      },
+      onError: (data) => {
+        setCounselStage(`Error: ${data.message}`);
+        setProcessingStartTime(null);
+      },
+    });
+
+    // Store EventSource reference for cleanup
+    return () => es.close();
+  }, [refetchSession]);
 
   // Update type mutation
   const updateTypeMutation = useMutation({
@@ -225,11 +300,20 @@ export function ImageParseDialog({
     if (sessionId && session?.status === 'review') {
       cancelMutation.mutate();
     }
-    setStep('upload');
+    setStep('mode-selection');
+    setExtractionMode('accurate');
     setSessionId(null);
     setUploadProgress(0);
     setEditedContent(null);
     setProcessingStartTime(null);
+    setDebugOpen(false);
+    // Reset counsel state
+    setCounselStage('');
+    setCounselMessages([]);
+    setCounselInterpretations([]);
+    setCounselVotes([]);
+    setCounselCurrentTopic('');
+    setCounselFinalResult(null);
     onOpenChange(false);
   }, [sessionId, session?.status, cancelMutation, onOpenChange]);
 
@@ -238,9 +322,9 @@ export function ImageParseDialog({
       if (!file.type.startsWith('image/')) {
         return;
       }
-      uploadMutation.mutate(file);
+      uploadMutation.mutate({ file, mode: extractionMode });
     },
-    [uploadMutation]
+    [uploadMutation, extractionMode]
   );
 
   const handleDrop = useCallback(
@@ -329,6 +413,79 @@ export function ImageParseDialog({
     const remainingSeconds = seconds % 60;
     return `~${minutes}m ${remainingSeconds}s remaining`;
   };
+
+  const renderModeSelectionStep = () => (
+    <div className="space-y-6">
+      <div className="text-center">
+        <p className="text-sm text-muted-foreground mb-4">
+          Choose how you'd like to process your image
+        </p>
+      </div>
+
+      <RadioGroup
+        value={extractionMode}
+        onValueChange={(value) => setExtractionMode(value as ExtractionMode)}
+        className="space-y-3"
+      >
+        <div className="flex items-start space-x-3 p-4 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
+          <RadioGroupItem value="accurate" id="accurate" className="mt-1" />
+          <div className="flex-1">
+            <Label htmlFor="accurate" className="font-medium cursor-pointer">
+              Accurate
+            </Label>
+            <p className="text-sm text-muted-foreground mt-1">
+              Best balance of speed and accuracy. Uses preprocessing and verification.
+              Recommended for most images.
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              ~1-2 minutes (GPU) / ~10-15 minutes (CPU)
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start space-x-3 p-4 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
+          <RadioGroupItem value="thorough" id="thorough" className="mt-1" />
+          <div className="flex-1">
+            <Label htmlFor="thorough" className="font-medium cursor-pointer">
+              Thorough
+            </Label>
+            <p className="text-sm text-muted-foreground mt-1">
+              Multiple passes with verification. Better for difficult handwriting
+              or low-quality images.
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              ~2-3 minutes (GPU) / ~15-20 minutes (CPU)
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start space-x-3 p-4 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors border-dashed">
+          <RadioGroupItem value="counsel" id="counsel" className="mt-1" />
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <Label htmlFor="counsel" className="font-medium cursor-pointer">
+                Counsel Mode
+              </Label>
+              <Badge variant="outline" className="text-xs">Novelty</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground mt-1">
+              10 AI personas with unique culinary backgrounds debate and vote on
+              recipe interpretations. Watch the discussion unfold in real-time!
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              ~5-10 minutes (GPU) / ~15-30 minutes (CPU) - Fun but slower
+            </p>
+          </div>
+        </div>
+      </RadioGroup>
+
+      <div className="flex justify-end">
+        <Button onClick={() => setStep('upload')}>
+          Continue
+        </Button>
+      </div>
+    </div>
+  );
 
   const renderUploadStep = () => (
     <div className="space-y-4">
@@ -506,6 +663,136 @@ export function ImageParseDialog({
     );
   };
 
+  const renderCounselProcessingStep = (): React.ReactNode => {
+    const elapsedMs = processingStartTime ? Date.now() - processingStartTime : 0;
+    const elapsedMinutes = Math.floor(elapsedMs / 60000);
+    const elapsedSeconds = Math.floor((elapsedMs % 60000) / 1000);
+
+    return (
+      <div className="space-y-4">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary">
+              Counsel Mode
+            </Badge>
+            <Badge variant="outline" className="font-mono text-xs">
+              {elapsedMinutes}:{elapsedSeconds.toString().padStart(2, '0')}
+            </Badge>
+          </div>
+          <p className="text-sm text-muted-foreground">{counselStage}</p>
+        </div>
+
+        {/* Persona interpretations summary */}
+        {counselInterpretations.length > 0 && (
+          <div className="border rounded-lg p-3">
+            <p className="text-xs font-medium text-muted-foreground mb-2">
+              Expert Opinions ({counselInterpretations.length}/10)
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {counselInterpretations.map((interp) => (
+                <Badge
+                  key={interp.personaId}
+                  variant="outline"
+                  className="text-xs"
+                  title={`${interp.title}: ${interp.ingredientCount} ingredients, ${Math.round(interp.confidence * 100)}% confident`}
+                >
+                  {interp.personaName.split(' ')[0]}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Current topic being debated */}
+        {counselCurrentTopic && (
+          <div className="text-center py-2">
+            <p className="text-xs text-muted-foreground">Now debating:</p>
+            <p className="font-medium">{counselCurrentTopic}</p>
+          </div>
+        )}
+
+        {/* Discussion feed */}
+        <div className="border rounded-lg bg-muted/30">
+          <div className="px-3 py-2 border-b bg-muted/50">
+            <p className="text-sm font-medium flex items-center gap-2">
+              {counselFinalResult === null && <Loader2 className="h-3 w-3 animate-spin" />}
+              {counselFinalResult !== null && <Check className="h-3 w-3 text-green-500" />}
+              {counselFinalResult !== null ? 'Discussion Complete' : 'Council in Session'}
+              {counselMessages.length > 0 && (
+                <Badge variant="outline" className="ml-auto text-xs">
+                  {counselMessages.length} messages
+                </Badge>
+              )}
+            </p>
+          </div>
+          <div className="h-72 overflow-y-auto" ref={counselScrollRef}>
+            <div className="p-3 space-y-3">
+              {counselMessages.length === 0 ? (
+                <div className="text-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground mb-2" />
+                  <p className="text-sm text-muted-foreground">
+                    Waiting for the counsel to speak...
+                  </p>
+                </div>
+              ) : (
+                counselMessages.map((msg, i) => (
+                  <div key={i} className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm">{msg.speakerName}</span>
+                      <Badge variant="outline" className="text-xs">
+                        {msg.messageType}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground pl-0">
+                      "{msg.message}"
+                    </p>
+                  </div>
+                ))
+              )}
+
+              {/* Show vote results */}
+              {counselVotes.map((vote, i) => (
+                <div key={`vote-${i}`} className="border-t pt-2 mt-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="default" className="text-xs">Vote Result</Badge>
+                    <span className="text-xs text-muted-foreground">{vote.topic}</span>
+                  </div>
+                  <p className="text-sm font-medium mt-1">
+                    Winner: {vote.winner}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {Object.entries(vote.tally)
+                      .map(([opt, count]) => `${opt}: ${count}`)
+                      .join(' | ')}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Final result indicator and continue button */}
+        {counselFinalResult !== null && (
+          <div className="space-y-3">
+            <Alert>
+              <Check className="h-4 w-4" />
+              <AlertDescription>
+                The counsel has reached a decision! Review the discussion above, then continue to see the final recipe.
+              </AlertDescription>
+            </Alert>
+            <div className="flex justify-end">
+              <Button onClick={() => setStep('review')}>
+                <Check className="mr-2 h-4 w-4" />
+                Continue to Review
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderTypeSelectionStep = () => {
     const detectableTypes: ParsedContentType[] = ['list', 'recipe', 'calendar_event'];
 
@@ -639,6 +926,26 @@ export function ImageParseDialog({
           />
         )}
 
+        {/* Debug section - Raw VLM output */}
+        {session.rawText && (
+          <Collapsible open={debugOpen} onOpenChange={setDebugOpen} className="mt-4">
+            <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border bg-muted/50 px-4 py-2 text-sm font-medium hover:bg-muted">
+              <span className="flex items-center gap-2">
+                <Bug className="h-4 w-4" />
+                Debug: Raw VLM Output
+              </span>
+              <ChevronDown className={cn("h-4 w-4 transition-transform", debugOpen && "rotate-180")} />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2">
+              <div className="rounded-lg border bg-muted/30 p-4">
+                <pre className="whitespace-pre-wrap text-xs text-muted-foreground font-mono max-h-64 overflow-y-auto">
+                  {session.rawText}
+                </pre>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+
         <div className="flex justify-end gap-2 pt-4">
           <Button variant="outline" onClick={() => setStep('type-selection')}>
             Back
@@ -664,22 +971,30 @@ export function ImageParseDialog({
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
+            {step === 'mode-selection' && 'Choose Processing Mode'}
             {step === 'upload' && 'Scan Image'}
             {step === 'processing' && 'Processing'}
+            {step === 'counsel-processing' && 'Counsel Mode'}
             {step === 'type-selection' && 'Select Content Type'}
             {step === 'review' && 'Review Content'}
           </DialogTitle>
           <DialogDescription>
+            {step === 'mode-selection' &&
+              'Select how you want to process your image.'}
             {step === 'upload' &&
               'Upload a photo of a list, recipe, or schedule to automatically extract the content.'}
             {step === 'processing' && 'Analyzing your image with AI...'}
+            {step === 'counsel-processing' &&
+              '10 AI personas are debating your recipe. Grab some popcorn!'}
             {step === 'type-selection' && 'What type of content is in this image?'}
             {step === 'review' && 'Review and edit the extracted content before creating.'}
           </DialogDescription>
         </DialogHeader>
 
+        {step === 'mode-selection' && renderModeSelectionStep()}
         {step === 'upload' && renderUploadStep()}
         {step === 'processing' && renderProcessingStep()}
+        {step === 'counsel-processing' && renderCounselProcessingStep()}
         {step === 'type-selection' && renderTypeSelectionStep()}
         {step === 'review' && renderReviewStep()}
       </DialogContent>

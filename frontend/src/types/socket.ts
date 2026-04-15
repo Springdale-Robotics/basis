@@ -12,7 +12,11 @@ export interface ServerToClientEvents {
   'recipe:delete': (data: { recipeId: string }) => void;
 
   'inventory:update': (data: { itemId?: string; areaId?: string }) => void;
+  'inventory:confidence-updated': (data: { itemId: string; confidence: number; band: string }) => void;
+  'inventory:reconciled': (data: { itemId: string; confidence: number }) => void;
+  'inventory:out-of-stock': (data: { itemId: string; itemName: string }) => void;
   'shopping-list:update': () => void;
+  'shopping:look-ahead-suggestion': (data: { recipeId: string; recipeTitle: string; sharedCount: number }) => void;
 
   'task:update': (data: { taskId: string }) => void;
   'task:delete': (data: { taskId: string }) => void;

@@ -36,6 +36,12 @@ export const processingStageEnum = pgEnum('processing_stage', [
   'vlm_done',
   'llm_started',
   'llm_done',
+  // Counsel mode stages
+  'counsel_vlm',
+  'counsel_interpretations',
+  'counsel_discussion',
+  'counsel_voting',
+  'counsel_finalizing',
 ]);
 
 // Main table for image parse sessions
@@ -55,6 +61,7 @@ export const imageParseSessions = pgTable('image_parse_sessions', {
   // Processing state
   status: imageParseStatusEnum('status').notNull().default('uploading'),
   processingStage: processingStageEnum('processing_stage'),
+  extractionMode: varchar('extraction_mode', { length: 20 }).default('accurate'), // 'accurate' | 'thorough' | 'counsel'
 
   // AI extraction results
   rawText: text('raw_text'),  // Raw text extracted from image
@@ -71,6 +78,9 @@ export const imageParseSessions = pgTable('image_parse_sessions', {
   // Warnings and metadata
   parseWarnings: jsonb('parse_warnings').$type<string[]>().default([]),
   processingTimeMs: decimal('processing_time_ms', { precision: 10, scale: 2 }),
+
+  // Counsel mode data (stored for review)
+  counselDiscussion: jsonb('counsel_discussion').$type<CounselDiscussionData>(),
 
   // Timestamps
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -146,8 +156,46 @@ export interface UserEdits {
   editedContent?: Partial<ParsedContent>;
 }
 
+// Counsel mode types
+export interface CounselPersonaInterpretation {
+  personaId: string;
+  personaName: string;
+  title: string;
+  ingredientCount: number;
+  notes: string[];
+  concerns: string[];
+  confidence: number;
+}
+
+export interface CounselDiscussionMessage {
+  speakerId: string;
+  speakerName: string;
+  message: string;
+  topic: string;
+  messageType: 'statement' | 'rebuttal' | 'agreement' | 'vote';
+}
+
+export interface CounselVoteResult {
+  topic: string;
+  winner: string;
+  tally: Record<string, number>;
+  reasoning: string;
+}
+
+export interface CounselDiscussionData {
+  interpretations: CounselPersonaInterpretation[];
+  disagreements: Array<{
+    topic: string;
+    description: string;
+    positions: Record<string, string>;
+  }>;
+  discussion: CounselDiscussionMessage[];
+  votes: CounselVoteResult[];
+}
+
 export type ImageParseSession = typeof imageParseSessions.$inferSelect;
 export type NewImageParseSession = typeof imageParseSessions.$inferInsert;
 export type ImageParseStatus = 'uploading' | 'processing' | 'review' | 'confirmed' | 'cancelled' | 'failed';
 export type ParsedContentType = 'list' | 'recipe' | 'calendar_event' | 'mixed' | 'unknown';
-export type ProcessingStage = 'queued' | 'vlm_started' | 'vlm_done' | 'llm_started' | 'llm_done';
+export type ProcessingStage = 'queued' | 'vlm_started' | 'vlm_done' | 'llm_started' | 'llm_done' | 'counsel_vlm' | 'counsel_interpretations' | 'counsel_discussion' | 'counsel_voting' | 'counsel_finalizing';
+export type ExtractionMode = 'accurate' | 'thorough' | 'counsel';

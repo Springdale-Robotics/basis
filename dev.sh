@@ -41,28 +41,31 @@ load_backend_env() {
   fi
 }
 
-# Helper: setup backend env
+# Helper: setup backend env (always regenerate to use current ports)
 setup_backend_env() {
-  if [ ! -f "$BACKEND_DIR/.env" ]; then
-    echo -e "${BLUE}Creating backend .env...${NC}"
-    cat > "$BACKEND_DIR/.env" << EOF
+  # Use acquired ports or defaults
+  local port=${BACKEND_PORT:-3000}
+  local frontend_port=${FRONTEND_PORT:-5173}
+  local vlm_llm_port=${VLM_LLM_PORT:-8000}
+
+  echo -e "${BLUE}Configuring backend .env (port $port, CORS for frontend port $frontend_port)...${NC}"
+  cat > "$BACKEND_DIR/.env" << EOF
 DATABASE_URL=postgres://homemanager:devpassword@localhost:5432/homemanager
 REDIS_URL=redis://localhost:6379
 SESSION_SECRET=dev-session-secret-at-least-32-characters-long
 ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-PORT=3000
+PORT=$port
 NODE_ENV=development
-CORS_ORIGINS=http://localhost:5173
+CORS_ORIGINS=http://localhost:$frontend_port
 LOG_LEVEL=debug
 STORAGE_PATH=./storage
 # Image parsing (VLM-LLM two-stage pipeline)
 IMAGE_PARSE_PROVIDER=auto
-VLM_LLM_SERVICE_URL=http://localhost:8000
+VLM_LLM_SERVICE_URL=http://localhost:$vlm_llm_port
 OLLAMA_HOST=http://localhost:11434
-OLLAMA_VLM_MODEL=llava:7b
+OLLAMA_VLM_MODEL=minicpm-v
 OLLAMA_LLM_MODEL=qwen2.5:7b
 EOF
-  fi
 }
 
 # Helper: install deps
@@ -77,47 +80,300 @@ install_deps() {
   fi
 }
 
-# Helper: check for ffmpeg (required for video thumbnails)
-check_ffmpeg() {
-  if ! command -v ffmpeg &> /dev/null; then
-    echo -e "${YELLOW}ffmpeg is not installed. Video thumbnails will not work.${NC}"
+# Helper: check and fix apt if broken (common issue with apt_pkg module)
+check_apt_health() {
+  if ! command -v apt-get &> /dev/null; then
+    return 0  # Not a Debian-based system
+  fi
 
-    # Check if brew is available (macOS)
-    if command -v brew &> /dev/null; then
-      echo -e "${BLUE}Would you like to install ffmpeg via Homebrew? [Y/n]${NC}"
-      read -r response
-      if [[ ! "$response" =~ ^([nN])$ ]]; then
-        echo -e "${BLUE}Installing ffmpeg...${NC}"
-        brew install ffmpeg
-        echo -e "${GREEN}ffmpeg installed.${NC}"
+  # Test if apt works by running a simple command
+  if ! python3 -c "import apt_pkg" 2>/dev/null; then
+    echo -e "${YELLOW}Detected broken apt_pkg Python module. Fixing...${NC}"
+    # Reinstall python3-apt to fix the module
+    sudo apt-get install --reinstall -y python3-apt 2>/dev/null || true
+    # If that didn't work, try to fix the symlink manually
+    if ! python3 -c "import apt_pkg" 2>/dev/null; then
+      local apt_pkg_file=$(find /usr/lib/python3/dist-packages -name "apt_pkg*.so" 2>/dev/null | head -1)
+      if [ -n "$apt_pkg_file" ]; then
+        sudo ln -sf "$apt_pkg_file" /usr/lib/python3/dist-packages/apt_pkg.so 2>/dev/null || true
       fi
-    # Check if apt is available (Debian/Ubuntu)
-    elif command -v apt-get &> /dev/null; then
-      echo -e "${BLUE}Would you like to install ffmpeg via apt? [Y/n]${NC}"
-      read -r response
-      if [[ ! "$response" =~ ^([nN])$ ]]; then
-        echo -e "${BLUE}Installing ffmpeg...${NC}"
-        sudo apt-get update && sudo apt-get install -y ffmpeg
-        echo -e "${GREEN}ffmpeg installed.${NC}"
-      fi
+    fi
+    if python3 -c "import apt_pkg" 2>/dev/null; then
+      echo -e "${GREEN}apt_pkg module fixed.${NC}"
     else
-      echo -e "${YELLOW}Please install ffmpeg manually for video thumbnail support.${NC}"
+      echo -e "${YELLOW}Could not fix apt_pkg module. Some apt operations may show warnings.${NC}"
     fi
   fi
 }
 
-# Helper: kill existing dev processes to avoid port conflicts
-cleanup_processes() {
-  # Kill any existing tsx/node processes for backend
-  pkill -f "tsx.*src/index" 2>/dev/null || true
-  pkill -f "node.*backend.*dev" 2>/dev/null || true
-  # Kill any existing vite processes for frontend
-  pkill -f "vite.*5173" 2>/dev/null || true
-  # Kill anything on our dev ports
-  lsof -ti:3000 | xargs kill -9 2>/dev/null || true
-  lsof -ti:5173 | xargs kill -9 2>/dev/null || true
-  lsof -ti:8000 | xargs kill -9 2>/dev/null || true
-  sleep 1
+# Track if apt has been updated this session
+APT_UPDATED=false
+
+# Helper: run apt-get update once per session
+apt_update_once() {
+  if [ "$APT_UPDATED" = false ]; then
+    echo -e "${BLUE}Updating package lists...${NC}"
+    sudo apt-get update
+    APT_UPDATED=true
+  fi
+}
+
+# Helper: install a package via apt (handles update, prompts user)
+apt_install() {
+  local package=$1
+  local description=$2
+
+  if ! command -v apt-get &> /dev/null; then
+    return 1  # Not a Debian-based system
+  fi
+
+  echo -e "${BLUE}Would you like to install $package via apt? [Y/n]${NC}"
+  read -r response
+  if [[ "$response" =~ ^([nN])$ ]]; then
+    return 1
+  fi
+
+  apt_update_once
+  echo -e "${BLUE}Installing $package...${NC}"
+  if sudo apt-get install -y "$package"; then
+    echo -e "${GREEN}$package installed.${NC}"
+    return 0
+  else
+    echo -e "${RED}Failed to install $package.${NC}"
+    return 1
+  fi
+}
+
+# Helper: check for ffmpeg (required for video thumbnails)
+check_ffmpeg() {
+  if command -v ffmpeg &> /dev/null; then
+    return 0  # Already installed
+  fi
+
+  echo -e "${YELLOW}ffmpeg is not installed. Video thumbnails will not work.${NC}"
+
+  # macOS
+  if command -v brew &> /dev/null; then
+    echo -e "${BLUE}Would you like to install ffmpeg via Homebrew? [Y/n]${NC}"
+    read -r response
+    if [[ ! "$response" =~ ^([nN])$ ]]; then
+      echo -e "${BLUE}Installing ffmpeg...${NC}"
+      brew install ffmpeg
+      echo -e "${GREEN}ffmpeg installed.${NC}"
+    fi
+  # Debian/Ubuntu
+  elif command -v apt-get &> /dev/null; then
+    apt_install ffmpeg "video thumbnail support" || true
+  else
+    echo -e "${YELLOW}Please install ffmpeg manually for video thumbnail support.${NC}"
+  fi
+}
+
+# Helper: check for NVIDIA GPU and container toolkit (required for GPU-accelerated AI)
+check_nvidia_gpu() {
+  # Check if NVIDIA GPU is available
+  if ! command -v nvidia-smi &> /dev/null; then
+    return 0  # No GPU, nothing to do
+  fi
+
+  # GPU detected, check if nvidia-container-toolkit is installed
+  if dpkg -l 2>/dev/null | grep -q "ii.*nvidia-container-toolkit"; then
+    echo -e "${GREEN}GPU detected: $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)${NC}"
+    return 0
+  fi
+
+  echo -e "${YELLOW}NVIDIA GPU detected but nvidia-container-toolkit is not installed.${NC}"
+  echo -e "${YELLOW}AI image parsing will run on CPU (slow) without it.${NC}"
+  echo ""
+  echo -e "${BLUE}Would you like to install nvidia-container-toolkit for GPU acceleration? [Y/n]${NC}"
+  read -r response
+  if [[ "$response" =~ ^([nN])$ ]]; then
+    echo -e "${YELLOW}Continuing without GPU acceleration...${NC}"
+    return 0
+  fi
+
+  echo -e "${BLUE}Installing nvidia-container-toolkit...${NC}"
+
+  # Add NVIDIA repository if not present
+  if [ ! -f /etc/apt/sources.list.d/nvidia-container-toolkit.list ]; then
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null || true
+    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+      sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+      sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+    APT_UPDATED=false  # Force update since we added a new repo
+  fi
+
+  apt_update_once
+  if sudo apt-get install -y nvidia-container-toolkit; then
+    echo -e "${BLUE}Restarting Docker to enable GPU support...${NC}"
+    sudo systemctl restart docker 2>/dev/null || sudo service docker restart 2>/dev/null || true
+    sleep 2
+    echo -e "${GREEN}nvidia-container-toolkit installed! GPU acceleration enabled.${NC}"
+  else
+    echo -e "${RED}Failed to install nvidia-container-toolkit. Continuing without GPU acceleration.${NC}"
+  fi
+}
+
+# Helper: check if a process belongs to homemanager (via cwd or cmdline)
+is_homemanager_process() {
+  local pid=$1
+
+  # Check /proc/$pid/cwd on Linux
+  if [ -d "/proc/$pid" ]; then
+    local cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)
+    if [[ "$cwd" == *"homemanager"* ]]; then
+      return 0
+    fi
+    # Check cmdline for homemanager patterns
+    local cmdline=$(cat "/proc/$pid/cmdline" 2>/dev/null | tr '\0' ' ' || true)
+    if [[ "$cmdline" == *"homemanager"* ]]; then
+      return 0
+    fi
+  fi
+
+  # macOS fallback using lsof
+  if command -v lsof &> /dev/null; then
+    local cwd=$(lsof -p "$pid" 2>/dev/null | grep cwd | awk '{print $NF}' || true)
+    if [[ "$cwd" == *"homemanager"* ]]; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+# Helper: check if a Docker container using a port is a homemanager container
+is_homemanager_container_on_port() {
+  local port=$1
+  # Find container using this port and check if it's a homemanager container
+  local container=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep ":$port->" | awk '{print $1}')
+  if [ -n "$container" ] && [[ "$container" == *"homemanager"* ]]; then
+    return 0
+  fi
+  return 1
+}
+
+# Helper: get Docker container name using a port
+get_container_on_port() {
+  local port=$1
+  docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep ":$port->" | awk '{print $1}'
+}
+
+# Helper: check if a port is available (checks both lsof and docker)
+is_port_available() {
+  local port=$1
+  # Check via lsof
+  if lsof -ti:"$port" &>/dev/null; then
+    return 1
+  fi
+  # Also check if Docker has anything bound to this port
+  if docker ps --format '{{.Ports}}' 2>/dev/null | grep -q ":$port->"; then
+    return 1
+  fi
+  return 0
+}
+
+# Helper: get PID using a port
+get_pid_on_port() {
+  local port=$1
+  lsof -ti:"$port" 2>/dev/null | head -1
+}
+
+# Helper: find an available port starting from base (tries +0, +1, +10, +100)
+find_available_port() {
+  local base=$1
+  local offsets=(0 1 10 100)
+
+  for offset in "${offsets[@]}"; do
+    local port=$((base + offset))
+    if is_port_available "$port"; then
+      echo "$port"
+      return 0
+    fi
+  done
+
+  # If all failed, return empty
+  echo ""
+  return 1
+}
+
+# Helper: smart port acquisition - kill homemanager processes, find alternatives for others
+# Usage: acquire_port "service_name" default_port RESULT_VAR
+acquire_port() {
+  local service_name=$1
+  local default_port=$2
+  local result_var=$3
+
+  if is_port_available "$default_port"; then
+    eval "$result_var=$default_port"
+    return 0
+  fi
+
+  # Port is in use - check if it's a homemanager Docker container
+  local container=$(get_container_on_port "$default_port")
+  if [ -n "$container" ]; then
+    if [[ "$container" == *"homemanager"* ]]; then
+      echo -e "${YELLOW}Stopping old homemanager container on port $default_port ($container)...${NC}"
+      docker stop "$container" 2>/dev/null || true
+      docker rm -f "$container" 2>/dev/null || true
+      sleep 2
+      if is_port_available "$default_port"; then
+        eval "$result_var=$default_port"
+        return 0
+      fi
+    else
+      echo -e "${YELLOW}Port $default_port in use by container '$container' (not homemanager)${NC}"
+    fi
+  fi
+
+  # Check if it's a homemanager process (non-Docker)
+  local pid=$(get_pid_on_port "$default_port")
+  if [ -n "$pid" ] && is_homemanager_process "$pid"; then
+    echo -e "${YELLOW}Killing old homemanager process on port $default_port (PID $pid)...${NC}"
+    kill -9 "$pid" 2>/dev/null || true
+    sleep 1
+    if is_port_available "$default_port"; then
+      eval "$result_var=$default_port"
+      return 0
+    fi
+  fi
+
+  # Port is used by another process - find an alternative
+  local new_port=$(find_available_port "$default_port")
+  if [ -z "$new_port" ]; then
+    echo -e "${RED}Could not find available port for $service_name (tried $default_port, +1, +10, +100)${NC}"
+    exit 1
+  fi
+
+  if [ "$new_port" != "$default_port" ]; then
+    echo -e "${YELLOW}Port $default_port in use by another process, using port $new_port for $service_name${NC}"
+  fi
+
+  eval "$result_var=$new_port"
+}
+
+# Helper: acquire VLM-LLM port
+acquire_vlm_llm_port() {
+  # Skip if already acquired
+  if [ -n "$VLM_LLM_PORT" ]; then
+    return 0
+  fi
+  # Remove old container first (it may be on any port from a previous run)
+  docker stop homemanager-vlm-llm-dev 2>/dev/null || true
+  docker rm -f homemanager-vlm-llm-dev 2>/dev/null || true
+  acquire_port "vlm-llm" 8000 VLM_LLM_PORT
+  export VLM_LLM_PORT
+}
+
+# Helper: smart cleanup and port acquisition
+smart_cleanup() {
+  acquire_port "backend" 3000 BACKEND_PORT
+  acquire_port "frontend" 5173 FRONTEND_PORT
+  # Always remove old homemanager VLM-LLM container first (it may be on any port)
+  docker stop homemanager-vlm-llm-dev 2>/dev/null || true
+  docker rm -f homemanager-vlm-llm-dev 2>/dev/null || true
+  acquire_port "vlm-llm" 8000 VLM_LLM_PORT
+  export BACKEND_PORT FRONTEND_PORT VLM_LLM_PORT
 }
 
 # Helper: clean up unused Docker resources
@@ -140,18 +396,20 @@ start_infra() {
 
 # Helper: start VLM-LLM service (uses Ollama for both VLM and LLM)
 start_vlm_llm() {
-  echo -e "${BLUE}Starting VLM-LLM service...${NC}"
-  (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml up -d vlm-llm)
+  acquire_vlm_llm_port
+  echo -e "${BLUE}Starting VLM-LLM service on port $VLM_LLM_PORT...${NC}"
+  (cd "$BACKEND_DIR" && VLM_LLM_PORT=$VLM_LLM_PORT $COMPOSE -f docker-compose.dev.yml up -d vlm-llm)
 }
 
 # Helper: check VLM-LLM service health
 check_vlm_llm_health() {
+  local vlm_port=${VLM_LLM_PORT:-8000}
   if docker ps --format '{{.Names}}' | grep -q 'homemanager-vlm-llm-dev'; then
-    echo -e "${BLUE}Waiting for VLM-LLM service...${NC}"
+    echo -e "${BLUE}Waiting for VLM-LLM service on port $vlm_port...${NC}"
     local max_attempts=30
     local attempt=0
     while [ $attempt -lt $max_attempts ]; do
-      if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+      if curl -s "http://localhost:$vlm_port/health" > /dev/null 2>&1; then
         echo -e "${GREEN}VLM-LLM service ready!${NC}"
         return 0
       fi
@@ -169,10 +427,10 @@ check_ollama_models() {
     if docker ps --format '{{.Names}}' | grep -q 'homemanager-ollama-dev'; then
       echo -e "${BLUE}Checking AI models for VLM-LLM pipeline...${NC}"
 
-      # Pull VLM model (llava:7b) for GPU image understanding
-      if ! docker exec homemanager-ollama-dev ollama list 2>/dev/null | grep -q 'llava:7b'; then
-        echo -e "${YELLOW}Downloading VLM model (llava:7b) - this may take a few minutes...${NC}"
-        docker exec homemanager-ollama-dev ollama pull llava:7b
+      # Pull VLM model (minicpm-v) for document/OCR understanding
+      if ! docker exec homemanager-ollama-dev ollama list 2>/dev/null | grep -q 'minicpm-v'; then
+        echo -e "${YELLOW}Downloading VLM model (minicpm-v) - this may take a few minutes...${NC}"
+        docker exec homemanager-ollama-dev ollama pull minicpm-v
         echo -e "${GREEN}VLM model ready!${NC}"
       fi
 
@@ -208,25 +466,27 @@ case "${1:-help}" in
     case "${2:-all}" in
       all|"")
         # Full stack: infra + backend + frontend
-        cleanup_processes
+        smart_cleanup
+        check_apt_health
+        check_nvidia_gpu
+        check_ffmpeg
         start_infra
         setup_backend_env
         install_deps
-        check_ffmpeg
         start_vlm_llm
         check_ollama_models
         run_migrations
 
         echo ""
         echo -e "${GREEN}Starting HomeManager...${NC}"
-        echo -e "  Backend:  ${BLUE}http://localhost:3000${NC}"
-        echo -e "  Frontend: ${BLUE}http://localhost:5173${NC}"
+        echo -e "  Backend:  ${BLUE}http://localhost:$BACKEND_PORT${NC}"
+        echo -e "  Frontend: ${BLUE}http://localhost:$FRONTEND_PORT${NC}"
         echo ""
         echo "Press Ctrl+C to stop"
         echo ""
 
-        # Start both processes
-        (cd "$FRONTEND_DIR" && npm run dev) &
+        # Start both processes with dynamic ports
+        (cd "$FRONTEND_DIR" && VITE_PORT=$FRONTEND_PORT VITE_BACKEND_URL="http://localhost:$BACKEND_PORT" npm run dev) &
         FRONTEND_PID=$!
         trap "kill $FRONTEND_PID 2>/dev/null; exit" INT TERM
         load_backend_env
@@ -235,20 +495,31 @@ case "${1:-help}" in
 
       backend)
         # Backend only
-        cleanup_processes
+        acquire_port "backend" 3000 BACKEND_PORT
+        export BACKEND_PORT
+        # Set default frontend port for CORS (user may specify different port when starting frontend)
+        FRONTEND_PORT=${FRONTEND_PORT:-5173}
+        export FRONTEND_PORT
+        # Remove old VLM-LLM container and acquire port before setup_backend_env
+        docker stop homemanager-vlm-llm-dev 2>/dev/null || true
+        docker rm -f homemanager-vlm-llm-dev 2>/dev/null || true
+        acquire_port "vlm-llm" 8000 VLM_LLM_PORT
+        export VLM_LLM_PORT
+        check_apt_health
+        check_nvidia_gpu
+        check_ffmpeg
         start_infra
         setup_backend_env
         if [ ! -d "$BACKEND_DIR/node_modules" ]; then
           (cd "$BACKEND_DIR" && npm install)
         fi
-        check_ffmpeg
         start_vlm_llm
         check_ollama_models
         run_migrations
 
         echo ""
         echo -e "${GREEN}Starting backend...${NC}"
-        echo -e "  Backend: ${BLUE}http://localhost:3000${NC}"
+        echo -e "  Backend: ${BLUE}http://localhost:$BACKEND_PORT${NC}"
         echo ""
         load_backend_env
         (cd "$BACKEND_DIR" && npm run dev)
@@ -256,18 +527,32 @@ case "${1:-help}" in
 
       frontend)
         # Frontend only (assumes backend is running)
-        # Only kill frontend port, not backend
-        lsof -ti:5173 | xargs kill -9 2>/dev/null || true
-        sleep 1
+        acquire_port "frontend" 5173 FRONTEND_PORT
+        export FRONTEND_PORT
+        # Detect backend port (check common ports)
+        BACKEND_PORT=""
+        for port in 3000 3001 3010 3100; do
+          if lsof -ti:"$port" &>/dev/null; then
+            BACKEND_PORT=$port
+            break
+          fi
+        done
+        if [ -z "$BACKEND_PORT" ]; then
+          echo -e "${YELLOW}Warning: Could not detect running backend, assuming port 3000${NC}"
+          BACKEND_PORT=3000
+        fi
+        export BACKEND_PORT
+
         if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
           (cd "$FRONTEND_DIR" && npm install)
         fi
 
         echo ""
         echo -e "${GREEN}Starting frontend...${NC}"
-        echo -e "  Frontend: ${BLUE}http://localhost:5173${NC}"
+        echo -e "  Frontend: ${BLUE}http://localhost:$FRONTEND_PORT${NC}"
+        echo -e "  Proxying to backend: ${BLUE}http://localhost:$BACKEND_PORT${NC}"
         echo ""
-        (cd "$FRONTEND_DIR" && npm run dev)
+        (cd "$FRONTEND_DIR" && VITE_PORT=$FRONTEND_PORT VITE_BACKEND_URL="http://localhost:$BACKEND_PORT" npm run dev)
         ;;
 
       docker)
@@ -302,15 +587,11 @@ EOF
     echo -e "${BLUE}Stopping services...${NC}"
     (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml down 2>/dev/null || true)
     (cd "$BACKEND_DIR" && $COMPOSE down 2>/dev/null || true)
-    # Kill any running node processes for this project
-    pkill -f "homemanager.*npm" 2>/dev/null || true
-    pkill -f "tsx watch" 2>/dev/null || true
+    # Kill homemanager processes by pattern (not by port, to avoid killing unrelated processes)
+    pkill -f "tsx.*homemanager" 2>/dev/null || true
     pkill -f "vite.*homemanager" 2>/dev/null || true
-    # Kill processes on dev ports
-    lsof -ti:3000 | xargs kill -9 2>/dev/null || true
-    lsof -ti:5173 | xargs kill -9 2>/dev/null || true
-    lsof -ti:5174 | xargs kill -9 2>/dev/null || true
-    lsof -ti:8000 | xargs kill -9 2>/dev/null || true
+    pkill -f "homemanager.*npm" 2>/dev/null || true
+    pkill -f "node.*homemanager.*dev" 2>/dev/null || true
     cleanup_docker
     echo -e "${GREEN}Stopped.${NC}"
     ;;
@@ -417,8 +698,9 @@ EOF
     # VLM-LLM service management
     case "${2:-help}" in
       start)
-        echo -e "${BLUE}Starting VLM-LLM service...${NC}"
-        (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml up -d vlm-llm)
+        acquire_vlm_llm_port
+        echo -e "${BLUE}Starting VLM-LLM service on port $VLM_LLM_PORT...${NC}"
+        (cd "$BACKEND_DIR" && VLM_LLM_PORT=$VLM_LLM_PORT $COMPOSE -f docker-compose.dev.yml up -d vlm-llm)
         check_vlm_llm_health
         ;;
       stop)
@@ -430,15 +712,24 @@ EOF
         (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml build vlm-llm)
         ;;
       rebuild)
-        echo -e "${BLUE}Rebuilding VLM-LLM service...${NC}"
-        (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml up -d --build --no-deps vlm-llm)
+        acquire_vlm_llm_port
+        echo -e "${BLUE}Rebuilding VLM-LLM service on port $VLM_LLM_PORT...${NC}"
+        (cd "$BACKEND_DIR" && VLM_LLM_PORT=$VLM_LLM_PORT $COMPOSE -f docker-compose.dev.yml up -d --build --no-deps vlm-llm)
         ;;
       logs)
         (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml logs -f vlm-llm)
         ;;
       status)
-        if curl -s http://localhost:8000/health 2>/dev/null; then
-          echo ""
+        # Check common VLM-LLM ports
+        local vlm_port=""
+        for port in 8000 8001 8010 8100; do
+          if curl -s "http://localhost:$port/health" 2>/dev/null; then
+            vlm_port=$port
+            break
+          fi
+        done
+        if [ -n "$vlm_port" ]; then
+          echo -e "${GREEN}VLM-LLM service running on port $vlm_port${NC}"
         else
           echo -e "${RED}VLM-LLM service not responding${NC}"
         fi
@@ -450,8 +741,8 @@ EOF
       preload)
         echo -e "${BLUE}Preloading AI models into memory...${NC}"
         echo -e "${YELLOW}This takes ~80 seconds on CPU...${NC}"
-        docker exec homemanager-ollama-dev ollama run llava:7b "hello" > /dev/null 2>&1
-        echo -e "${GREEN}llava:7b loaded!${NC}"
+        docker exec homemanager-ollama-dev ollama run minicpm-v "hello" > /dev/null 2>&1
+        echo -e "${GREEN}minicpm-v loaded!${NC}"
         ;;
       *)
         echo -e "${BLUE}VLM-LLM Service Commands${NC}"
@@ -462,7 +753,7 @@ EOF
         echo -e "  ${GREEN}vlm-llm rebuild${NC}        Rebuild and restart"
         echo -e "  ${GREEN}vlm-llm logs${NC}           View service logs"
         echo -e "  ${GREEN}vlm-llm status${NC}         Check service health"
-        echo -e "  ${GREEN}vlm-llm pull-models${NC}    Pull llava:7b and qwen2.5:7b models"
+        echo -e "  ${GREEN}vlm-llm pull-models${NC}    Pull minicpm-v and qwen2.5:7b models"
         ;;
     esac
     ;;

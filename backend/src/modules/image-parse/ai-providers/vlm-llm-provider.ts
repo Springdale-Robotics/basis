@@ -44,7 +44,7 @@ export class VlmLlmProvider implements VisionProvider {
   private serviceUrl: string;
   private timeout: number;
   private cachedHealth: { health: HealthResponse; checkedAt: number } | null = null;
-  private healthCacheTtl = 30000; // 30 seconds
+  private healthCacheTtl = 120000; // 2 minutes - long enough to survive VLM processing
 
   constructor() {
     this.serviceUrl = config.VLM_LLM_SERVICE_URL;
@@ -76,6 +76,8 @@ export class VlmLlmProvider implements VisionProvider {
   }
 
   async isAvailable(): Promise<boolean> {
+    logger.debug({ serviceUrl: this.serviceUrl }, 'Checking VLM-LLM availability');
+
     // Return cached result if fresh
     if (
       this.cachedHealth &&
@@ -87,7 +89,7 @@ export class VlmLlmProvider implements VisionProvider {
 
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
+      const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout for health check
 
       const response = await fetch(`${this.serviceUrl}/health`, {
         signal: controller.signal,
@@ -117,7 +119,13 @@ export class VlmLlmProvider implements VisionProvider {
 
       return health.vlm_available;
     } catch (error) {
-      logger.debug({ error }, 'VLM-LLM service not available');
+      const err = error as Error;
+      logger.warn({
+        serviceUrl: this.serviceUrl,
+        errorName: err.name,
+        errorMessage: err.message,
+        errorCause: err.cause,
+      }, 'VLM-LLM service health check failed');
       this.cachedHealth = null;
       return false;
     }
@@ -168,6 +176,7 @@ export class VlmLlmProvider implements VisionProvider {
       const timeout = setTimeout(() => controller.abort(), this.timeout);
 
       // Use the combined /extract/base64 endpoint for full pipeline
+      // Always use 'accurate' mode which enables preprocessing and verification
       const response = await fetch(`${this.serviceUrl}/extract/base64`, {
         method: 'POST',
         headers: {
@@ -176,6 +185,9 @@ export class VlmLlmProvider implements VisionProvider {
         body: JSON.stringify({
           image_data: imageBase64,
           hint_type: null, // Let the service auto-detect
+          extraction_mode: 'accurate', // Enables preprocessing + verification
+          enable_preprocessing: true,
+          enable_verification: true,
         }),
         signal: controller.signal,
       });
