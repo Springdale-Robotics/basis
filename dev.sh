@@ -244,41 +244,50 @@ is_homemanager_process() {
   return 1
 }
 
-# Helper: check if a Docker container using a port is a homemanager container
+# Helper: grep pattern that matches a host port in Docker port mappings
+# Docker format: "host_ip:host_port->container_port/proto" — we match host_port only
+docker_host_port_grep() {
+  local port=$1
+  echo -E "(^|,\s*)(\[::\]:|[0-9.]*:)$port->"
+}
+
+# Helper: check if a Docker container using a host port is a homemanager container
 is_homemanager_container_on_port() {
   local port=$1
-  # Find container using this port and check if it's a homemanager container
-  local container=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep ":$port->" | awk '{print $1}')
+  local pattern=$(docker_host_port_grep "$port")
+  local container=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -E "$pattern" | awk '{print $1}')
   if [ -n "$container" ] && [[ "$container" == *"homemanager"* ]]; then
     return 0
   fi
   return 1
 }
 
-# Helper: get Docker container name using a port
+# Helper: get Docker container name using a host port
 get_container_on_port() {
   local port=$1
-  docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep ":$port->" | awk '{print $1}'
+  local pattern=$(docker_host_port_grep "$port")
+  docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -E "$pattern" | awk '{print $1}'
 }
 
 # Helper: check if a port is available (checks both lsof and docker)
 is_port_available() {
   local port=$1
-  # Check via lsof
-  if lsof -ti:"$port" &>/dev/null; then
+  # Check if anything is actually listening on this port (ignore stale client connections)
+  if lsof -iTCP:"$port" -sTCP:LISTEN -t &>/dev/null; then
     return 1
   fi
-  # Also check if Docker has anything bound to this port
-  if docker ps --format '{{.Ports}}' 2>/dev/null | grep -q ":$port->"; then
+  # Also check if Docker has anything bound to this host port
+  local pattern=$(docker_host_port_grep "$port")
+  if docker ps --format '{{.Ports}}' 2>/dev/null | grep -qE "$pattern"; then
     return 1
   fi
   return 0
 }
 
-# Helper: get PID using a port
+# Helper: get PID of process listening on a port
 get_pid_on_port() {
   local port=$1
-  lsof -ti:"$port" 2>/dev/null | head -1
+  lsof -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1
 }
 
 # Helper: find an available port starting from base (tries +0, +1, +10, +100)
@@ -589,11 +598,19 @@ EOF
     echo -e "${BLUE}Stopping services...${NC}"
     (cd "$BACKEND_DIR" && $COMPOSE -f docker-compose.dev.yml down 2>/dev/null || true)
     (cd "$BACKEND_DIR" && $COMPOSE down 2>/dev/null || true)
-    # Kill homemanager processes by pattern (not by port, to avoid killing unrelated processes)
-    pkill -f "tsx.*homemanager" 2>/dev/null || true
-    pkill -f "vite.*homemanager" 2>/dev/null || true
-    pkill -f "homemanager.*npm" 2>/dev/null || true
-    pkill -f "node.*homemanager.*dev" 2>/dev/null || true
+    # Kill homemanager processes — use SIGKILL and retry to handle tsx watch respawns
+    for attempt in 1 2 3; do
+      pkill -9 -f "tsx.*src/index" 2>/dev/null || true
+      pkill -9 -f "vite.*homemanager\|VITE_PORT" 2>/dev/null || true
+      pkill -9 -f "homemanager.*npm" 2>/dev/null || true
+      pkill -9 -f "node.*homemanager.*/backend/" 2>/dev/null || true
+      pkill -9 -f "node.*homemanager.*/frontend/" 2>/dev/null || true
+      # Check if ports are free
+      if ! lsof -ti:3000 &>/dev/null && ! lsof -ti:3001 &>/dev/null && ! lsof -ti:5173 &>/dev/null; then
+        break
+      fi
+      sleep 1
+    done
     cleanup_docker
     echo -e "${GREEN}Stopped.${NC}"
     ;;
