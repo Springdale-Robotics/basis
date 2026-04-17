@@ -274,4 +274,43 @@ export async function imageParseRoutes(app: FastifyInstance): Promise<void> {
       };
     }
   );
+
+  // Batch status check for bulk import
+  app.post(
+    '/batch-status',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const { sessionIds } = request.body as { sessionIds: string[] };
+
+      if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
+        throw Errors.validation('sessionIds must be a non-empty array');
+      }
+
+      const sessions = await Promise.all(
+        sessionIds.map(id => getSession(id, request.user!.householdId))
+      );
+
+      const validSessions = sessions.filter(Boolean);
+      const completed = validSessions.filter(s => s!.status === 'review' || s!.status === 'confirmed').length;
+      const failed = validSessions.filter(s => s!.status === 'failed').length;
+      const processing = validSessions.filter(s => s!.status === 'processing' || s!.status === 'uploading').length;
+
+      return {
+        success: true,
+        data: {
+          sessions: validSessions.map(s => {
+            const { originalImagePath, ...rest } = s!;
+            return { ...rest, hasImage: !!originalImagePath };
+          }),
+          summary: {
+            total: sessionIds.length,
+            completed,
+            processing,
+            failed,
+            allDone: completed + failed === sessionIds.length,
+          },
+        },
+      };
+    }
+  );
 }

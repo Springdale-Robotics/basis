@@ -1141,6 +1141,109 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
+  // ===== BATCH IMPORT ENDPOINTS =====
+
+  // Start batch import — parse multiple recipes at once
+  app.post(
+    '/import/start-batch',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const schema = z.object({
+        entries: z.array(z.object({
+          sourceType: z.enum(['url', 'text']),
+          sourceData: z.string(),
+          rawText: z.string().optional(),
+        })),
+      });
+
+      const { entries } = schema.parse(request.body);
+
+      const sessionIds: string[] = [];
+
+      for (const entry of entries) {
+        const sessionId = await createImportSession(
+          request.user!.householdId,
+          request.user!.id,
+          entry.sourceType,
+          entry.sourceData
+        );
+
+        if (entry.sourceType === 'url') {
+          await processUrlImportSession(sessionId, entry.sourceData, request.user!.householdId);
+        } else {
+          await processImportSession(sessionId, entry.rawText || entry.sourceData, request.user!.householdId, 'text');
+        }
+
+        sessionIds.push(sessionId);
+      }
+
+      return { success: true, data: { sessionIds } };
+    }
+  );
+
+  // Rematch ingredients for multiple sessions
+  app.post(
+    '/import/rematch-batch',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const schema = z.object({
+        sessionIds: z.array(z.string().uuid()),
+      });
+
+      const { sessionIds } = schema.parse(request.body);
+
+      const results: Record<string, unknown> = {};
+      for (const sessionId of sessionIds) {
+        const matches = await rematchIngredients(sessionId, request.user!.householdId);
+        results[sessionId] = matches;
+      }
+
+      return { success: true, data: { results } };
+    }
+  );
+
+  // Confirm multiple import sessions at once
+  app.post(
+    '/import/confirm-batch',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const schema = z.object({
+        sessions: z.array(z.object({
+          sessionId: z.string().uuid(),
+          overrides: z.object({
+            title: z.string().optional(),
+            description: z.string().optional(),
+            prepTimeMinutes: z.number().int().positive().optional(),
+            cookTimeMinutes: z.number().int().positive().optional(),
+            servings: z.number().int().positive().optional(),
+            ingredients: z.array(z.object({
+              name: z.string(),
+              quantity: z.number().optional(),
+              unit: z.string().optional(),
+              notes: z.string().optional(),
+            })).optional(),
+            instructions: z.array(z.string()).optional(),
+          }).optional(),
+        })),
+      });
+
+      const { sessions } = schema.parse(request.body);
+
+      const recipeIds: string[] = [];
+      for (const { sessionId, overrides } of sessions) {
+        const recipeId = await confirmImportSession(
+          sessionId,
+          request.user!.householdId,
+          request.user!.id,
+          overrides
+        );
+        recipeIds.push(recipeId);
+      }
+
+      return { success: true, data: { recipeIds } };
+    }
+  );
+
   // Parse ingredient lines with CRF
   app.post(
     '/ingredients/parse',

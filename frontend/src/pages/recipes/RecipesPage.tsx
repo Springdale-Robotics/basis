@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Grid, List, Search, Clock, Users, Upload, Camera, ChefHat } from 'lucide-react';
+import { Plus, Grid, List, Search, Clock, Users, Upload, Camera, ChefHat, Layers } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { RecipeForm, type RecipeImageChange } from '@/components/recipes/RecipeForm';
 import { ImportRecipeDialog } from './ImportRecipeDialog';
+import { BulkImportRecipeDialog } from './BulkImportRecipeDialog';
 import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
 import type { Recipe } from '@/types/models';
@@ -27,6 +28,7 @@ export function RecipesPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importDefaultTab, setImportDefaultTab] = useState<'text' | 'url' | 'file' | 'pdf' | 'image' | undefined>();
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
@@ -112,6 +114,10 @@ export function RecipesPage() {
             <Button variant="outline" onClick={() => { setImportDefaultTab(undefined); setImportOpen(true); }}>
               <Upload className="mr-2 h-4 w-4" />
               Import
+            </Button>
+            <Button variant="outline" onClick={() => setBulkImportOpen(true)}>
+              <Layers className="mr-2 h-4 w-4" />
+              Bulk Import
             </Button>
             <Button onClick={() => setFormOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
@@ -200,6 +206,11 @@ export function RecipesPage() {
         onOpenChange={setImportOpen}
         onSuccess={(recipeId) => navigate(`/recipes/${recipeId}`)}
         defaultTab={importDefaultTab}
+      />
+      <BulkImportRecipeDialog
+        open={bulkImportOpen}
+        onOpenChange={setBulkImportOpen}
+        onSuccess={() => queryClient.invalidateQueries({ queryKey: ['recipes'] })}
       />
     </div>
   );

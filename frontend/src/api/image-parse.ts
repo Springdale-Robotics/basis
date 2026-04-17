@@ -255,4 +255,19 @@ export const imageParseApi = {
    */
   cancel: (sessionId: string) =>
     apiDelete<{ message: string }>(`/image-parse/${sessionId}`),
+
+  /**
+   * Get batch status for multiple sessions
+   */
+  getBatchStatus: (sessionIds: string[]) =>
+    apiPost<{
+      sessions: ImageParseSession[];
+      summary: {
+        total: number;
+        completed: number;
+        processing: number;
+        failed: number;
+        allDone: boolean;
+      };
+    }>('/image-parse/batch-status', { sessionIds }),
 };

@@ -307,6 +307,16 @@ export const recipesApi = {
   reparseLLM: (sessionId: string) =>
     apiPost<{ parsedRecipe: ParsedRecipe; ingredientMatches: IngredientMatch[]; parseMethod: string; confidence: number }>(`/recipes/import/${sessionId}/reparse-llm`, {}),
 
+  // Batch import
+  startBatchImport: (entries: Array<{ sourceType: 'url' | 'text'; sourceData: string; rawText?: string }>) =>
+    apiPost<{ sessionIds: string[] }>('/recipes/import/start-batch', { entries }),
+
+  confirmBatchImport: (sessions: Array<{ sessionId: string; overrides?: Record<string, unknown> }>) =>
+    apiPost<{ recipeIds: string[] }>('/recipes/import/confirm-batch', { sessions }),
+
+  rematchBatchIngredients: (sessionIds: string[]) =>
+    apiPost<{ results: Record<string, IngredientMatch[]> }>('/recipes/import/rematch-batch', { sessionIds }),
+
   parseIngredientLines: (lines: string[]) =>
     apiPost<{ ingredients: Array<{ name: string; quantity?: number; unit?: string; notes?: string }>; parser: string }>('/recipes/ingredients/parse', { lines }),
 
