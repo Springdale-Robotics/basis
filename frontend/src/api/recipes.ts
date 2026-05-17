@@ -122,7 +122,14 @@ export interface ParsedRecipe {
   ingredientGroups?: ParsedIngredientGroup[];
 }
 
-export type ParseMethod = 'json-ld' | 'recipe-clipper' | 'microdata' | 'heuristic' | 'text';
+export type ParseMethod =
+  | 'json-ld'
+  | 'recipe-clipper'
+  | 'microdata'
+  | 'heuristic'
+  | 'text'
+  | 'llm'
+  | 'crf';
 
 export interface ParseUrlResponse {
   parsedRecipe: ParsedRecipe;
@@ -133,9 +140,29 @@ export interface ParseUrlResponse {
 
 export interface ParseTextResponse {
   parsedRecipe: ParsedRecipe;
-  parseMethod: 'text';
+  parseMethod: ParseMethod;
   confidence: number;
   warnings: string[];
+}
+
+export interface VisionProviderStatus {
+  available: boolean;
+  name: string;
+  model: string;
+  expectedProcessingMs?: number;
+  gpuAccelerated?: boolean;
+  llmAvailable?: boolean;
+  error?: string;
+}
+
+export interface ImportStatusResponse {
+  llm: { available: boolean; provider: string | null };
+  crf: { available: boolean };
+  image: {
+    activeProvider: string | null;
+    primary: VisionProviderStatus | null;
+    fallback: VisionProviderStatus | null;
+  };
 }
 
 export interface ImportSession {
@@ -280,6 +307,9 @@ export const recipesApi = {
     apiPost<GenerateShoppingListResponse>('/recipes/meal-plans/generate-shopping-list', params),
 
   // Recipe Import
+  getImportStatus: () =>
+    apiGet<ImportStatusResponse>('/recipes/import/status'),
+
   parseUrl: (url: string) =>
     apiPost<ParseUrlResponse>('/recipes/import/parse-url', { url }),
 

@@ -315,6 +315,13 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess }: BulkIm
 
   // ========== DERIVED STATE ==========
 
+  // Dedupe ingredient matches *across* the entire batch by normalized name,
+  // so the reviewer only links "olive oil" once even if it appears in 8 recipes.
+  // We keep the highest-confidence match as the representative; sessionIds
+  // tracks which recipes share this ingredient so an update can be fanned out.
+  //
+  // Compare with ImportRecipeDialog.handleProceedToIngredients (~line 455)
+  // which has no dedup — single-recipe flow only ever has one session.
   // Get all ingredient matches deduplicated across recipes
   const deduplicatedIngredients = (() => {
     const grouped = new Map<string, { matches: IngredientMatch[]; sessionIds: string[]; recipeCount: number }>();

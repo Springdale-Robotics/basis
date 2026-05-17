@@ -5,19 +5,6 @@ import type { ParsedRecipe, ParsedIngredient, IngredientMatch, RecipeInstruction
 import { matchIngredients } from './ingredient-matching.service.js';
 import { normalizeIngredientName } from './ingredient-matching.service.js';
 import { Errors } from '../../lib/errors.js';
-import { resolveUnit, getUnit } from '../../lib/units.js';
-
-// Ingredient parsing regex patterns
-const INGREDIENT_PATTERNS = {
-  // Match "2 cups flour" or "1/2 tsp salt"
-  quantityUnitName: /^(\d+(?:[\/\.]\d+)?(?:\s*-\s*\d+(?:[\/\.]\d+)?)?)\s+([a-zA-Z]+\.?)?\s*(.+)$/i,
-  // Match "2 eggs" (no unit)
-  quantityName: /^(\d+(?:[\/\.]\d+)?(?:\s*-\s*\d+(?:[\/\.]\d+)?)?)\s+(.+)$/i,
-  // Fractional quantities
-  fraction: /(\d+)\s*\/\s*(\d+)/g,
-  // Mixed number like "1 1/2"
-  mixedNumber: /^(\d+)\s+(\d+)\s*\/\s*(\d+)/,
-};
 
 // Unicode fraction mapping
 const UNICODE_FRACTIONS: Record<string, number> = {
@@ -48,18 +35,6 @@ const INGREDIENT_GROUP_PATTERNS = [
 ];
 
 /**
- * Check if a string is a recognized unit (built-in key or alias).
- * Returns the canonical key if recognized, or null if unknown.
- */
-function recognizeUnit(input: string): string | null {
-  const resolved = resolveUnit(input);
-  // resolveUnit returns the input lowercased if not recognized.
-  // If the resolved key maps to a known unit definition, it's recognized.
-  if (getUnit(resolved)) return resolved;
-  return null;
-}
-
-/**
  * Convert Unicode fractions in a string to decimal representations
  */
 function convertUnicodeFractions(text: string): string {
@@ -80,45 +55,6 @@ function convertUnicodeFractions(text: string): string {
 }
 
 /**
- * Parse a fraction string like "1/2" into a decimal
- */
-function parseFraction(str: string): number {
-  // First convert any Unicode fractions
-  str = convertUnicodeFractions(str);
-
-  const mixedMatch = str.match(INGREDIENT_PATTERNS.mixedNumber);
-  if (mixedMatch) {
-    const whole = parseInt(mixedMatch[1]);
-    const num = parseInt(mixedMatch[2]);
-    const denom = parseInt(mixedMatch[3]);
-    return whole + num / denom;
-  }
-
-  if (str.includes('/')) {
-    const parts = str.split('/');
-    return parseInt(parts[0]) / parseInt(parts[1]);
-  }
-
-  return parseFloat(str);
-}
-
-/**
- * Parse a quantity string that may contain ranges like "2-3"
- */
-function parseQuantity(str: string): number {
-  let result: number;
-  // Handle ranges - take the average
-  if (str.includes('-')) {
-    const parts = str.split('-').map(p => parseFraction(p.trim()));
-    result = parts.reduce((a, b) => a + b, 0) / parts.length;
-  } else {
-    result = parseFraction(str);
-  }
-  // Round to 3 decimal places to avoid 0.333333333...
-  return Math.round(result * 1000) / 1000;
-}
-
-/**
  * Check if a line is an ingredient group header
  */
 function isIngredientGroupHeader(line: string): string | null {
@@ -133,92 +69,6 @@ function isIngredientGroupHeader(line: string): string | null {
     }
   }
   return null;
-}
-
-/**
- * Parse a single ingredient line into structured data
- */
-export function parseIngredientLine(line: string): ParsedIngredient {
-  let text = line.trim();
-
-  // Convert Unicode fractions first
-  text = convertUnicodeFractions(text);
-
-  // Remove common list prefixes like "- ", "• ", "* "
-  text = text.replace(/^[-•*]\s*/, '');
-
-  // Extract notes in parentheses (but save them — don't lose info)
-  let parenNotes: string | undefined;
-  const parenMatch = text.match(/\(([^)]+)\)/);
-  if (parenMatch) {
-    parenNotes = parenMatch[1];
-    text = text.replace(/\([^)]+\)/, '').trim();
-  }
-
-  // Try to match quantity + unit + name FIRST (before comma splitting)
-  let match = text.match(INGREDIENT_PATTERNS.quantityUnitName);
-  if (match) {
-    const [, quantityStr, unitStr, remainder] = match;
-    const unit = unitStr?.replace('.', '').toLowerCase();
-    const canonicalUnit = unit ? recognizeUnit(unit) : null;
-
-    if (canonicalUnit) {
-      // Split remainder on comma — after-comma is notes (e.g., "flour, sifted")
-      const commaIdx = remainder.indexOf(',');
-      let name = remainder.trim();
-      let notes = parenNotes;
-      if (commaIdx > -1) {
-        name = remainder.slice(0, commaIdx).trim();
-        const afterComma = remainder.slice(commaIdx + 1).trim();
-        notes = [parenNotes, afterComma].filter(Boolean).join(', ') || undefined;
-      }
-      return { name, quantity: parseQuantity(quantityStr), unit: canonicalUnit, notes };
-    }
-  }
-
-  // No recognized unit — try full text with comma as notes separator
-  // But only split on comma if it comes AFTER at least 2 words (avoids splitting "boneless, skinless chicken")
-  let notes = parenNotes;
-  let nameText = text;
-
-  // Look for comma-separated preparation notes at the end
-  // Pattern: "ingredient name, preparation" (e.g., "parsley, chopped")
-  // Heuristic: if after the last comma there are only 1-2 words that look like prep descriptors, treat as notes
-  const lastComma = text.lastIndexOf(',');
-  if (lastComma > -1) {
-    const afterLast = text.slice(lastComma + 1).trim();
-    const prepWords = ['chopped', 'diced', 'minced', 'sliced', 'grated', 'shredded', 'crushed', 'melted',
-      'softened', 'sifted', 'toasted', 'packed', 'divided', 'peeled', 'seeded', 'trimmed', 'halved',
-      'quartered', 'cubed', 'julienned', 'chiffonade', 'torn', 'crumbled', 'drained', 'rinsed',
-      'thawed', 'room temperature', 'at room temperature', 'to taste', 'optional', 'or more',
-      'plus more', 'for garnish', 'for serving', 'for topping'];
-    const isPrep = prepWords.some(w => afterLast.toLowerCase().startsWith(w));
-    if (isPrep) {
-      nameText = text.slice(0, lastComma).trim();
-      notes = [parenNotes, afterLast].filter(Boolean).join(', ') || undefined;
-    }
-  }
-
-  // Try quantity + name (no unit) on the cleaned text
-  match = nameText.match(INGREDIENT_PATTERNS.quantityName);
-  if (match) {
-    const [, quantityStr, name] = match;
-    return { name: name.trim(), quantity: parseQuantity(quantityStr), notes };
-  }
-
-  // Also try the quantityUnitName pattern again on cleaned text (unit might be part of name)
-  match = nameText.match(INGREDIENT_PATTERNS.quantityUnitName);
-  if (match) {
-    const [, quantityStr, unitStr, name] = match;
-    return {
-      name: (unitStr ? unitStr + ' ' : '') + name.trim(),
-      quantity: parseQuantity(quantityStr),
-      notes,
-    };
-  }
-
-  // Just return the text as the name
-  return { name: nameText, notes };
 }
 
 // Enhanced section header patterns
@@ -345,7 +195,9 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
     }
   }
 
-  // Parse ingredients with grouping support
+  // Collect raw ingredient lines (with grouping). Per-line parsing happens
+  // downstream via parseIngredientLinesViaCRF — this function only handles
+  // structural detection.
   const ingredients: ParsedIngredient[] = [];
   const ingredientGroups: IngredientGroup[] = [];
   let currentGroup: IngredientGroup | null = null;
@@ -367,12 +219,14 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
         continue;
       }
 
-      const parsed = parseIngredientLine(line);
-      if (parsed.name.length > 0) {
-        ingredients.push(parsed);
-        if (currentGroup) {
-          currentGroup.ingredients.push(parsed);
-        }
+      // Strip list-prefix markers but otherwise preserve the raw line for
+      // the downstream parser to handle.
+      const cleaned = line.replace(/^[-•*]\s*/, '').trim();
+      if (cleaned.length === 0) continue;
+      const raw: ParsedIngredient = { name: cleaned, quantity: undefined, unit: undefined };
+      ingredients.push(raw);
+      if (currentGroup) {
+        currentGroup.ingredients.push(raw);
       }
     }
 
@@ -631,6 +485,70 @@ function parseRecipeFileFormat(text: string): {
   return { isRecipeFile: false };
 }
 
+// LLM fallback kicks in when regex/CRF produce confidence below this threshold.
+// Applied uniformly across text and URL import paths.
+const FALLBACK_CONFIDENCE_THRESHOLD = 0.6;
+
+// Confidence floor applied after a successful CRF re-parse — CRF is more
+// reliable than regex for ingredient line structure.
+const CRF_CONFIDENCE_FLOOR = 0.75;
+
+export interface IngredientParseOutcome {
+  ingredients: ParsedIngredient[];
+  /** True when CRF couldn't parse — ingredients are unparsed raw text. */
+  degraded: boolean;
+}
+
+/** Warning string surfaced when ingredient parsing degrades. */
+export const INGREDIENT_PARSER_UNAVAILABLE_WARNING =
+  'Ingredient parser unavailable — quantities and units were not extracted. Please review each ingredient before saving.';
+
+/**
+ * Parse raw ingredient lines into structured ingredients via CRF.
+ *
+ * On CRF failure we deliberately do NOT fall back to a regex parser — silent
+ * regex output produces confident-looking-but-wrong ingredients, which is
+ * worse than knowing parsing failed. Instead we return raw lines as
+ * ingredient names with `degraded: true`, and the caller surfaces a warning
+ * so the user can fix things by hand or re-import once the parser is back.
+ *
+ * Optional `fallbackIngredients` (parallel-indexed) lets the caller preserve
+ * notes from a prior parser (e.g., a JSON-LD URL parser) when CRF doesn't
+ * extract any.
+ */
+export async function parseIngredientLinesViaCRF(
+  rawLines: string[],
+  fallbackIngredients?: ParsedIngredient[],
+): Promise<IngredientParseOutcome> {
+  if (rawLines.length === 0) return { ingredients: [], degraded: false };
+  try {
+    const { parseIngredientsWithCRF } = await import('../../services/crf-ingredient-parser.js');
+    const crfResults = await parseIngredientsWithCRF(rawLines);
+    if (crfResults.length > 0) {
+      return {
+        ingredients: crfResults.map((r, i) => ({
+          name: r.name,
+          quantity: r.quantity ?? undefined,
+          unit: r.unit ?? undefined,
+          notes: r.notes ?? fallbackIngredients?.[i]?.notes ?? undefined,
+        })),
+        degraded: false,
+      };
+    }
+  } catch (err) {
+    console.warn('[Recipe Import] CRF unavailable — returning raw lines:', err);
+  }
+  return {
+    ingredients: rawLines.map((line, i) => ({
+      name: line,
+      quantity: undefined,
+      unit: undefined,
+      notes: fallbackIngredients?.[i]?.notes ?? undefined,
+    })),
+    degraded: true,
+  };
+}
+
 /**
  * Process raw text content for an import session
  */
@@ -661,57 +579,30 @@ export async function processImportSession(
     confidence = 1.0; // High confidence for structured .recipe files
     finalParseMethod = 'json-ld'; // Treat as structured data
   } else {
-    // Parse the recipe text with confidence (regex-based structure detection)
+    // Step 1: structural parse (sections, metadata, raw ingredient lines).
     const textParseResult = parseRecipeTextWithConfidence(rawText);
     parsedRecipe = textParseResult.recipe;
     confidence = textParseResult.confidence;
     warnings = textParseResult.warnings;
 
-    // CRF enhancement: re-parse ingredient lines with NLP model for better accuracy
-    // Extract raw ingredient lines from the original text for CRF processing
+    // Step 2: parse each raw ingredient line via CRF. On degradation, the
+    // ingredient names stay as raw text and a warning is added so the user
+    // knows quantities/units weren't extracted.
     if (parsedRecipe.ingredients && parsedRecipe.ingredients.length > 0) {
-      const { parseIngredientsWithCRF } = await import('../../services/crf-ingredient-parser.js');
-
-      // Re-extract raw ingredient lines from original text
-      // Find the ingredients section using same patterns as parseRecipeText
-      const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-      const rawIngredientLines: string[] = [];
-      let inIngredients = false;
-
-      for (const line of lines) {
-        const lower = line.toLowerCase();
-        if (/^ingredients?$/i.test(lower) || /^what you'?ll need$/i.test(lower)) {
-          inIngredients = true;
-          continue;
-        }
-        if (inIngredients && (/^instructions?$/i.test(lower) || /^directions?$/i.test(lower) || /^method$/i.test(lower) || /^steps?$/i.test(lower))) {
-          break;
-        }
-        if (inIngredients && line.length > 0) {
-          // Skip group headers like "For the sauce:"
-          if (/^for\s+/i.test(line) || /^[A-Z][^:]*:\s*$/.test(line)) continue;
-          rawIngredientLines.push(line.replace(/^[-•*]\s*/, ''));
-        }
-      }
-
-      // If we found raw lines, parse them with CRF
-      if (rawIngredientLines.length > 0) {
-        const crfResults = await parseIngredientsWithCRF(rawIngredientLines);
-        if (crfResults.length > 0) {
-          parsedRecipe.ingredients = crfResults.map(r => ({
-            name: r.name,
-            quantity: r.quantity ?? undefined,
-            unit: r.unit ?? undefined,
-            notes: r.notes ?? undefined,
-          }));
-          finalParseMethod = 'crf';
-          confidence = Math.max(confidence, 0.75);
-        }
+      const rawIngredientLines = parsedRecipe.ingredients.map((i) => i.name);
+      const outcome = await parseIngredientLinesViaCRF(rawIngredientLines);
+      parsedRecipe.ingredients = outcome.ingredients;
+      if (outcome.degraded) {
+        warnings.push(INGREDIENT_PARSER_UNAVAILABLE_WARNING);
+        // Don't claim CRF parse method when CRF failed.
+      } else {
+        finalParseMethod = 'crf';
+        confidence = Math.max(confidence, CRF_CONFIDENCE_FLOOR);
       }
     }
 
     // LLM fallback: if parsing still produced low confidence, try AI
-    if (confidence < 0.6) {
+    if (confidence < FALLBACK_CONFIDENCE_THRESHOLD) {
       try {
         const { parseRecipeWithLLM, llmResultToImportFormat } = await import('../../services/llm-recipe-parser.js');
         const llmResult = await parseRecipeWithLLM(rawText);
@@ -771,11 +662,11 @@ export async function processUrlImportSession(
   // CRF enhancement on URL-parsed ingredients
   // JSON-LD ingredient strings are perfect CRF input (e.g., "4 boneless, skinless chicken breasts")
   if (result.parsedRecipe.ingredients && result.parsedRecipe.ingredients.length > 0) {
-    const { parseIngredientsWithCRF } = await import('../../services/crf-ingredient-parser.js');
+    const originalIngredients = result.parsedRecipe.ingredients;
     // Reconstruct strings for CRF — exclude notes (parenthetical/prep info)
     // to avoid polluting the ingredient name (e.g., "about 3 chicken breasts"
     // from "(about 3 chicken breasts)" would otherwise get merged into the name)
-    const rawLines = result.parsedRecipe.ingredients.map(ing => {
+    const rawLines = originalIngredients.map(ing => {
       const parts = [];
       if (ing.quantity) parts.push(String(ing.quantity));
       if (ing.unit) parts.push(ing.unit);
@@ -783,17 +674,36 @@ export async function processUrlImportSession(
       return parts.join(' ');
     });
 
-    const crfResults = await parseIngredientsWithCRF(rawLines);
-    if (crfResults.length > 0) {
-      const originalIngredients = result.parsedRecipe.ingredients!;
-      result.parsedRecipe.ingredients = crfResults.map((r, i) => ({
-        name: r.name,
-        quantity: r.quantity ?? undefined,
-        unit: r.unit ?? undefined,
-        // Merge: prefer CRF notes, fall back to original notes from URL parser
-        notes: r.notes ?? originalIngredients[i]?.notes ?? undefined,
-      }));
-      (result as any).parseMethod = 'crf';
+    const outcome = await parseIngredientLinesViaCRF(rawLines, originalIngredients);
+    if (outcome.ingredients.length > 0) {
+      // For URL imports we keep the URL-parser ingredients on CRF failure —
+      // they're already structured (from JSON-LD/microdata) so the user is
+      // better served by what we had than by raw strings. Only swap when
+      // CRF actually re-parsed.
+      if (!outcome.degraded) {
+        result.parsedRecipe.ingredients = outcome.ingredients;
+        (result as any).parseMethod = 'crf';
+      } else {
+        result.warnings = [...(result.warnings || []), INGREDIENT_PARSER_UNAVAILABLE_WARNING];
+      }
+    }
+  }
+
+  // LLM fallback when the URL parser couldn't extract a confident recipe
+  // (e.g., heuristic strategy on a non-structured page). Mirrors the text
+  // path; uses the visible page text the URL parser already extracted.
+  if (result.confidence < FALLBACK_CONFIDENCE_THRESHOLD && result.pageText) {
+    try {
+      const { parseRecipeWithLLM, llmResultToImportFormat } = await import('../../services/llm-recipe-parser.js');
+      const llmResult = await parseRecipeWithLLM(result.pageText);
+      if (llmResult) {
+        const converted = llmResultToImportFormat(llmResult);
+        result.parsedRecipe = converted as ParsedRecipe;
+        (result as any).confidence = 0.85;
+        (result as any).parseMethod = 'llm';
+      }
+    } catch (err) {
+      console.warn('[Recipe Import] URL-path LLM fallback failed, keeping URL parser result:', err);
     }
   }
 

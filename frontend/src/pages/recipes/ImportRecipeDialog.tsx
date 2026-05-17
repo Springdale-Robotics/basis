@@ -452,6 +452,11 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
     return { itemId: result.item.id, itemName: result.item.name };
   }, [createItemMutation, importedCatalogItems]);
 
+  // Single-recipe ingredient review uses the per-session matches the backend
+  // already produced (one session per recipe, matches scoped to that session).
+  // No cross-recipe dedup is needed because there's only one recipe.
+  // Compare with BulkImportRecipeDialog.handleProceedToIngredients (~line 319)
+  // which dedupes across all recipes in the batch via normalizeIngredientName().
   const handleProceedToIngredients = useCallback(() => {
     if (session?.ingredientMatches) {
       // Attach catalogItem data from imported .recipe file if available

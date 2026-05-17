@@ -897,6 +897,40 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
 
   // ===== RECIPE IMPORT =====
 
+  // Report which optional parsing providers are available so the UI can
+  // warn users when LLM/CRF/OCR fallbacks aren't configured.
+  app.get(
+    '/import/status',
+    { preHandler: [authMiddleware, requireMember()] },
+    async () => {
+      const [{ getLLMProvider }, { isCRFParserAvailable }, { getAllProvidersStatus }] = await Promise.all([
+        import('../../services/llm-provider.js'),
+        import('../../services/crf-ingredient-parser.js'),
+        import('../image-parse/ai-providers/index.js'),
+      ]);
+
+      const llm = getLLMProvider();
+      const [crfAvailable, imageStatus] = await Promise.all([
+        isCRFParserAvailable(),
+        getAllProvidersStatus(),
+      ]);
+
+      return {
+        success: true,
+        data: {
+          llm: {
+            available: !!llm,
+            provider: llm?.name ?? null,
+          },
+          crf: {
+            available: crfAvailable,
+          },
+          image: imageStatus,
+        },
+      };
+    }
+  );
+
   // Preview URL parsing without creating session
   app.post(
     '/import/parse-url',
@@ -937,13 +971,33 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       const { text } = schema.parse(request.body);
 
       const result = parseRecipeTextWithConfidence(text);
+
+      // Run ingredient lines through CRF. parseRecipeText only returns raw
+      // strings as ingredient names; this turns them into structured
+      // ingredients before sending back to the client. If CRF is down, we
+      // surface a warning rather than silently regex-parsing.
+      let parseMethod: 'text' | 'crf' = 'text';
+      const warnings = [...result.warnings];
+      if (result.recipe.ingredients && result.recipe.ingredients.length > 0) {
+        const { parseIngredientLinesViaCRF, INGREDIENT_PARSER_UNAVAILABLE_WARNING } =
+          await import('./recipe-import.service.js');
+        const rawLines = result.recipe.ingredients.map((i) => i.name);
+        const outcome = await parseIngredientLinesViaCRF(rawLines);
+        result.recipe.ingredients = outcome.ingredients;
+        if (outcome.degraded) {
+          warnings.push(INGREDIENT_PARSER_UNAVAILABLE_WARNING);
+        } else {
+          parseMethod = 'crf';
+        }
+      }
+
       return {
         success: true,
         data: {
           parsedRecipe: result.recipe,
-          parseMethod: 'text',
+          parseMethod,
           confidence: result.confidence,
-          warnings: result.warnings,
+          warnings,
         },
       };
     }

@@ -1,6 +1,13 @@
 import * as cheerio from 'cheerio';
 import type { ParsedRecipe, ParsedIngredient, IngredientGroup } from '../../db/schema/recipes.js';
-import { parseIngredientLine as parseIngredient } from './recipe-import.service.js';
+// Raw-string emission. URL extractors return ingredients as
+// `{name: rawString}` only — the downstream session re-parses each via CRF
+// (see processUrlImportSession). Keeping URL parsing regex-free here means
+// CRF or LLM failures surface as warnings instead of confidently-wrong
+// regex output reaching the user.
+function rawIngredient(line: string): ParsedIngredient {
+  return { name: line.trim(), quantity: undefined, unit: undefined };
+}
 
 export type ParseMethod = 'json-ld' | 'recipe-clipper' | 'microdata' | 'heuristic';
 
@@ -9,20 +16,9 @@ export interface UrlParseResult {
   parseMethod: ParseMethod;
   confidence: number;
   warnings: string[];
+  /** Visible page text — kept for downstream LLM fallback when confidence is low. */
+  pageText?: string;
 }
-
-// Standard unit conversions for suggestions
-const STANDARD_CONVERSIONS: Record<string, Record<string, number>> = {
-  'cup': { 'ml': 236.588, 'tbsp': 16, 'tsp': 48, 'oz': 8 },
-  'tbsp': { 'ml': 14.787, 'tsp': 3, 'cup': 0.0625 },
-  'tsp': { 'ml': 4.929, 'tbsp': 0.333 },
-  'lb': { 'oz': 16, 'g': 453.592, 'kg': 0.454 },
-  'oz': { 'g': 28.3495, 'lb': 0.0625 },
-  'kg': { 'g': 1000, 'lb': 2.205 },
-  'g': { 'kg': 0.001, 'oz': 0.0353 },
-  'l': { 'ml': 1000, 'cup': 4.227 },
-  'ml': { 'l': 0.001, 'tsp': 0.203, 'tbsp': 0.068 },
-};
 
 /**
  * Fetch and parse a recipe from a URL
@@ -51,37 +47,52 @@ export async function parseRecipeFromUrl(url: string): Promise<UrlParseResult> {
 
   const $ = cheerio.load(html);
 
+  // Extract visible page text once — passed back on the result so a downstream
+  // LLM fallback can consume it without re-fetching the URL.
+  const pageText = extractVisibleText($);
+
   // Strategy 1: JSON-LD Schema.org
   const jsonLdResult = tryParseJsonLd($, url, warnings);
   if (jsonLdResult && jsonLdResult.confidence >= 0.8) {
-    return jsonLdResult;
+    return { ...jsonLdResult, pageText };
   }
 
   // Strategy 2: RecipeClipper (ML-based extraction)
   const clipperResult = await tryRecipeClipper(html, url, warnings);
   if (clipperResult && clipperResult.confidence >= 0.7) {
-    return clipperResult;
+    return { ...clipperResult, pageText };
   }
 
   // Strategy 3: Microdata
   const microdataResult = tryParseMicrodata($, url, warnings);
   if (microdataResult && microdataResult.confidence >= 0.6) {
-    return microdataResult;
+    return { ...microdataResult, pageText };
   }
 
   // Strategy 4: Heuristic fallback
   const heuristicResult = tryHeuristicParse($, url, warnings);
   if (heuristicResult) {
-    return heuristicResult;
+    return { ...heuristicResult, pageText };
   }
 
   // Return best result we have or throw
   const bestResult = jsonLdResult || clipperResult || microdataResult;
   if (bestResult) {
-    return bestResult;
+    return { ...bestResult, pageText };
   }
 
   throw new Error('Could not parse recipe from URL. The page may not contain a recognizable recipe format.');
+}
+
+/**
+ * Pull visible text from a cheerio document — strips <script>, <style>,
+ * <nav>, <header>, <footer> and collapses whitespace so the result is a
+ * reasonable input for downstream LLM parsing.
+ */
+function extractVisibleText($: cheerio.CheerioAPI): string {
+  const $copy = cheerio.load($.html());
+  $copy('script, style, nav, header, footer, noscript, iframe, svg').remove();
+  return $copy('body').text().replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /**
@@ -195,7 +206,7 @@ async function tryRecipeClipper(html: string, sourceUrl: string, warnings: strin
           )
         : [],
       ingredients: Array.isArray(clipped.ingredients)
-        ? clipped.ingredients.map((i: string) => parseIngredient(i))
+        ? clipped.ingredients.map((i: string) => rawIngredient(i))
         : [],
       sourceUrl,
     };
@@ -250,7 +261,7 @@ function tryParseMicrodata($: cheerio.CheerioAPI, sourceUrl: string, warnings: s
       description: getName('description'),
       instructions: getAll('recipeInstructions')
         .flatMap(i => i.split('\n').filter(Boolean)),
-      ingredients: getAll('recipeIngredient').map(i => parseIngredient(i)),
+      ingredients: getAll('recipeIngredient').map(i => rawIngredient(i)),
       sourceUrl,
     };
 
@@ -303,7 +314,7 @@ function tryHeuristicParse($: cheerio.CheerioAPI, sourceUrl: string, warnings: s
       if (section.length) {
         const items = section.find('li, p').map((_, el) => $(el).text().trim()).get();
         if (items.length > 0) {
-          ingredients = items.filter(Boolean).map(i => parseIngredient(i));
+          ingredients = items.filter(Boolean).map(i => rawIngredient(i));
           break;
         }
       }
@@ -513,7 +524,7 @@ function parseIngredients(value: unknown): ParsedIngredient[] {
     return value
       .map((item) => {
         if (typeof item === 'string') {
-          return parseIngredient(item);
+          return rawIngredient(item);
         }
         return null;
       })
@@ -521,85 +532,6 @@ function parseIngredients(value: unknown): ParsedIngredient[] {
   }
 
   return [];
-}
-
-// Unicode fraction mapping
-const UNICODE_FRACTIONS: Record<string, number> = {
-  '½': 0.5,
-  '⅓': 1/3,
-  '⅔': 2/3,
-  '¼': 0.25,
-  '¾': 0.75,
-  '⅕': 0.2,
-  '⅖': 0.4,
-  '⅗': 0.6,
-  '⅘': 0.8,
-  '⅙': 1/6,
-  '⅚': 5/6,
-  '⅐': 1/7,
-  '⅛': 0.125,
-  '⅜': 0.375,
-  '⅝': 0.625,
-  '⅞': 0.875,
-  '⅑': 1/9,
-  '⅒': 0.1,
-};
-
-const UNITS = new Set([
-  'cup', 'cups', 'c',
-  'tablespoon', 'tablespoons', 'tbsp', 'tbs', 'T',
-  'teaspoon', 'teaspoons', 'tsp', 't',
-  'ounce', 'ounces', 'oz',
-  'pound', 'pounds', 'lb', 'lbs',
-  'gram', 'grams', 'g', 'gm',
-  'kilogram', 'kilograms', 'kg',
-  'milliliter', 'milliliters', 'ml', 'mL',
-  'liter', 'liters', 'l', 'L', 'litre', 'litres',
-  'piece', 'pieces', 'pcs', 'pc',
-  'clove', 'cloves',
-  'bunch', 'bunches',
-  'head', 'heads',
-  'can', 'cans', 'tin', 'tins',
-  'package', 'packages', 'pkg',
-  'slice', 'slices',
-  'stick', 'sticks',
-  'pinch', 'pinches',
-  'dash', 'dashes',
-  'handful', 'handfuls',
-  'large', 'medium', 'small',
-  'sprig', 'sprigs',
-  'stalk', 'stalks',
-]);
-
-// parseIngredientLine is imported from recipe-import.service.ts as parseIngredient
-
-function parseQuantity(str: string): number {
-  // Handle ranges - take the average
-  if (str.includes('-')) {
-    const parts = str.split('-').map(p => parseFraction(p.trim()));
-    return parts.reduce((a, b) => a + b, 0) / parts.length;
-  }
-
-  return parseFraction(str);
-}
-
-function parseFraction(str: string): number {
-  // Mixed number like "1 1/2"
-  const mixedMatch = str.match(/^(\d+)\s+(\d+)\s*\/\s*(\d+)/);
-  if (mixedMatch) {
-    const whole = parseInt(mixedMatch[1]);
-    const num = parseInt(mixedMatch[2]);
-    const denom = parseInt(mixedMatch[3]);
-    return whole + num / denom;
-  }
-
-  // Simple fraction like "1/2"
-  if (str.includes('/')) {
-    const parts = str.split('/');
-    return parseInt(parts[0]) / parseInt(parts[1]);
-  }
-
-  return parseFloat(str);
 }
 
 /**

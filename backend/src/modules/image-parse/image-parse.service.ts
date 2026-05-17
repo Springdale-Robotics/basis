@@ -246,6 +246,25 @@ export async function processImageWithAI(sessionId: string, householdId: string)
         parsedContent = parseFromRawText(detectedType, rawText);
         warnings.push('No structured data from AI, using heuristic parsing');
 
+        // The recipe heuristic emits raw ingredient strings only. Run them
+        // through CRF so the user sees structured quantities/units when the
+        // parser is available; degrade gracefully with a warning otherwise.
+        if (parsedContent.type === 'recipe' && parsedContent.data.ingredients?.length) {
+          const { parseIngredientLinesViaCRF, INGREDIENT_PARSER_UNAVAILABLE_WARNING } =
+            await import('../recipes/recipe-import.service.js');
+          const rawLines = parsedContent.data.ingredients.map((i) => i.name);
+          const outcome = await parseIngredientLinesViaCRF(rawLines);
+          parsedContent.data.ingredients = outcome.ingredients.map((ing) => ({
+            name: ing.name,
+            quantity: ing.quantity,
+            unit: ing.unit,
+            confidence: outcome.degraded ? 0 : 0.75,
+          }));
+          if (outcome.degraded) {
+            warnings.push(INGREDIENT_PARSER_UNAVAILABLE_WARNING);
+          }
+        }
+
         logger.info({
           sessionId,
           detectedType,
