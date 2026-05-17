@@ -226,7 +226,7 @@ export interface Recipe {
   imageMimeType?: string;
   imageWidth?: number;
   imageHeight?: number;
-  servings: number;
+  servings: number | null;
   prepTime?: number;
   cookTime?: number;
   prepTimeMinutes?: number;

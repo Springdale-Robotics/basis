@@ -68,7 +68,7 @@ export type EventFormData = z.infer<typeof eventFormSchema>;
 export const recipeFormSchema = z.object({
   title: z.string().min(1, 'Title is required').max(255),
   description: z.string().optional(),
-  servings: z.number().min(1, 'Servings must be at least 1'),
+  servings: z.number().min(1, 'Servings must be at least 1').optional(),
   prepTime: z.number().min(0).optional(),
   cookTime: z.number().min(0).optional(),
   prepTimeMinutes: z.number().min(0).optional(),

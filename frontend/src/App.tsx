@@ -42,7 +42,7 @@ export function App() {
   return (
     <QueryProvider>
       <ThemeProvider defaultTheme="system" storageKey="homemanager-theme">
-        <BrowserRouter>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <AuthProvider>
             <WebSocketProvider>
               <Routes>

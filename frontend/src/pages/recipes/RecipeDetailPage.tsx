@@ -25,11 +25,20 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { RecipeForm, type RecipeImageChange } from '@/components/recipes/RecipeForm';
 import { EditGate } from '@/components/permissions';
+import { AddToMealPlanDialog } from './AddToMealPlanDialog';
+import { ShoppingCart } from 'lucide-react';
 import { recipesApi } from '@/api/recipes';
 import { inventoryApi } from '@/api/inventory';
 import { useState, useMemo } from 'react';
 import type { RecipeFormData } from '@/types/forms';
 import { toast } from '@/hooks/useToast';
+import { useRecipeWithIngredients } from '@/hooks/useRecipeWithIngredients';
+import {
+  getIngredientDisplayName,
+  getStockSummary,
+  roundQuantity,
+  scaleQuantity,
+} from '@/lib/recipe-display';
 
 export function RecipeDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -37,33 +46,10 @@ export function RecipeDetailPage() {
   const queryClient = useQueryClient();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [editFormOpen, setEditFormOpen] = useState(false);
+  const [addToMealPlanOpen, setAddToMealPlanOpen] = useState(false);
   const [scaledServings, setScaledServings] = useState<number | null>(null);
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['recipes', id],
-    queryFn: () => recipesApi.get(id!),
-    enabled: !!id,
-  });
-
-  // Merge ingredients from separate API response into recipe object
-  // Memoize to prevent useEffect in RecipeForm from resetting on every render
-  const recipe = useMemo(() => {
-    if (!data?.recipe) return undefined;
-    return {
-      ...data.recipe,
-      ingredients: (data.ingredients || []).map((ing) => ({
-        id: (ing as any).id || crypto.randomUUID(),
-        name: ing.name, // Always use the original recipe text
-        linkedItemName: ing.linkedItemName || null,
-        amount: Number(ing.quantity) || 0,
-        unit: ing.unit || '',
-        notes: ing.notes,
-        optional: false,
-        inventoryItemId: ing.inventoryItemId,
-        groupName: ing.groupName,
-      })),
-    };
-  }, [data]);
+  const { recipe, isLoading } = useRecipeWithIngredients(id);
 
   // Fetch stock data for ingredient availability
   const { data: stockData } = useQuery({
@@ -158,8 +144,44 @@ export function RecipeDetailPage() {
     },
   });
 
+  const addAllToShoppingListMutation = useMutation({
+    mutationFn: async () => {
+      if (!recipe) return { added: 0 };
+      const ingredients = recipe.ingredients ?? [];
+      await Promise.all(
+        ingredients.map((ing) =>
+          inventoryApi.addToShoppingList(
+            ing.inventoryItemId
+              ? {
+                  itemId: ing.inventoryItemId,
+                  quantity: ing.amount || undefined,
+                  unit: ing.unit || undefined,
+                }
+              : {
+                  customName: getIngredientDisplayName(ing),
+                  quantity: ing.amount || undefined,
+                  unit: ing.unit || undefined,
+                },
+          ),
+        ),
+      );
+      return { added: ingredients.length };
+    },
+    onSuccess: ({ added }) => {
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'shopping-list'] });
+      toast({ title: 'Added to shopping list', description: `${added} ingredients added` });
+    },
+    onError: (error) => {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to add to shopping list',
+        variant: 'destructive',
+      });
+    },
+  });
+
   const handleExportRecipe = async () => {
-    if (!recipe || !data?.ingredients) return;
+    if (!recipe) return;
 
     // Fetch inventory items to get catalog data for linked ingredients
     const inventoryItems = await inventoryApi.getItems();
@@ -178,11 +200,11 @@ export function RecipeDetailPage() {
         tags: recipe.tags,
         sourceUrl: recipe.sourceUrl,
         imageUrl: recipe.imageUrl,
-        ingredients: data.ingredients.map(ing => {
+        ingredients: recipe.ingredients.map(ing => {
           const linkedItem = ing.inventoryItemId ? itemsMap.get(ing.inventoryItemId) : null;
           return {
-            name: ing.linkedItemName || ing.name,
-            quantity: Number(ing.quantity) || 0,
+            name: getIngredientDisplayName(ing),
+            quantity: ing.amount,
             unit: ing.unit || '',
             notes: ing.notes,
             catalogItem: linkedItem ? {
@@ -296,37 +318,42 @@ export function RecipeDetailPage() {
                 <span>Cook: {recipe.cookTimeMinutes} min</span>
               </div>
             )}
-            <div className="flex items-center gap-1 text-sm">
-              <Users className="h-4 w-4 text-muted-foreground" />
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => setScaledServings(Math.max(1, (scaledServings ?? recipe.servings) - 1))}
-                >
-                  <Minus className="h-3 w-3" />
-                </Button>
-                <span className="font-medium min-w-[2ch] text-center">{scaledServings ?? recipe.servings}</span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => setScaledServings((scaledServings ?? recipe.servings) + 1)}
-                >
-                  <Plus className="h-3 w-3" />
-                </Button>
-                <span>servings</span>
-                {scaledServings && scaledServings !== recipe.servings && (
-                  <button
-                    className="text-xs text-muted-foreground hover:text-foreground ml-1"
-                    onClick={() => setScaledServings(null)}
-                  >
-                    (reset)
-                  </button>
-                )}
-              </div>
-            </div>
+            {(() => {
+              const displayedServings = scaledServings ?? recipe.servings ?? 1;
+              return (
+                <div className="flex items-center gap-1 text-sm">
+                  <Users className="h-4 w-4 text-muted-foreground" />
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => setScaledServings(Math.max(1, displayedServings - 1))}
+                    >
+                      <Minus className="h-3 w-3" />
+                    </Button>
+                    <span className="font-medium min-w-[2ch] text-center">{displayedServings}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => setScaledServings(displayedServings + 1)}
+                    >
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                    <span>servings</span>
+                    {scaledServings !== null && scaledServings !== recipe.servings && (
+                      <button
+                        className="text-xs text-muted-foreground hover:text-foreground ml-1"
+                        onClick={() => setScaledServings(null)}
+                      >
+                        (reset)
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Tags */}
@@ -368,12 +395,13 @@ export function RecipeDetailPage() {
               <div className="flex items-center justify-between">
                 <CardTitle>Ingredients</CardTitle>
                 {recipe.ingredients && recipe.ingredients.length > 0 && (() => {
-                  const linked = recipe.ingredients.filter(i => i.inventoryItemId);
-                  const have = linked.filter(i => stockedItemIds.has(i.inventoryItemId!));
-                  if (linked.length === 0) return null;
+                  const summary = getStockSummary(recipe.ingredients, stockedItemIds);
+                  if (summary.totalLinked === 0) return null;
+                  const unlinked = summary.totalIngredients - summary.totalLinked;
                   return (
                     <span className="text-xs text-muted-foreground">
-                      {have.length}/{linked.length} in stock
+                      {summary.haveLinked}/{summary.totalLinked} linked in stock
+                      {unlinked > 0 && ` (${unlinked} unlinked)`}
                     </span>
                   );
                 })()}
@@ -382,8 +410,9 @@ export function RecipeDetailPage() {
             <CardContent>
               <ul className="space-y-2">
                 {(recipe.ingredients ?? []).map((ingredient) => {
-                  const scale = scaledServings ? scaledServings / recipe.servings : 1;
-                  const scaledAmount = Math.round(ingredient.amount * scale * 100) / 100;
+                  const scaledAmount = roundQuantity(
+                    scaleQuantity(ingredient.amount, recipe.servings, scaledServings ?? recipe.servings),
+                  );
                   const hasItem = ingredient.inventoryItemId
                     ? stockedItemIds.has(ingredient.inventoryItemId)
                     : null;
@@ -395,7 +424,12 @@ export function RecipeDetailPage() {
                     <span className="font-medium shrink-0">
                       {scaledAmount} {ingredient.unit}
                     </span>
-                    <span className="flex-1">{ingredient.name}</span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block">{getIngredientDisplayName(ingredient)}</span>
+                      {ingredient.notes && (
+                        <span className="block text-xs text-muted-foreground">{ingredient.notes}</span>
+                      )}
+                    </span>
                     {ingredient.optional && (
                       <Badge variant="outline" className="text-xs shrink-0">
                         optional
@@ -470,10 +504,23 @@ export function RecipeDetailPage() {
 
           {/* Actions */}
           <Card>
-            <CardContent className="p-4">
-              <Button className="w-full" variant="outline">
+            <CardContent className="p-4 space-y-2">
+              <Button
+                className="w-full"
+                variant="outline"
+                onClick={() => setAddToMealPlanOpen(true)}
+              >
                 <Plus className="mr-2 h-4 w-4" />
                 Add to Meal Plan
+              </Button>
+              <Button
+                className="w-full"
+                variant="outline"
+                onClick={() => addAllToShoppingListMutation.mutate()}
+                disabled={addAllToShoppingListMutation.isPending || !recipe.ingredients?.length}
+              >
+                <ShoppingCart className="mr-2 h-4 w-4" />
+                Add to Shopping List
               </Button>
             </CardContent>
           </Card>
@@ -496,6 +543,13 @@ export function RecipeDetailPage() {
         recipe={recipe}
         onSubmit={(formData, imageChange) => updateMutation.mutate({ formData, imageChange })}
         isSubmitting={updateMutation.isPending}
+      />
+
+      <AddToMealPlanDialog
+        open={addToMealPlanOpen}
+        onOpenChange={setAddToMealPlanOpen}
+        recipeId={id!}
+        recipeTitle={recipe.title}
       />
     </div>
   );

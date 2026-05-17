@@ -19,6 +19,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
 import {
@@ -627,16 +628,24 @@ export function RecipeForm({
               description: recipe.description || '',
               prepTime: recipe.prepTime || recipe.prepTimeMinutes || 0,
               cookTime: recipe.cookTime || recipe.cookTimeMinutes || 0,
-              servings: recipe.servings || 4,
+              servings: recipe.servings ?? undefined,
               difficulty: recipe.difficulty || 'medium',
-              ingredients: (recipe.ingredients || []).map((ing) => ({
-                name: ing.name || '',
-                amount: typeof ing.amount === 'number' ? ing.amount : 0,
-                unit: normalizeUnit(ing.unit),
-                notes: ing.notes ?? undefined,
-                optional: ing.optional ?? undefined,
-                inventoryItemId: ing.inventoryItemId ?? undefined,
-              })),
+              ingredients: (recipe.ingredients || []).map((ing) => {
+                const unit = normalizeUnit(ing.unit);
+                const amount = typeof ing.amount === 'number' ? ing.amount : 0;
+                // Synthesize a rawText line so the Ingredients step textbox
+                // is populated when editing an existing recipe.
+                const rawText = [amount || '', unit, ing.name].filter(Boolean).join(' ').trim();
+                return {
+                  name: ing.name || '',
+                  amount,
+                  unit,
+                  notes: ing.notes ?? undefined,
+                  optional: ing.optional ?? undefined,
+                  inventoryItemId: ing.inventoryItemId ?? undefined,
+                  rawText,
+                };
+              }),
               instructions: (recipe.instructions || []).map((inst, idx) => ({
                 step: inst.step ?? idx + 1,
                 text: inst.text || '',
@@ -667,6 +676,26 @@ export function RecipeForm({
         setCurrentImage(recipe.imageUrl);
       } else {
         setCurrentImage(null);
+      }
+      // When editing an existing recipe, pre-populate parse-link state from
+      // existing ingredient links so we don't fire the parse API on Continue.
+      if (recipe?.ingredients?.length) {
+        const items: ParseLinkItem[] = recipe.ingredients.map((ing) => ({
+          originalText: [ing.amount || '', normalizeUnit(ing.unit), ing.name].filter(Boolean).join(' ').trim(),
+          parsedName: ing.name || '',
+          parsedQuantity: ing.amount,
+          parsedUnit: normalizeUnit(ing.unit),
+          parsedNotes: ing.notes,
+          action: ing.inventoryItemId ? 'link' : 'create',
+          suggestedName: ing.linkedItemName || ing.name || '',
+          linkedItemId: ing.inventoryItemId,
+          linkedItemName: ing.linkedItemName ?? undefined,
+        }));
+        setParseLinkItems(items);
+        setHasParsed(true);
+      } else {
+        setParseLinkItems([]);
+        setHasParsed(false);
       }
     }
   }, [open, recipe, reset]);
@@ -773,6 +802,11 @@ export function RecipeForm({
       <DialogContent className="sm:max-w-[700px] max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle>{isEditing ? 'Edit Recipe' : 'New Recipe'}</DialogTitle>
+          <DialogDescription>
+            {isEditing
+              ? 'Update recipe details, ingredients, and instructions.'
+              : 'Enter details for a new recipe.'}
+          </DialogDescription>
         </DialogHeader>
 
         {/* Step indicator */}

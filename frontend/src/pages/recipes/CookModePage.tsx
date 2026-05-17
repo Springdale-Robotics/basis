@@ -1,6 +1,7 @@
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import { useState, useEffect } from 'react';
+import { useRecipeWithIngredients } from '@/hooks/useRecipeWithIngredients';
+import { getIngredientDisplayName } from '@/lib/recipe-display';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -24,11 +25,11 @@ import { Checkbox } from '@/components/ui/checkbox';
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
-import { recipesApi } from '@/api/recipes';
 import { useCookingSession } from '@/hooks/useCookingSession';
 import { useTimers } from '@/hooks/useTimers';
 import { cn } from '@/lib/utils';
@@ -47,15 +48,7 @@ export function CookModePage() {
   const [cookingMode, setCookingMode] = useState<CookingMode>('linear');
   const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set());
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['recipes', id],
-    queryFn: () => recipesApi.get(id!),
-    enabled: !!id,
-  });
-
-  const recipe = data?.recipe;
-  // Use the separately returned ingredients which include inventoryItemId
-  const recipeIngredients = data?.ingredients;
+  const { recipe, isLoading } = useRecipeWithIngredients(id);
 
   const {
     session,
@@ -100,17 +93,7 @@ export function CookModePage() {
   }
 
   const instructions = recipe.instructions ?? [];
-  // Merge recipe ingredients with the separately fetched ones that have inventoryItemId
-  const ingredients = (recipeIngredients || recipe.ingredients || []).map((ing, idx) => ({
-    id: ing.id || `ing-${idx}`,
-    name: ing.name, // Use original recipe text, not linked item name
-    amount: typeof ing.quantity === 'string' ? parseFloat(ing.quantity) : (ing.quantity || ing.amount || 0),
-    unit: ing.unit || '',
-    notes: ing.notes,
-    optional: ing.optional ?? false,
-    inventoryItemId: ing.inventoryItemId,
-    groupName: ing.groupName || null,
-  }));
+  const ingredients = recipe.ingredients ?? [];
   const currentInstruction = instructions[currentStep];
   const effectiveTotalSteps = instructions.length || 1;
 
@@ -391,6 +374,7 @@ export function CookModePage() {
         <SheetContent side="bottom" className="h-[50vh]">
           <SheetHeader>
             <SheetTitle>Ingredients</SheetTitle>
+            <SheetDescription>What you'll need to cook this recipe.</SheetDescription>
           </SheetHeader>
           <div className="mt-4 overflow-y-auto">
             {(() => {
@@ -414,7 +398,12 @@ export function CookModePage() {
                         <span className="font-medium">
                           {ingredient.amount} {ingredient.unit}
                         </span>
-                        <span className="text-muted-foreground">{ingredient.name}</span>
+                        <span className="flex-1 min-w-0 text-muted-foreground">
+                          <span className="block">{getIngredientDisplayName(ingredient)}</span>
+                          {ingredient.notes && (
+                            <span className="block text-xs">{ingredient.notes}</span>
+                          )}
+                        </span>
                         {ingredient.optional && (
                           <Badge variant="outline" className="ml-auto text-xs">
                             Optional
