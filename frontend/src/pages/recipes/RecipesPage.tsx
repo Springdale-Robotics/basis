@@ -12,7 +12,6 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { RecipeForm, type RecipeImageChange } from '@/components/recipes/RecipeForm';
 import { ImportRecipeDialog } from './ImportRecipeDialog';
-import { BulkImportRecipeDialog } from './BulkImportRecipeDialog';
 import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
 import type { Recipe } from '@/types/models';
@@ -28,8 +27,6 @@ export function RecipesPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importDefaultTab, setImportDefaultTab] = useState<'text' | 'url' | 'file' | 'pdf' | 'image' | undefined>();
-  const [bulkImportOpen, setBulkImportOpen] = useState(false);
-  const [bulkInitialFiles, setBulkInitialFiles] = useState<File[] | undefined>();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
@@ -199,20 +196,6 @@ export function RecipesPage() {
         onOpenChange={setImportOpen}
         onSuccess={(recipeId) => navigate(`/recipes/${recipeId}`)}
         defaultTab={importDefaultTab}
-        onBatchTransition={(files) => {
-          setImportOpen(false);
-          setBulkInitialFiles(files);
-          setBulkImportOpen(true);
-        }}
-      />
-      <BulkImportRecipeDialog
-        open={bulkImportOpen}
-        onOpenChange={(open) => {
-          setBulkImportOpen(open);
-          if (!open) setBulkInitialFiles(undefined);
-        }}
-        onSuccess={() => queryClient.invalidateQueries({ queryKey: ['recipes'] })}
-        initialFiles={bulkInitialFiles}
       />
     </div>
   );

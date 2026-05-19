@@ -24,6 +24,7 @@ import { inventoryApi } from '@/api/inventory';
 import { cn } from '@/lib/utils';
 import { IngredientMatchRow } from './IngredientMatchRow';
 import { BulkIngredientActions } from './BulkIngredientActions';
+import { BulkImportRecipeDialog } from './BulkImportRecipeDialog';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
 import { useCategories } from '@/hooks/useCategories';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -81,6 +82,20 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
   const { isAdvanced } = useInventoryTier();
   const { categories } = useCategories();
   const [step, setStep] = useState<ImportStep>('source');
+  // When the user picks multiple files we render the batch flow inline
+  // inside this same dialog instead of opening a separate one. The optional
+  // `onBatchTransition` prop is the legacy escape hatch — if the host
+  // provides one, we honor it; otherwise we handle batch internally.
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchInitialFiles, setBatchInitialFiles] = useState<File[] | undefined>();
+  const enterBatchMode = (files: File[]) => {
+    if (onBatchTransition) {
+      onBatchTransition(files);
+      return;
+    }
+    setBatchInitialFiles(files);
+    setBatchMode(true);
+  };
 
   // Fetch existing inventory items for "link to existing" option
   const { data: existingItemsData } = useQuery({
@@ -338,6 +353,8 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     setImageProcessing(false);
     setImageError(null);
     setImageRawText(null);
+    setBatchMode(false);
+    setBatchInitialFiles(undefined);
     onOpenChange(false);
   }, [onOpenChange, defaultTab]);
 
@@ -353,8 +370,8 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     const files = Array.from(e.target.files ?? []);
     e.target.value = '';
     if (files.length === 0) return;
-    if (files.length > 1 && onBatchTransition) {
-      onBatchTransition(files);
+    if (files.length > 1) {
+      enterBatchMode(files);
       return;
     }
     const file = files[0];
@@ -569,6 +586,27 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
   const currentWarnings = parseWarnings.length > 0 ? parseWarnings : (session?.parseWarnings ?? []);
   const currentParseMethod = parseMethod ?? session?.parseMethod;
 
+  if (batchMode) {
+    return (
+      <Dialog open={open} onOpenChange={handleClose}>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle>Import Recipes</DialogTitle>
+          </DialogHeader>
+          <BulkImportRecipeDialog
+            embedded
+            open={open}
+            onOpenChange={(o) => { if (!o) handleClose(); }}
+            initialFiles={batchInitialFiles}
+            onSuccess={() => {
+              queryClient.invalidateQueries({ queryKey: ['recipes'] });
+            }}
+          />
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
@@ -763,20 +801,20 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                         <Input
                           type="file"
                           accept="image/jpeg,image/png,image/gif,image/webp,image/heic"
-                          multiple={!!onBatchTransition}
+                          multiple
                           onChange={(e) => {
                             const files = Array.from(e.target.files ?? []);
                             e.target.value = '';
                             if (files.length === 0) return;
-                            if (files.length > 1 && onBatchTransition) {
-                              onBatchTransition(files);
+                            if (files.length > 1) {
+                              enterBatchMode(files);
                               return;
                             }
                             handleImageUpload(files[0]);
                           }}
                         />
                         <p className="text-xs text-muted-foreground">
-                          {onBatchTransition
+                          {true
                             ? 'Pick one photo for a single recipe, or several to process them all at once. Supports JPG, PNG, GIF, WebP, HEIC (max 10MB each).'
                             : 'Take a photo of a handwritten recipe card, printed recipe, or screenshot. Supports JPG, PNG, GIF, WebP, HEIC (max 10MB).'}
                         </p>
@@ -799,7 +837,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                       <Input
                         type="file"
                         accept=".recipe"
-                        multiple={!!onBatchTransition}
+                        multiple
                         onChange={handleFileUpload}
                       />
                       <p className="text-xs text-muted-foreground">

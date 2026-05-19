@@ -46,9 +46,15 @@ interface BulkImportRecipeDialogProps {
    * and goes straight to image (or .recipe file) processing.
    */
   initialFiles?: File[];
+  /**
+   * Render without the outer <Dialog> wrapper — useful when this flow is
+   * embedded inside another dialog (e.g., the unified ImportRecipeDialog
+   * mounts this body when the user uploads multiple files).
+   */
+  embedded?: boolean;
 }
 
-export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialFiles }: BulkImportRecipeDialogProps) {
+export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialFiles, embedded = false }: BulkImportRecipeDialogProps) {
   const [mode, setMode] = useState<BulkMode | null>(null);
   const [step, setStep] = useState<BulkStep>('mode');
   const {
@@ -374,12 +380,13 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
   const failedCount = items.filter(i => i.status === 'failed').length;
   const processingCount = items.filter(i => i.status === 'processing' || i.status === 'uploading').length;
 
-  return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-        <DialogHeader className="flex-shrink-0">
-          <DialogTitle>Bulk Import Recipes</DialogTitle>
-        </DialogHeader>
+  const body = (
+    <>
+        {!embedded && (
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle>Bulk Import Recipes</DialogTitle>
+          </DialogHeader>
+        )}
 
         {/* Step indicator */}
         {step !== 'mode' && (
@@ -859,6 +866,17 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
             </div>
           )}
         </div>
+    </>
+  );
+
+  if (embedded) {
+    return open ? body : null;
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+        {body}
       </DialogContent>
     </Dialog>
   );
