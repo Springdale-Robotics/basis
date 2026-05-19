@@ -45,23 +45,36 @@ interface ImportRecipeDialogProps {
   onBatchTransition?: (files: File[]) => void;
 }
 
-// Map parse method to user-friendly name
-function getParseMethodLabel(method: ParseMethod | undefined): string {
-  switch (method) {
-    case 'json-ld': return 'Structured Data';
-    case 'recipe-clipper': return 'Smart Extraction';
-    case 'microdata': return 'Microdata';
-    case 'heuristic': return 'Pattern Matching';
-    case 'text': return 'Text Parsing';
-    default: return 'Unknown';
-  }
+// Translate parser internals (method + confidence) into a single plain-English
+// status the user can act on. The technical detail is preserved as a tooltip
+// so power users / debugging can still see it.
+interface ParseStatus {
+  label: string;
+  variant: 'default' | 'secondary' | 'destructive';
+  detail: string;
 }
 
-// Get confidence badge color
-function getConfidenceBadgeVariant(confidence: number): 'default' | 'secondary' | 'destructive' {
-  if (confidence >= 0.8) return 'default';
-  if (confidence >= 0.5) return 'secondary';
-  return 'destructive';
+function getParseStatus(method: ParseMethod | undefined, confidence: number | undefined): ParseStatus | null {
+  if (confidence === undefined && !method) return null;
+  const conf = confidence ?? 0;
+  const methodDetail = (() => {
+    switch (method) {
+      case 'json-ld': return 'structured data';
+      case 'recipe-clipper': return 'smart extraction';
+      case 'microdata': return 'microdata';
+      case 'heuristic': return 'pattern matching';
+      case 'text': return 'text parsing';
+      case 'crf': return 'ingredient parser';
+      case 'llm': return 'AI parsing';
+      default: return 'auto-detected';
+    }
+  })();
+  const detail = confidence !== undefined
+    ? `Parsed via ${methodDetail} (${Math.round(conf * 100)}% confidence)`
+    : `Parsed via ${methodDetail}`;
+  if (conf >= 0.8) return { label: 'Looks complete', variant: 'default', detail };
+  if (conf >= 0.5) return { label: 'Review carefully', variant: 'secondary', detail };
+  return { label: 'Some fields may be wrong', variant: 'destructive', detail };
 }
 
 export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, onBatchTransition }: ImportRecipeDialogProps) {
@@ -531,7 +544,9 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
   }, []);
 
   // Calculate step progress
-  // Step definitions per mode
+  // Step definitions per mode. Tier 1 (basic) users don't track an
+  // inventory catalog, so they skip the linking step entirely — recipes
+  // save with ingredients as free text.
   const steps: { key: ImportStep; label: string }[] = isAdvanced
     ? [
         { key: 'source', label: 'Source' },
@@ -542,7 +557,6 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     : [
         { key: 'source', label: 'Source' },
         { key: 'review', label: 'Review' },
-        { key: 'quick-catalog', label: 'Catalog' },
         { key: 'confirm', label: 'Save' },
       ];
 
@@ -680,18 +694,15 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                         <CardContent className="p-4 space-y-3">
                           <div className="flex items-center justify-between">
                             <h4 className="font-medium">{previewRecipe?.title}</h4>
-                            <div className="flex gap-2">
-                              {currentParseMethod && (
-                                <Badge variant="outline" className="text-xs">
-                                  {getParseMethodLabel(currentParseMethod)}
+                            {(() => {
+                              const status = getParseStatus(currentParseMethod, currentConfidence);
+                              if (!status) return null;
+                              return (
+                                <Badge variant={status.variant} className="text-xs" title={status.detail}>
+                                  {status.label}
                                 </Badge>
-                              )}
-                              {currentConfidence !== undefined && (
-                                <Badge variant={getConfidenceBadgeVariant(currentConfidence)} className="text-xs">
-                                  {Math.round(currentConfidence * 100)}% confidence
-                                </Badge>
-                              )}
-                            </div>
+                              );
+                            })()}
                           </div>
                           {previewRecipe?.description && (
                             <p className="text-sm text-muted-foreground line-clamp-2">
@@ -878,20 +889,19 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                 const recipe = session.parsedRecipe!;
                 return (
                 <>
-                  {/* Confidence and warnings banner */}
+                  {/* Status + warnings banner */}
                   {(currentConfidence !== undefined || currentWarnings.length > 0) && (
                     <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
                       <div className="flex items-center gap-2">
-                        {currentParseMethod && (
-                          <Badge variant="outline">
-                            {getParseMethodLabel(currentParseMethod)}
-                          </Badge>
-                        )}
-                        {currentConfidence !== undefined && (
-                          <Badge variant={getConfidenceBadgeVariant(currentConfidence)}>
-                            {Math.round(currentConfidence * 100)}% confidence
-                          </Badge>
-                        )}
+                        {(() => {
+                          const status = getParseStatus(currentParseMethod, currentConfidence);
+                          if (!status) return null;
+                          return (
+                            <Badge variant={status.variant} title={status.detail}>
+                              {status.label}
+                            </Badge>
+                          );
+                        })()}
                       </div>
                       <div className="flex items-center gap-2">
                         {currentWarnings.length > 0 && (
@@ -1132,51 +1142,11 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                         <ChevronRight className="ml-2 h-4 w-4" />
                       </Button>
                     ) : (
-                      <Button onClick={async () => {
-                        // Basic mode: auto-accept high confidence matches
-                        let autoAccepted: IngredientMatch[] = [];
-                        if (session?.ingredientMatches) {
-                          autoAccepted = session.ingredientMatches.map(m => {
-                            if (m.suggestions && m.suggestions.length > 0 && m.suggestions[0].confidence >= 0.8) {
-                              return {
-                                ...m,
-                                matchedItemId: m.suggestions[0].itemId,
-                                matchedItemName: m.suggestions[0].name,
-                                matchStatus: 'manual' as const,
-                                confidence: m.suggestions[0].confidence,
-                              };
-                            }
-                            return m;
-                          });
-                          setIngredientMatches(autoAccepted);
-                          const updates = autoAccepted.map(m => ({
-                            parsedName: m.parsedName,
-                            matchedItemId: m.matchedItemId,
-                            matchedItemName: m.matchedItemName,
-                            modifiedUnit: m.modifiedUnit,
-                          }));
-                          updateMatchesMutation.mutate(updates);
-                        }
-
-                        // Always go to catalog step — get suggestions for unmatched
-                        const unmatched = autoAccepted.filter(m => !m.matchedItemId);
-                        try {
-                          if (unmatched.length > 0) {
-                            const result = await recipesApi.suggestItems(
-                              unmatched.map(m => m.parsedName)
-                            );
-                            setCatalogSuggestions(result.suggestions.map(s => ({
-                              ...s,
-                              editedName: s.suggestedName,
-                              action: 'create' as const,
-                            })));
-                          } else {
-                            setCatalogSuggestions([]);
-                          }
-                        } catch {
-                          setCatalogSuggestions([]);
-                        }
-                        setStep('quick-catalog');
+                      <Button onClick={() => {
+                        // Tier 1 (basic): no catalog linking — ingredients
+                        // save as text. Skip straight to the confirm step.
+                        setCatalogSuggestions([]);
+                        setStep('confirm');
                       }}>
                         {nextStepLabel ? `Continue to ${nextStepLabel}` : 'Continue'}
                         <ChevronRight className="ml-2 h-4 w-4" />
@@ -1416,7 +1386,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
               </div>
 
               <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setStep(isAdvanced ? 'ingredients' : catalogSuggestions.length > 0 ? 'quick-catalog' : 'review')}>
+                <Button variant="outline" onClick={() => setStep(isAdvanced ? 'ingredients' : 'review')}>
                   Back
                 </Button>
                 <Button onClick={() => confirmMutation.mutate()} disabled={confirmMutation.isPending}>
