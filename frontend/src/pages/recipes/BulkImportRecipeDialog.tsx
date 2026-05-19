@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
 import {
   Camera, Link, FileText, FileUp, Upload, Loader2, AlertCircle, Check, X,
@@ -48,9 +48,16 @@ interface BulkImportRecipeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
+  /**
+   * Files pre-selected by the parent (typically because the user picked
+   * multiple files in the single-recipe Import dialog and we routed them
+   * here). When provided, the dialog skips the mode-picker / input step
+   * and goes straight to image (or .recipe file) processing.
+   */
+  initialFiles?: File[];
 }
 
-export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess }: BulkImportRecipeDialogProps) {
+export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialFiles }: BulkImportRecipeDialogProps) {
   const [mode, setMode] = useState<BulkMode | null>(null);
   const [step, setStep] = useState<BulkStep>('mode');
   const [items, setItems] = useState<BulkItem[]>([]);
@@ -418,6 +425,31 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess }: BulkIm
       parseAllMutation.mutate();
     }
   }, [mode, startImageProcessing, startUrlProcessing, parseAllMutation]);
+
+  // When the parent opens us with pre-selected files (multi-file upload was
+  // detected inside the single-recipe dialog), skip the mode picker and
+  // start processing immediately. Image files → image mode; .recipe JSON
+  // files → file mode.
+  useEffect(() => {
+    if (!open || !initialFiles?.length) return;
+    if (items.length > 0) return; // Don't double-load if user reopens
+    const firstFile = initialFiles[0];
+    const isImage = firstFile.type.startsWith('image/');
+    if (isImage) {
+      const dt = new DataTransfer();
+      initialFiles.forEach((f) => dt.items.add(f));
+      setMode('image');
+      setStep('input');
+      handleImageFiles(dt.files);
+    } else {
+      const dt = new DataTransfer();
+      initialFiles.forEach((f) => dt.items.add(f));
+      setMode('file');
+      setStep('input');
+      handleRecipeFiles(dt.files);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialFiles]);
 
   // Prepare items from URL input
   const prepareUrlItems = useCallback(() => {

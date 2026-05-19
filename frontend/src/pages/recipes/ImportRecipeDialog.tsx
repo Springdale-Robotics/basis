@@ -37,6 +37,12 @@ interface ImportRecipeDialogProps {
   onOpenChange: (open: boolean) => void;
   onSuccess?: (recipeId: string) => void;
   defaultTab?: 'text' | 'url' | 'file' | 'pdf' | 'image';
+  /**
+   * Called when the user selects multiple files in the image or file tab.
+   * Lets the host route through the bulk-import flow without making the user
+   * find a separate "Bulk Import" entry point.
+   */
+  onBatchTransition?: (files: File[]) => void;
 }
 
 // Map parse method to user-friendly name
@@ -58,7 +64,7 @@ function getConfidenceBadgeVariant(confidence: number): 'default' | 'secondary' 
   return 'destructive';
 }
 
-export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }: ImportRecipeDialogProps) {
+export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, onBatchTransition }: ImportRecipeDialogProps) {
   const { isAdvanced } = useInventoryTier();
   const { categories } = useCategories();
   const [step, setStep] = useState<ImportStep>('source');
@@ -331,8 +337,14 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
   }, [sourceType, previewUrlMutation, previewTextMutation]);
 
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    if (files.length === 0) return;
+    if (files.length > 1 && onBatchTransition) {
+      onBatchTransition(files);
+      return;
+    }
+    const file = files[0];
 
     try {
       const text = await file.text();
@@ -736,18 +748,26 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <Label>Upload a photo of a recipe</Label>
+                        <Label>Upload one or more recipe photos</Label>
                         <Input
                           type="file"
                           accept="image/jpeg,image/png,image/gif,image/webp,image/heic"
+                          multiple={!!onBatchTransition}
                           onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) handleImageUpload(file);
+                            const files = Array.from(e.target.files ?? []);
                             e.target.value = '';
+                            if (files.length === 0) return;
+                            if (files.length > 1 && onBatchTransition) {
+                              onBatchTransition(files);
+                              return;
+                            }
+                            handleImageUpload(files[0]);
                           }}
                         />
                         <p className="text-xs text-muted-foreground">
-                          Take a photo of a handwritten recipe card, printed recipe, or screenshot. Supports JPG, PNG, GIF, WebP, HEIC (max 10MB).
+                          {onBatchTransition
+                            ? 'Pick one photo for a single recipe, or several to process them all at once. Supports JPG, PNG, GIF, WebP, HEIC (max 10MB each).'
+                            : 'Take a photo of a handwritten recipe card, printed recipe, or screenshot. Supports JPG, PNG, GIF, WebP, HEIC (max 10MB).'}
                         </p>
                       </div>
                     )}
@@ -768,6 +788,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab }
                       <Input
                         type="file"
                         accept=".recipe"
+                        multiple={!!onBatchTransition}
                         onChange={handleFileUpload}
                       />
                       <p className="text-xs text-muted-foreground">

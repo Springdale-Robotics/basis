@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Grid, List, Search, Clock, Users, Upload, Camera, ChefHat, Layers } from 'lucide-react';
+import { Plus, Grid, List, Search, Clock, Users, Upload, ChefHat } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -29,6 +29,7 @@ export function RecipesPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [importDefaultTab, setImportDefaultTab] = useState<'text' | 'url' | 'file' | 'pdf' | 'image' | undefined>();
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [bulkInitialFiles, setBulkInitialFiles] = useState<File[] | undefined>();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
@@ -107,17 +108,9 @@ export function RecipesPage() {
         description="Your recipe collection"
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => { setImportDefaultTab('image'); setImportOpen(true); }}>
-              <Camera className="mr-2 h-4 w-4" />
-              Scan Image
-            </Button>
             <Button variant="outline" onClick={() => { setImportDefaultTab(undefined); setImportOpen(true); }}>
               <Upload className="mr-2 h-4 w-4" />
               Import
-            </Button>
-            <Button variant="outline" onClick={() => setBulkImportOpen(true)}>
-              <Layers className="mr-2 h-4 w-4" />
-              Bulk Import
             </Button>
             <Button onClick={() => setFormOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
@@ -206,11 +199,20 @@ export function RecipesPage() {
         onOpenChange={setImportOpen}
         onSuccess={(recipeId) => navigate(`/recipes/${recipeId}`)}
         defaultTab={importDefaultTab}
+        onBatchTransition={(files) => {
+          setImportOpen(false);
+          setBulkInitialFiles(files);
+          setBulkImportOpen(true);
+        }}
       />
       <BulkImportRecipeDialog
         open={bulkImportOpen}
-        onOpenChange={setBulkImportOpen}
+        onOpenChange={(open) => {
+          setBulkImportOpen(open);
+          if (!open) setBulkInitialFiles(undefined);
+        }}
         onSuccess={() => queryClient.invalidateQueries({ queryKey: ['recipes'] })}
+        initialFiles={bulkInitialFiles}
       />
     </div>
   );
