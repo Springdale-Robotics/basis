@@ -12,9 +12,16 @@ import {
   Download,
   Link2,
   Link2Off,
+  Check,
+  X,
+  Loader2,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -39,6 +46,45 @@ import {
   roundQuantity,
   scaleQuantity,
 } from '@/lib/recipe-display';
+import type { Recipe, RecipeIngredient, RecipeInstruction } from '@/types/models';
+
+/**
+ * Editable shape held by inline-edit mode. Mirrors the persistable subset of
+ * Recipe — fields that can't be changed inline (image, tags) go through the
+ * RecipeForm modal.
+ */
+interface RecipeDraft {
+  title: string;
+  description: string;
+  prepTimeMinutes: string;
+  cookTimeMinutes: string;
+  servings: string;
+  ingredients: Array<Pick<RecipeIngredient, 'id' | 'name' | 'amount' | 'unit' | 'notes' | 'inventoryItemId' | 'linkedItemName'>>;
+  instructions: Array<{ step: number; text: string }>;
+}
+
+function makeDraft(recipe: Recipe): RecipeDraft {
+  return {
+    title: recipe.title,
+    description: recipe.description ?? '',
+    prepTimeMinutes: recipe.prepTimeMinutes != null ? String(recipe.prepTimeMinutes) : '',
+    cookTimeMinutes: recipe.cookTimeMinutes != null ? String(recipe.cookTimeMinutes) : '',
+    servings: recipe.servings != null ? String(recipe.servings) : '',
+    ingredients: (recipe.ingredients ?? []).map((ing) => ({
+      id: ing.id,
+      name: ing.name,
+      amount: ing.amount,
+      unit: ing.unit,
+      notes: ing.notes,
+      inventoryItemId: ing.inventoryItemId,
+      linkedItemName: ing.linkedItemName,
+    })),
+    instructions: (recipe.instructions ?? []).map((inst: RecipeInstruction, idx) => ({
+      step: inst.step ?? idx + 1,
+      text: inst.text,
+    })),
+  };
+}
 
 export function RecipeDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -48,6 +94,8 @@ export function RecipeDetailPage() {
   const [editFormOpen, setEditFormOpen] = useState(false);
   const [addToMealPlanOpen, setAddToMealPlanOpen] = useState(false);
   const [scaledServings, setScaledServings] = useState<number | null>(null);
+  const [draft, setDraft] = useState<RecipeDraft | null>(null);
+  const editMode = draft !== null;
 
   const { recipe, isLoading } = useRecipeWithIngredients(id);
 
@@ -143,6 +191,58 @@ export function RecipeDetailPage() {
       navigate('/recipes');
     },
   });
+
+  // Inline-edit save — persists the draft via the same PATCH endpoint as the
+  // modal form, minus the image-change handling (image still goes through the
+  // RecipeForm modal).
+  const inlineSaveMutation = useMutation({
+    mutationFn: async (d: RecipeDraft) => {
+      const prep = d.prepTimeMinutes.trim() === '' ? undefined : Number(d.prepTimeMinutes);
+      const cook = d.cookTimeMinutes.trim() === '' ? undefined : Number(d.cookTimeMinutes);
+      const servings = d.servings.trim() === '' ? undefined : Number(d.servings);
+      await recipesApi.update(id!, {
+        title: d.title.trim() || 'Untitled Recipe',
+        description: d.description.trim() || undefined,
+        servings: servings && servings > 0 ? servings : undefined,
+        prepTimeMinutes: prep && prep > 0 ? prep : undefined,
+        cookTimeMinutes: cook && cook > 0 ? cook : undefined,
+        ingredients: d.ingredients
+          .filter((ing) => ing.name.trim())
+          .map((ing) => ({
+            name: ing.name.trim(),
+            quantity: ing.amount || undefined,
+            unit: ing.unit || undefined,
+            notes: ing.notes || undefined,
+            inventoryItemId: ing.inventoryItemId || undefined,
+          })),
+        instructions: d.instructions
+          .filter((inst) => inst.text.trim())
+          .map((inst, idx) => ({ step: idx + 1, text: inst.text.trim() })),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['recipes', id] });
+      setDraft(null);
+      toast({ title: 'Saved' });
+    },
+    onError: (error) => {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to save changes',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const enterEditMode = () => {
+    if (recipe) setDraft(makeDraft(recipe));
+  };
+  const cancelEdit = () => setDraft(null);
+  const saveEdit = () => { if (draft) inlineSaveMutation.mutate(draft); };
+
+  const patchDraft = (patch: Partial<RecipeDraft>) => {
+    setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+  };
 
   const addAllToShoppingListMutation = useMutation({
     mutationFn: async () => {
@@ -254,29 +354,52 @@ export function RecipeDetailPage() {
       </div>
 
       <PageHeader
-        title={recipe.title}
+        title={editMode ? 'Editing recipe' : recipe.title}
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" onClick={handleExportRecipe}>
-              <Download className="mr-2 h-4 w-4" />
-              Export
-            </Button>
-            <EditGate feature="recipes">
-              <Button variant="outline" onClick={() => setEditFormOpen(true)}>
-                <Edit className="mr-2 h-4 w-4" />
-                Edit
-              </Button>
-              <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete
-              </Button>
-            </EditGate>
-            <Button asChild>
-              <Link to={`/recipes/${id}/cook`}>
-                <PlayCircle className="mr-2 h-4 w-4" />
-                Start Cooking
-              </Link>
-            </Button>
+            {editMode ? (
+              <>
+                <Button variant="outline" onClick={cancelEdit} disabled={inlineSaveMutation.isPending}>
+                  <X className="mr-2 h-4 w-4" />
+                  Cancel
+                </Button>
+                <Button onClick={saveEdit} disabled={inlineSaveMutation.isPending}>
+                  {inlineSaveMutation.isPending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Check className="mr-2 h-4 w-4" />
+                  )}
+                  Save
+                </Button>
+                <Button variant="outline" onClick={() => setEditFormOpen(true)} title="Open full editor (image, tags, etc.)">
+                  <ImageIcon className="mr-2 h-4 w-4" />
+                  More…
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" onClick={handleExportRecipe}>
+                  <Download className="mr-2 h-4 w-4" />
+                  Export
+                </Button>
+                <EditGate feature="recipes">
+                  <Button variant="outline" onClick={enterEditMode}>
+                    <Edit className="mr-2 h-4 w-4" />
+                    Edit
+                  </Button>
+                  <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </Button>
+                </EditGate>
+                <Button asChild>
+                  <Link to={`/recipes/${id}/cook`}>
+                    <PlayCircle className="mr-2 h-4 w-4" />
+                    Start Cooking
+                  </Link>
+                </Button>
+              </>
+            )}
           </div>
         }
       />
@@ -299,12 +422,72 @@ export function RecipeDetailPage() {
             </div>
           )}
 
-          {/* Description */}
-          {recipe.description && (
-            <p className="text-muted-foreground">{recipe.description}</p>
+          {/* Title (edit mode) */}
+          {editMode && draft && (
+            <div className="space-y-2">
+              <Label htmlFor="inline-title">Title</Label>
+              <Input
+                id="inline-title"
+                value={draft.title}
+                onChange={(e) => patchDraft({ title: e.target.value })}
+                className="text-xl font-semibold"
+              />
+            </div>
           )}
 
-          {/* Info badges */}
+          {/* Description */}
+          {editMode && draft ? (
+            <div className="space-y-2">
+              <Label htmlFor="inline-description">Description</Label>
+              <Textarea
+                id="inline-description"
+                value={draft.description}
+                onChange={(e) => patchDraft({ description: e.target.value })}
+                placeholder="Optional description"
+                rows={3}
+              />
+            </div>
+          ) : (
+            recipe.description && (
+              <p className="text-muted-foreground">{recipe.description}</p>
+            )
+          )}
+
+          {/* Info row — editable in edit mode */}
+          {editMode && draft ? (
+            <div className="grid grid-cols-3 gap-3 max-w-md">
+              <div>
+                <Label htmlFor="inline-prep" className="text-xs">Prep (min)</Label>
+                <Input
+                  id="inline-prep"
+                  type="number"
+                  min={0}
+                  value={draft.prepTimeMinutes}
+                  onChange={(e) => patchDraft({ prepTimeMinutes: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="inline-cook" className="text-xs">Cook (min)</Label>
+                <Input
+                  id="inline-cook"
+                  type="number"
+                  min={0}
+                  value={draft.cookTimeMinutes}
+                  onChange={(e) => patchDraft({ cookTimeMinutes: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="inline-servings" className="text-xs">Servings</Label>
+                <Input
+                  id="inline-servings"
+                  type="number"
+                  min={1}
+                  value={draft.servings}
+                  onChange={(e) => patchDraft({ servings: e.target.value })}
+                />
+              </div>
+            </div>
+          ) : (
           <div className="flex flex-wrap items-center gap-4">
             {recipe.prepTimeMinutes && (
               <div className="flex items-center gap-1 text-sm">
@@ -355,6 +538,7 @@ export function RecipeDetailPage() {
               );
             })()}
           </div>
+          )}
 
           {/* Tags */}
           {recipe.tags && recipe.tags.length > 0 && (
@@ -373,16 +557,58 @@ export function RecipeDetailPage() {
               <CardTitle>Instructions</CardTitle>
             </CardHeader>
             <CardContent>
-              <ol className="space-y-4">
-                {(recipe.instructions ?? []).map((instruction, i) => (
-                  <li key={i} className="flex gap-4">
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-sm text-primary-foreground">
-                      {instruction.step}
-                    </span>
-                    <p className="pt-0.5">{instruction.text}</p>
-                  </li>
-                ))}
-              </ol>
+              {editMode && draft ? (
+                <div className="space-y-3">
+                  {draft.instructions.map((inst, i) => (
+                    <div key={i} className="flex gap-3 items-start">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-sm text-primary-foreground mt-1">
+                        {i + 1}
+                      </span>
+                      <Textarea
+                        value={inst.text}
+                        rows={2}
+                        onChange={(e) => {
+                          const next = draft.instructions.slice();
+                          next[i] = { ...next[i], text: e.target.value };
+                          patchDraft({ instructions: next });
+                        }}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="shrink-0 text-destructive hover:text-destructive"
+                        onClick={() => {
+                          const next = draft.instructions.filter((_, idx) => idx !== i);
+                          patchDraft({ instructions: next });
+                        }}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => patchDraft({
+                      instructions: [...draft.instructions, { step: draft.instructions.length + 1, text: '' }],
+                    })}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add step
+                  </Button>
+                </div>
+              ) : (
+                <ol className="space-y-4">
+                  {(recipe.instructions ?? []).map((instruction, i) => (
+                    <li key={i} className="flex gap-4">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-sm text-primary-foreground">
+                        {instruction.step}
+                      </span>
+                      <p className="pt-0.5">{instruction.text}</p>
+                    </li>
+                  ))}
+                </ol>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -408,6 +634,64 @@ export function RecipeDetailPage() {
               </div>
             </CardHeader>
             <CardContent>
+              {editMode && draft ? (
+                <div className="space-y-2">
+                  {draft.ingredients.map((ing, i) => (
+                    <div key={ing.id ?? i} className="grid grid-cols-[5rem_5rem_1fr_2rem] gap-1 items-start">
+                      <Input
+                        type="number"
+                        step="any"
+                        min={0}
+                        value={ing.amount || ''}
+                        placeholder="amt"
+                        onChange={(e) => {
+                          const next = draft.ingredients.slice();
+                          next[i] = { ...next[i], amount: Number(e.target.value) || 0 };
+                          patchDraft({ ingredients: next });
+                        }}
+                      />
+                      <Input
+                        value={ing.unit ?? ''}
+                        placeholder="unit"
+                        onChange={(e) => {
+                          const next = draft.ingredients.slice();
+                          next[i] = { ...next[i], unit: e.target.value };
+                          patchDraft({ ingredients: next });
+                        }}
+                      />
+                      <Input
+                        value={ing.name ?? ''}
+                        placeholder="ingredient"
+                        onChange={(e) => {
+                          const next = draft.ingredients.slice();
+                          next[i] = { ...next[i], name: e.target.value };
+                          patchDraft({ ingredients: next });
+                        }}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => patchDraft({
+                          ingredients: draft.ingredients.filter((_, idx) => idx !== i),
+                        })}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => patchDraft({
+                      ingredients: [...draft.ingredients, { id: `new-${Date.now()}`, name: '', amount: 0, unit: '', notes: undefined, inventoryItemId: undefined, linkedItemName: undefined }],
+                    })}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add ingredient
+                  </Button>
+                </div>
+              ) : (
               <ul className="space-y-2">
                 {(recipe.ingredients ?? []).map((ingredient) => {
                   const scaledAmount = roundQuantity(
@@ -478,6 +762,7 @@ export function RecipeDetailPage() {
                   );
                 })}
               </ul>
+              )}
             </CardContent>
           </Card>
 
@@ -502,7 +787,8 @@ export function RecipeDetailPage() {
             </Card>
           )}
 
-          {/* Actions */}
+          {/* Actions (hidden while editing — focus on the form) */}
+          {!editMode && (
           <Card>
             <CardContent className="p-4 space-y-2">
               <Button
@@ -524,6 +810,7 @@ export function RecipeDetailPage() {
               </Button>
             </CardContent>
           </Card>
+          )}
         </div>
       </div>
 
