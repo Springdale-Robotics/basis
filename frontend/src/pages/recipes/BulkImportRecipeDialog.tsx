@@ -20,29 +20,20 @@ import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
-import { imageParseApi } from '@/api/image-parse';
 import { recipesApi, type ImportSession, type IngredientMatch, type ParsedRecipe } from '@/api/recipes';
 import { inventoryApi } from '@/api/inventory';
-import { formatOcrForEditing, normalizeIngredientName } from '@/lib/recipe-utils';
+import { deduplicateIngredientMatches, normalizeIngredientName } from '@/lib/recipe-utils';
+import { useBatchImageProcessing, type BatchItem } from '@/hooks/useBatchImageProcessing';
 import { BulkIngredientActions } from './BulkIngredientActions';
 import { IngredientMatchRow } from './IngredientMatchRow';
 
 type BulkMode = 'image' | 'url' | 'text' | 'file';
 type BulkStep = 'mode' | 'input' | 'processing' | 'ocr-review' | 'recipe-review' | 'catalog' | 'confirm';
 
-interface BulkItem {
-  id: string;
-  label: string;
-  // Image mode
-  imageSessionId?: string;
-  file?: File;
-  // All modes
-  importSessionId?: string;
-  ocrText?: string;
-  status: 'pending' | 'uploading' | 'processing' | 'ready' | 'failed';
-  error?: string;
-  excluded?: boolean;
-}
+// Per-recipe batch item. The image/upload/polling lifecycle is owned by
+// useBatchImageProcessing; this dialog adds `importSessionId` once each item
+// reaches the import-session stage.
+type BulkItem = BatchItem;
 
 interface BulkImportRecipeDialogProps {
   open: boolean;
@@ -60,16 +51,20 @@ interface BulkImportRecipeDialogProps {
 export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialFiles }: BulkImportRecipeDialogProps) {
   const [mode, setMode] = useState<BulkMode | null>(null);
   const [step, setStep] = useState<BulkStep>('mode');
-  const [items, setItems] = useState<BulkItem[]>([]);
+  const {
+    items,
+    setItems,
+    addImageFiles: addImageBatchFiles,
+    addRecipeFiles: addRecipeBatchFiles,
+    startImageProcessing: runImageProcessing,
+    reset: resetBatchItems,
+  } = useBatchImageProcessing();
   const [importSessions, setImportSessions] = useState<Map<string, ImportSession>>(new Map());
   const [overridesMap, setOverridesMap] = useState<Map<string, Record<string, unknown>>>(new Map());
   const [ingredientMatches, setIngredientMatches] = useState<Map<string, IngredientMatch[]>>(new Map());
   const [activeRecipeIndex, setActiveRecipeIndex] = useState(0);
   const [urlText, setUrlText] = useState('');
   const [textEntries, setTextEntries] = useState<string[]>(['']);
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const itemsRef = useRef<BulkItem[]>([]);
-  itemsRef.current = items;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
@@ -99,10 +94,9 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
   // ========== HANDLERS ==========
 
   const handleClose = useCallback(() => {
-    if (pollingRef.current) clearInterval(pollingRef.current);
+    resetBatchItems();
     setMode(null);
     setStep('mode');
-    setItems([]);
     setImportSessions(new Map());
     setOverridesMap(new Map());
     setIngredientMatches(new Map());
@@ -110,118 +104,21 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
     setUrlText('');
     setTextEntries(['']);
     onOpenChange(false);
-  }, [onOpenChange]);
+  }, [onOpenChange, resetBatchItems]);
 
   const handleImageFiles = useCallback((files: FileList | null) => {
-    if (!files) return;
-    const newItems: BulkItem[] = Array.from(files)
-      .filter(f => f.type.startsWith('image/'))
-      .map((f, i) => ({
-        id: `img-${Date.now()}-${i}`,
-        label: f.name,
-        status: 'pending' as const,
-        file: f,
-      }));
-    setItems(prev => [...prev, ...newItems]);
-  }, []);
+    addImageBatchFiles(files);
+  }, [addImageBatchFiles]);
 
   const handleRecipeFiles = useCallback((files: FileList | null) => {
-    if (!files) return;
-    const newItems: BulkItem[] = [];
-    Array.from(files).forEach((file, i) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const data = JSON.parse(reader.result as string);
-          if (data.version && data.type === 'recipe' && data.recipe) {
-            newItems.push({
-              id: `file-${Date.now()}-${i}`,
-              label: file.name,
-              status: 'ready',
-              ocrText: JSON.stringify(data),
-            });
-            setItems(prev => [...prev, ...newItems]);
-          }
-        } catch {
-          // Skip invalid files
-        }
-      };
-      reader.readAsText(file);
-    });
-  }, []);
+    addRecipeBatchFiles(files);
+  }, [addRecipeBatchFiles]);
 
-  // Upload images and start polling
+  // Switch to the processing step and let the hook own the upload+polling lifecycle.
   const startImageProcessing = useCallback(async () => {
     setStep('processing');
-
-    const pendingItems = itemsRef.current.filter(i => i.status === 'pending' && i.file);
-    const concurrency = 3;
-    let index = 0;
-
-    const uploadNext = async (): Promise<void> => {
-      while (index < pendingItems.length) {
-        const item = pendingItems[index++];
-        setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'uploading' } : i));
-        try {
-          const { sessionId } = await imageParseApi.uploadImage(item.file!, 'recipe', undefined, 'accurate');
-          setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'processing', imageSessionId: sessionId } : i));
-        } catch (e) {
-          setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'failed', error: (e as Error).message } : i));
-        }
-      }
-    };
-
-    // Start concurrent uploads
-    const workers = Array.from({ length: Math.min(concurrency, pendingItems.length) }, () => uploadNext());
-    await Promise.all(workers);
-
-    // Start polling for image processing status
-    startPolling();
-  }, []);
-
-  const startPolling = useCallback(() => {
-    if (pollingRef.current) clearInterval(pollingRef.current);
-
-    const poll = async () => {
-      // Read current items from ref to avoid stale closure
-      const currentItems = itemsRef.current;
-      const processingItems = currentItems.filter(i => i.imageSessionId && (i.status === 'processing' || i.status === 'uploading'));
-      const sessionIds = processingItems.map(i => i.imageSessionId!).filter(Boolean);
-      if (sessionIds.length === 0) {
-        if (pollingRef.current) clearInterval(pollingRef.current);
-        return;
-      }
-
-      try {
-        const result = await imageParseApi.getBatchStatus(sessionIds);
-        setItems(prev => prev.map(item => {
-          if (!item.imageSessionId) return item;
-          const session = result.sessions.find(s => s.id === item.imageSessionId);
-          if (!session) return item;
-          if (session.status === 'review') {
-            return {
-              ...item,
-              status: 'ready' as const,
-              ocrText: formatOcrForEditing(session.rawText, session.parsedContent),
-            };
-          }
-          if (session.status === 'failed') {
-            return { ...item, status: 'failed' as const, error: 'Image processing failed' };
-          }
-          return item;
-        }));
-
-        if (result.summary.allDone) {
-          if (pollingRef.current) clearInterval(pollingRef.current);
-        }
-      } catch {
-        // Continue polling on error
-      }
-    };
-
-    pollingRef.current = setInterval(poll, 3000);
-    poll(); // Run immediately
-  }, []);
+    await runImageProcessing();
+  }, [runImageProcessing]);
 
   // Process URLs
   const startUrlProcessing = useCallback(async () => {
@@ -324,34 +221,9 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
 
   // Dedupe ingredient matches *across* the entire batch by normalized name,
   // so the reviewer only links "olive oil" once even if it appears in 8 recipes.
-  // We keep the highest-confidence match as the representative; sessionIds
-  // tracks which recipes share this ingredient so an update can be fanned out.
-  //
   // Compare with ImportRecipeDialog.handleProceedToIngredients (~line 455)
   // which has no dedup — single-recipe flow only ever has one session.
-  // Get all ingredient matches deduplicated across recipes
-  const deduplicatedIngredients = (() => {
-    const grouped = new Map<string, { matches: IngredientMatch[]; sessionIds: string[]; recipeCount: number }>();
-
-    for (const [sessionId, matches] of ingredientMatches) {
-      for (const match of matches) {
-        const key = normalizeIngredientName(match.parsedName);
-        const existing = grouped.get(key);
-        if (existing) {
-          existing.recipeCount++;
-          existing.sessionIds.push(sessionId);
-          // Keep the match with highest confidence
-          if ((match.confidence || 0) > (existing.matches[0]?.confidence || 0)) {
-            existing.matches.unshift(match);
-          }
-        } else {
-          grouped.set(key, { matches: [match], sessionIds: [sessionId], recipeCount: 1 });
-        }
-      }
-    }
-
-    return grouped;
-  })();
+  const deduplicatedIngredients = deduplicateIngredientMatches(ingredientMatches);
 
   const allIngredientMatches: IngredientMatch[] = Array.from(deduplicatedIngredients.values()).map(g => g.matches[0]);
 

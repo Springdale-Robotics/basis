@@ -93,3 +93,49 @@ export function normalizeIngredientName(name: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+interface MatchWithConfidence {
+  parsedName: string;
+  confidence?: number;
+}
+
+export interface DedupedMatchGroup<M extends MatchWithConfidence> {
+  /** Representative match (highest confidence) — render this one in the UI. */
+  matches: M[];
+  /** All session IDs that contain this ingredient — used to fan updates back out. */
+  sessionIds: string[];
+  /** How many recipes reference this ingredient. */
+  recipeCount: number;
+}
+
+/**
+ * Dedupe ingredient matches across multiple recipes by `normalizeIngredientName`.
+ * The reviewer should only link "olive oil" once even if it appears in 8 recipes;
+ * `sessionIds` lets the caller fan a single update back to every recipe that
+ * shares the ingredient.
+ *
+ * Pure function — no state, no React. Easy to test, easy to reuse if another
+ * surface ever needs cross-recipe matching.
+ */
+export function deduplicateIngredientMatches<M extends MatchWithConfidence>(
+  perSessionMatches: Iterable<[string, M[]]>,
+): Map<string, DedupedMatchGroup<M>> {
+  const grouped = new Map<string, DedupedMatchGroup<M>>();
+  for (const [sessionId, matches] of perSessionMatches) {
+    for (const match of matches) {
+      const key = normalizeIngredientName(match.parsedName);
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.recipeCount++;
+        existing.sessionIds.push(sessionId);
+        // Keep the highest-confidence match as the representative.
+        if ((match.confidence ?? 0) > (existing.matches[0]?.confidence ?? 0)) {
+          existing.matches.unshift(match);
+        }
+      } else {
+        grouped.set(key, { matches: [match], sessionIds: [sessionId], recipeCount: 1 });
+      }
+    }
+  }
+  return grouped;
+}
