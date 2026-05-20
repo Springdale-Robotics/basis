@@ -269,6 +269,18 @@ export const inventoryApi = {
     };
   },
 
+  updateShoppingListItem: (
+    id: string,
+    data: {
+      itemId?: string | null;
+      customName?: string | null;
+      quantity?: number;
+      unit?: string | null;
+      category?: string | null;
+      targetAreaId?: string | null;
+    }
+  ) => apiPatch<{ item: unknown }>(`/inventory/shopping-list/${id}`, data),
+
   checkShoppingListItem: (id: string, options?: { acquiredQuantity?: number; keepRemainder?: boolean }) =>
     apiPost<{ item: ShoppingListItem; remainderItem: ShoppingListItem | null }>(`/inventory/shopping-list/${id}/check`, options || {}),
 

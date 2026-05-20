@@ -88,6 +88,15 @@ const addToShoppingListSchema = z.object({
   targetAreaId: z.string().uuid().optional(),
 });
 
+const updateShoppingListItemSchema = z.object({
+  itemId: z.string().uuid().nullable().optional(),
+  customName: z.string().max(255).nullable().optional(),
+  quantity: z.number().positive().optional(),
+  unit: z.string().max(50).nullable().optional(),
+  category: z.string().max(100).nullable().optional(),
+  targetAreaId: z.string().uuid().nullable().optional(),
+});
+
 const quickCreateItemSchema = z.object({
   name: z.string().min(1).max(255),
   defaultUnit: z.string().max(50).optional(),
@@ -855,6 +864,53 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         .returning();
 
       return { success: true, data: { item } };
+    }
+  );
+
+  app.patch<{ Params: { id: string } }>(
+    '/shopping-list/:id',
+    { preHandler: [authMiddleware, requireShoppingListAccess('edit')] },
+    async (request) => {
+      const input = updateShoppingListItemSchema.parse(request.body);
+
+      const current = await db.query.shoppingList.findFirst({
+        where: and(
+          eq(shoppingList.id, request.params.id),
+          eq(shoppingList.householdId, request.user!.householdId)
+        ),
+      });
+
+      if (!current) {
+        throw Errors.notFound('Shopping list item');
+      }
+
+      if (input.itemId) {
+        const inv = await db.query.inventoryItems.findFirst({
+          where: and(
+            eq(inventoryItems.id, input.itemId),
+            eq(inventoryItems.householdId, request.user!.householdId)
+          ),
+        });
+        if (!inv) {
+          throw Errors.notFound('Inventory item');
+        }
+      }
+
+      const updates: Record<string, unknown> = { updatedAt: new Date() };
+      if (input.itemId !== undefined) updates.itemId = input.itemId;
+      if (input.customName !== undefined) updates.customName = input.customName;
+      if (input.quantity !== undefined) updates.quantity = input.quantity.toString();
+      if (input.unit !== undefined) updates.unit = input.unit;
+      if (input.category !== undefined) updates.category = input.category;
+      if (input.targetAreaId !== undefined) updates.targetAreaId = input.targetAreaId;
+
+      const [updated] = await db
+        .update(shoppingList)
+        .set(updates)
+        .where(eq(shoppingList.id, request.params.id))
+        .returning();
+
+      return { success: true, data: { item: updated } };
     }
   );
 
