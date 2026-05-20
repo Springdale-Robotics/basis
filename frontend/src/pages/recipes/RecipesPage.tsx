@@ -154,7 +154,7 @@ export function RecipesPage() {
 
       {/* Recipe list */}
       {isLoading ? (
-        <div className={cn('grid gap-4', viewMode === 'grid' ? 'sm:grid-cols-2 lg:grid-cols-3' : '')}>
+        <div className={cn('grid gap-4', viewMode === 'grid' ? 'sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5' : '')}>
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className={viewMode === 'grid' ? 'h-64' : 'h-24'} />
           ))}
@@ -171,7 +171,7 @@ export function RecipesPage() {
           }
         />
       ) : viewMode === 'grid' ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {recipes.map((recipe) => (
             <RecipeCard key={recipe.id} recipe={recipe} />
           ))}
