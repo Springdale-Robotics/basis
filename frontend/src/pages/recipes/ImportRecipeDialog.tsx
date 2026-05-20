@@ -125,6 +125,9 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
   const [imageProcessing, setImageProcessing] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [imageRawText, setImageRawText] = useState<string | null>(null);
+  const [pdfFileName, setPdfFileName] = useState<string | null>(null);
+  const [pdfBase64, setPdfBase64] = useState<string | null>(null);
+  const [pdfError, setPdfError] = useState<string | null>(null);
   const [ingredientMatches, setIngredientMatches] = useState<IngredientMatch[]>([]);
   // Store catalog item data from imported .recipe files
   const [importedCatalogItems, setImportedCatalogItems] = useState<Record<string, { name: string; category?: string; defaultUnit?: string; density?: number }>>({});
@@ -221,6 +224,12 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
           sourceType: 'text',
           sourceData: JSON.stringify(fileData),
           rawText: JSON.stringify(fileData),
+        });
+      }
+      if (sourceType === 'pdf' && pdfBase64) {
+        return recipesApi.startImport({
+          sourceType: 'pdf',
+          sourceData: pdfBase64,
         });
       }
       const sourceData = sourceType === 'url' ? sourceUrl : rawText;
@@ -353,6 +362,9 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     setImageProcessing(false);
     setImageError(null);
     setImageRawText(null);
+    setPdfFileName(null);
+    setPdfBase64(null);
+    setPdfError(null);
     setBatchMode(false);
     setBatchInitialFiles(undefined);
     onOpenChange(false);
@@ -365,6 +377,36 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
       previewTextMutation.mutate();
     }
   }, [sourceType, previewUrlMutation, previewTextMutation]);
+
+  const handlePdfUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    setPdfError(null);
+    if (!file) return;
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      setPdfError('Please choose a PDF file.');
+      return;
+    }
+    // Cap at 10MB to match the image upload cap.
+    if (file.size > 10 * 1024 * 1024) {
+      setPdfError('PDF is over 10 MB. Try splitting it or copy/pasting the text instead.');
+      return;
+    }
+    try {
+      const buf = await file.arrayBuffer();
+      // Convert to base64 in chunks to avoid call-stack limits on large files.
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      const chunkSize = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)));
+      }
+      setPdfBase64(btoa(binary));
+      setPdfFileName(file.name);
+    } catch (err) {
+      setPdfError(err instanceof Error ? err.message : 'Failed to read PDF');
+    }
+  }, []);
 
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -876,11 +918,34 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                 </TabsContent>
 
                 <TabsContent value="pdf" className="mt-4">
-                  <div className="border-2 border-dashed rounded-lg p-8 text-center">
-                    <Upload className="h-12 w-12 mx-auto text-muted-foreground" />
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      PDF import coming soon
-                    </p>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>Upload a recipe PDF</Label>
+                      <Input
+                        type="file"
+                        accept=".pdf,application/pdf"
+                        onChange={handlePdfUpload}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        We extract the text on the server and parse it the same way as a pasted recipe. Max 10 MB.
+                      </p>
+                    </div>
+
+                    {pdfFileName && !pdfError && (
+                      <Alert>
+                        <Check className="h-4 w-4" />
+                        <AlertDescription>
+                          Ready to parse: <span className="font-medium">{pdfFileName}</span>
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                    {pdfError && (
+                      <Alert variant="destructive">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>{pdfError}</AlertDescription>
+                      </Alert>
+                    )}
                   </div>
                 </TabsContent>
               </Tabs>
@@ -906,6 +971,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                     sourceType === 'file' ? !previewRecipe :
                     sourceType === 'image' ? !imageRawText :
                     sourceType === 'url' ? !sourceUrl :
+                    sourceType === 'pdf' ? !pdfBase64 :
                     true
                   )}
                 >

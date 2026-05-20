@@ -658,7 +658,11 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
                       className="shrink-0 text-xs"
                       onClick={() => setActiveRecipeIndex(i)}
                     >
-                      {i + 1}. {(importSessions.get(item.importSessionId!)?.parsedRecipe?.title || item.label).slice(0, 20)}
+                      {(() => {
+                        const title = importSessions.get(item.importSessionId!)?.parsedRecipe?.title || item.label;
+                        const truncated = title.length > 20 ? title.slice(0, 19) + '…' : title;
+                        return `${i + 1}. ${truncated}`;
+                      })()}
                     </Button>
                   ))}
                 </div>
@@ -780,7 +784,7 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
               <div>
                 <h3 className="font-medium">Link Ingredients to Catalog</h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  {allIngredientMatches.length} unique ingredients across {readyCount} recipes.
+                  {allIngredientMatches.length} unique ingredient{allIngredientMatches.length === 1 ? '' : 's'} across {readyCount} recipe{readyCount === 1 ? '' : 's'}.
                   Match once — applies to all recipes using that ingredient.
                 </p>
               </div>
@@ -860,7 +864,10 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
                 </Button>
                 <Button onClick={() => confirmMutation.mutate()} disabled={confirmMutation.isPending || readyItems.every(i => i.excluded)}>
                   {confirmMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Import {readyItems.filter(i => !i.excluded).length} Recipes
+                  {(() => {
+                    const n = readyItems.filter(i => !i.excluded).length;
+                    return `Import ${n} ${n === 1 ? 'Recipe' : 'Recipes'}`;
+                  })()}
                 </Button>
               </div>
             </div>

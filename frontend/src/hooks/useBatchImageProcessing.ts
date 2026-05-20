@@ -147,7 +147,8 @@ export function useBatchImageProcessing(
             };
           }
           if (session.status === 'failed') {
-            return { ...item, status: 'failed', error: 'Image processing failed' };
+            const warning = session.parseWarnings?.[0] ?? 'Image processing failed';
+            return { ...item, status: 'failed', error: warning };
           }
           return item;
         }));

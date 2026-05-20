@@ -171,13 +171,15 @@ export async function processImageWithAI(sessionId: string, householdId: string)
         throw new Error('AI vision service not available');
       }
 
-      // Fall back to returning the session in review state without AI parsing
+      // No provider available — mark the session 'failed' so polling
+      // consumers don't mistake a content-less session for a successful
+      // parse. The user-facing error string lives in parseWarnings.
       await db
         .update(imageParseSessions)
         .set({
-          status: 'review',
+          status: 'failed',
           processingStage: null,
-          parseWarnings: ['AI service unavailable - manual entry required'],
+          parseWarnings: ['AI service unavailable - please try again later'],
           processingTimeMs: String(Date.now() - startTime),
           updatedAt: new Date(),
         })
