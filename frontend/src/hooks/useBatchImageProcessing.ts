@@ -65,29 +65,43 @@ export function useBatchImageProcessing(
     if (!files) return;
     const arr = Array.from(files).filter(f => f.type.startsWith('image/'));
     if (arr.length === 0) return;
-    const newItems: BatchItem[] = arr.map((f, i) => ({
-      id: `img-${Date.now()}-${i}`,
+    const newItems: BatchItem[] = arr.map((f) => ({
+      // crypto.randomUUID() instead of Date.now() so React StrictMode's
+      // double-invoke of effects doesn't produce colliding keys.
+      id: `img-${crypto.randomUUID()}`,
       label: f.name,
       status: 'pending',
       file: f,
     }));
-    setItems(prev => [...prev, ...newItems]);
+    setItems(prev => {
+      // Dedupe by File reference — protects against the same useEffect
+      // firing twice (StrictMode) with the same initialFiles array.
+      const existingFiles = new Set(prev.map(p => p.file).filter(Boolean));
+      const fresh = newItems.filter(n => !existingFiles.has(n.file));
+      return fresh.length ? [...prev, ...fresh] : prev;
+    });
   }, []);
 
   const addRecipeFiles = useCallback((files: FileList | File[] | null) => {
     if (!files) return;
-    Array.from(files).forEach((file, i) => {
+    Array.from(files).forEach((file) => {
       const reader = new FileReader();
       reader.onload = () => {
         try {
           const data = JSON.parse(reader.result as string);
           if (data.version && data.type === 'recipe' && data.recipe) {
-            setItems(prev => [...prev, {
-              id: `file-${Date.now()}-${i}`,
-              label: file.name,
-              status: 'ready',
-              ocrText: JSON.stringify(data),
-            }]);
+            const payload = JSON.stringify(data);
+            setItems(prev => {
+              // Same StrictMode protection as addImageFiles — dedupe by the
+              // serialised payload so the second invocation doesn't duplicate.
+              if (prev.some(p => p.label === file.name && p.ocrText === payload)) return prev;
+              return [...prev, {
+                id: `file-${crypto.randomUUID()}`,
+                label: file.name,
+                status: 'ready',
+                ocrText: payload,
+              }];
+            });
           }
         } catch {
           // Skip invalid files
@@ -118,6 +132,14 @@ export function useBatchImageProcessing(
           const session = result.sessions.find(s => s.id === item.imageSessionId);
           if (!session) return item;
           if (session.status === 'review') {
+            // The backend marks the session 'review' even when the AI returned
+            // nothing (parseWarnings says so). Treat that as a failure here so
+            // the user sees a clear "failed" pill instead of an empty success.
+            const hasContent = !!session.rawText || !!session.parsedContent;
+            if (!hasContent) {
+              const warning = session.parseWarnings?.[0] ?? 'No text extracted from image';
+              return { ...item, status: 'failed', error: warning };
+            }
             return {
               ...item,
               status: 'ready',
