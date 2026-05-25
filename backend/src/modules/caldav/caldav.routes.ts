@@ -525,9 +525,15 @@ export async function caldavRoutes(app: FastifyInstance): Promise<void> {
         return;
       }
       const body = (request.body as string | undefined) ?? '';
-      const updates: Partial<{ name: string; color: string }> = {};
+      const updates: Partial<{ color: string }> = {};
+      // displayname changes via PROPPATCH are REFUSED. iOS Calendar aggressively
+      // renames synced calendars to mirror its local labels ("Home", "Family
+      // Calendar", localization keys, etc.). The web UI is the source of truth
+      // for calendar names — clients have to use the REST API to rename. We
+      // signal this honestly to the client via per-property 403 in the
+      // multistatus response (RFC 4918 §9.2.1) so iOS stops retrying.
       const dn = body.match(/<(?:[\w-]+:)?displayname>([^<]+)</i);
-      if (dn) updates.name = humanizeCalendarName(dn[1].trim());
+      const displaynameRequested = !!dn;
       const color = body.match(/<(?:[\w-]+:)?calendar-color>(#[0-9a-fA-F]{6,8})/);
       if (color) updates.color = color[1].slice(0, 7);
 
@@ -537,14 +543,31 @@ export async function caldavRoutes(app: FastifyInstance): Promise<void> {
           .set({ ...updates, updatedAt: new Date() })
           .where(eq(calendars.id, request.params.calendarId));
       }
+      if (displaynameRequested) {
+        logger.debug(
+          { calendarId: request.params.calendarId, attemptedName: dn?.[1]?.trim() },
+          'Refused PROPPATCH displayname (CalDAV clients cannot rename calendars)'
+        );
+      }
       const href = calendarUrl(user.id, request.params.calendarId);
+      // Build a multistatus that splits per-property status: applied props get
+      // 200 OK, refused props get 403 Forbidden. Mixed-status responses are
+      // standard for PROPPATCH (RFC 4918 §9.2).
+      const okProps = updates.color ? `        <a:calendar-color/>\n` : '';
+      const forbiddenProps = displaynameRequested ? `        <d:displayname/>\n` : '';
+      const propstats: string[] = [];
+      if (okProps) {
+        propstats.push(
+          `    <d:propstat>\n      <d:prop>\n${okProps}      </d:prop>\n      <d:status>HTTP/1.1 200 OK</d:status>\n    </d:propstat>`
+        );
+      }
+      if (forbiddenProps) {
+        propstats.push(
+          `    <d:propstat>\n      <d:prop>\n${forbiddenProps}      </d:prop>\n      <d:status>HTTP/1.1 403 Forbidden</d:status>\n      <d:responsedescription>Calendar names are managed via the Home Manager web UI; CalDAV clients cannot rename them.</d:responsedescription>\n    </d:propstat>`
+        );
+      }
       const xml = multistatus([
-        response({
-          href,
-          found:
-            (updates.name ? `        <d:displayname/>\n` : '') +
-            (updates.color ? `        <a:calendar-color/>\n` : ''),
-        }),
+        `  <d:response>\n    <d:href>${escapeXml(href)}</d:href>\n${propstats.join('\n')}\n  </d:response>`,
       ]);
       setDavHeaders(reply);
       reply.code(207).type('application/xml; charset=utf-8').send(xml);

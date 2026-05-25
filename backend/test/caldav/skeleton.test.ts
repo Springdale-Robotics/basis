@@ -45,7 +45,17 @@ describe('CalDAV skeleton (Phase 3a)', () => {
     expect(res.headers.get('location')).toBe('/dav/');
   });
 
-  it('PROPPATCH on a calendar updates displayname and color', async () => {
+  it('PROPPATCH applies color but refuses displayname rename', async () => {
+    const { db } = await import('../../src/config/database.js');
+    const { calendars } = await import('../../src/db/schema/index.js');
+    const { eq } = await import('drizzle-orm');
+
+    // Capture pre-state so we can assert the name was NOT changed.
+    const before = await db.query.calendars.findFirst({
+      where: eq(calendars.id, ctx.calendarId),
+      columns: { name: true, color: true },
+    });
+
     const res = await fetch(`${ctx.baseUrl}/dav/calendars/${ctx.userId}/${ctx.calendarId}/`, {
       method: 'PROPPATCH',
       headers: {
@@ -55,22 +65,29 @@ describe('CalDAV skeleton (Phase 3a)', () => {
       body: `<?xml version="1.0"?>
 <propertyupdate xmlns="DAV:" xmlns:a="http://apple.com/ns/ical/">
   <set><prop>
-    <displayname>Renamed Calendar</displayname>
+    <displayname>iOS Hijack Attempt</displayname>
     <a:calendar-color>#FF8800</a:calendar-color>
   </prop></set>
 </propertyupdate>`,
     });
     expect(res.status).toBe(207);
     const body = await res.text();
-    expect(body).toContain('displayname');
+    // Color applied with 200 OK, displayname refused with 403 Forbidden.
+    expect(body).toMatch(/<a:calendar-color\/>[\s\S]*HTTP\/1\.1 200 OK/);
+    expect(body).toMatch(/<d:displayname\/>[\s\S]*HTTP\/1\.1 403 Forbidden/);
 
-    // Revert to original
-    const { db } = await import('../../src/config/database.js');
-    const { calendars } = await import('../../src/db/schema/index.js');
-    const { eq } = await import('drizzle-orm');
+    // Confirm DB: color updated, name untouched.
+    const after = await db.query.calendars.findFirst({
+      where: eq(calendars.id, ctx.calendarId),
+      columns: { name: true, color: true },
+    });
+    expect(after?.name).toBe(before?.name);
+    expect(after?.color).toBe('#FF8800');
+
+    // Revert color
     await db
       .update(calendars)
-      .set({ name: 'Family Calendar', color: '#3B82F6' })
+      .set({ color: before?.color ?? '#3B82F6' })
       .where(eq(calendars.id, ctx.calendarId));
   });
 
