@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ChevronLeft, ChevronRight, Keyboard, CalendarDays, PanelLeftClose, PanelLeft, Camera, Share2 } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, Keyboard, PanelLeftClose, PanelLeft, Camera, Share2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,10 @@ import { EventForm } from '@/components/calendar/EventForm';
 import { EventDetail } from '@/components/calendar/EventDetail';
 import { CalendarForm, type CalendarAccessPreset } from '@/components/calendar/CalendarForm';
 import { AccessTooltip } from '@/components/calendar/CalendarSidebar';
+import { MonthView } from '@/components/calendar/MonthView';
+import { WeekView } from '@/components/calendar/WeekView';
+import { DayView } from '@/components/calendar/DayView';
+import { AgendaView } from '@/components/calendar/AgendaView';
 import { useAuth } from '@/hooks/useAuth';
 import { EditRecurringEventDialog, type RecurrenceEditScope } from '@/components/calendar/EditRecurringEventDialog';
 import { DeleteRecurringEventDialog, type RecurrenceDeleteScope } from '@/components/calendar/DeleteRecurringEventDialog';
@@ -36,7 +40,7 @@ import { getColorForIndex } from '@/lib/theme-presets';
 import type { EventFormData } from '@/types/forms';
 import type { CalendarEvent, Calendar as CalendarType } from '@/types/models';
 
-type ViewMode = 'month' | 'week' | 'day';
+type ViewMode = 'month' | 'week' | 'day' | 'agenda';
 
 export function CalendarPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('month');
@@ -326,6 +330,56 @@ export function CalendarPage() {
     },
   });
 
+  // Drag-and-drop: move event to a new start time (preserves duration).
+  const moveEventMutation = useMutation({
+    mutationFn: async ({ event, newStart }: { event: CalendarEvent; newStart: Date }) => {
+      const isVirtual = event.isVirtualInstance;
+      const master = isVirtual ? event.masterEvent : event;
+      const eventId = master?.id || event.id;
+      const calendarId = master?.calendarId || event.calendarId;
+      const oldStart = new Date(event.startTime).getTime();
+      const oldEnd = new Date(event.endTime).getTime();
+      const duration = oldEnd - oldStart;
+      const newEnd = new Date(newStart.getTime() + duration);
+      // For recurring events, only adjust this instance via an exception so we
+      // don't reshuffle the whole series.
+      if (master?.recurrenceRule) {
+        return calendarsApi.createException(calendarId, eventId, {
+          originalStartTime: event.startTime,
+          startTime: newStart.toISOString(),
+          endTime: newEnd.toISOString(),
+        });
+      }
+      return calendarsApi.updateEvent(calendarId, eventId, {
+        startTime: newStart.toISOString(),
+        endTime: newEnd.toISOString(),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['events'] });
+    },
+    onError: (error) => {
+      toast({
+        title: 'Failed to move event',
+        description: error instanceof Error ? error.message : 'An error occurred',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // For month-view drops we land the event on a new day, preserving the
+  // event's existing time-of-day (so a 3 PM meeting stays at 3 PM).
+  const handleEventDropDay = (event: CalendarEvent, newDay: Date) => {
+    const oldStart = new Date(event.startTime);
+    const newStart = new Date(newDay);
+    newStart.setHours(oldStart.getHours(), oldStart.getMinutes(), 0, 0);
+    moveEventMutation.mutate({ event, newStart });
+  };
+
+  const handleEventDropTime = (event: CalendarEvent, newStart: Date) => {
+    moveEventMutation.mutate({ event, newStart });
+  };
+
   const deleteMutation = useMutation({
     mutationFn: (scope?: RecurrenceDeleteScope) => {
       if (!selectedEvent) throw new Error('No event selected');
@@ -456,7 +510,8 @@ export function CalendarPage() {
     const newDate = new Date(currentDate);
     if (viewMode === 'month') newDate.setMonth(newDate.getMonth() - 1);
     else if (viewMode === 'week') newDate.setDate(newDate.getDate() - 7);
-    else newDate.setDate(newDate.getDate() - 1);
+    else if (viewMode === 'day') newDate.setDate(newDate.getDate() - 1);
+    else newDate.setMonth(newDate.getMonth() - 1); // agenda: one month back
     setCurrentDate(newDate);
   };
 
@@ -464,16 +519,51 @@ export function CalendarPage() {
     const newDate = new Date(currentDate);
     if (viewMode === 'month') newDate.setMonth(newDate.getMonth() + 1);
     else if (viewMode === 'week') newDate.setDate(newDate.getDate() + 7);
-    else newDate.setDate(newDate.getDate() + 1);
+    else if (viewMode === 'day') newDate.setDate(newDate.getDate() + 1);
+    else newDate.setMonth(newDate.getMonth() + 1); // agenda: one month forward
     setCurrentDate(newDate);
   };
 
   const goToToday = () => setCurrentDate(new Date());
 
-  const monthLabel = currentDate.toLocaleDateString(undefined, {
-    month: 'long',
-    year: 'numeric',
-  });
+  // Period label adapts to the active view.
+  const periodLabel = (() => {
+    if (viewMode === 'day') {
+      return currentDate.toLocaleDateString(undefined, {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+      });
+    }
+    if (viewMode === 'week') {
+      const ws = new Date(currentDate);
+      ws.setDate(currentDate.getDate() - currentDate.getDay());
+      const we = new Date(ws);
+      we.setDate(ws.getDate() + 6);
+      const sameMonth = ws.getMonth() === we.getMonth();
+      const sameYear = ws.getFullYear() === we.getFullYear();
+      const startMonthDay = ws.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+      });
+      if (sameMonth) {
+        return `${startMonthDay} – ${we.getDate()}, ${we.getFullYear()}`;
+      }
+      const endMonthDay = we.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+      });
+      if (sameYear) {
+        return `${startMonthDay} – ${endMonthDay}, ${we.getFullYear()}`;
+      }
+      return `${ws.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} – ${we.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    }
+    return currentDate.toLocaleDateString(undefined, {
+      month: 'long',
+      year: 'numeric',
+    });
+  })();
 
   // Keyboard shortcuts
   useCalendarShortcuts({
@@ -485,6 +575,7 @@ export function CalendarPage() {
     onMonthView: () => setViewMode('month'),
     onWeekView: () => setViewMode('week'),
     onDayView: () => setViewMode('day'),
+    onAgendaView: () => setViewMode('agenda'),
     onEscape: () => {
       if (formOpen) setFormOpen(false);
       else if (detailOpen) setDetailOpen(false);
@@ -737,7 +828,7 @@ export function CalendarPage() {
           {/* Calendar controls - Skylight style */}
           <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1 bg-white rounded-full shadow-sm p-1">
+              <div className="flex items-center gap-1 bg-card rounded-full shadow-sm border border-border p-1">
                 <Button
                   variant="ghost"
                   size="icon"
@@ -763,20 +854,23 @@ export function CalendarPage() {
                 Today
               </Button>
               <span className="ml-2 text-2xl font-semibold text-foreground">
-                {monthLabel}
+                {periodLabel}
               </span>
             </div>
 
             <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>
-              <TabsList className="bg-white shadow-sm rounded-full p-1">
-                <TabsTrigger value="month" className="rounded-full px-5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <TabsList className="bg-card shadow-sm border border-border rounded-full p-1">
+                <TabsTrigger value="month" className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                   Month
                 </TabsTrigger>
-                <TabsTrigger value="week" className="rounded-full px-5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <TabsTrigger value="week" className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                   Week
                 </TabsTrigger>
-                <TabsTrigger value="day" className="rounded-full px-5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <TabsTrigger value="day" className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                   Day
+                </TabsTrigger>
+                <TabsTrigger value="agenda" className="rounded-full px-4 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                  Agenda
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -797,6 +891,7 @@ export function CalendarPage() {
               colorPalette={colorPalette}
               onEventClick={handleEventClick}
               onSlotDoubleClick={handleSlotDoubleClick}
+              onEventDrop={handleEventDropDay}
             />
           ) : viewMode === 'week' ? (
             <WeekView
@@ -806,8 +901,9 @@ export function CalendarPage() {
               colorPalette={colorPalette}
               onEventClick={handleEventClick}
               onSlotDoubleClick={handleSlotDoubleClick}
+              onEventDrop={handleEventDropTime}
             />
-          ) : (
+          ) : viewMode === 'day' ? (
             <DayView
               currentDate={currentDate}
               events={filteredEvents}
@@ -815,6 +911,15 @@ export function CalendarPage() {
               colorPalette={colorPalette}
               onEventClick={handleEventClick}
               onSlotDoubleClick={handleSlotDoubleClick}
+              onEventDrop={handleEventDropTime}
+            />
+          ) : (
+            <AgendaView
+              currentDate={currentDate}
+              events={filteredEvents}
+              calendars={calendars}
+              colorPalette={colorPalette}
+              onEventClick={handleEventClick}
             />
           )}
         </CardContent>
@@ -881,546 +986,6 @@ export function CalendarPage() {
   );
 }
 
-function MonthView({
-  currentDate,
-  events,
-  calendars,
-  colorPalette,
-  onEventClick,
-  onSlotDoubleClick,
-}: {
-  currentDate: Date;
-  events: CalendarEvent[];
-  calendars: CalendarType[];
-  colorPalette: string;
-  onEventClick: (event: CalendarEvent) => void;
-  onSlotDoubleClick: (date: Date) => void;
-}) {
-  const getEventColor = (event: CalendarEvent) => {
-    if (event.color) return event.color;
-    const calendar = calendars.find((c) => c.id === event.calendarId);
-    if (calendar?.colorIndex !== undefined && calendar.colorIndex >= 0) {
-      return getColorForIndex(colorPalette as import('@/lib/theme-presets').ColorPalette, calendar.colorIndex);
-    }
-    return calendar?.color || '#4A90D9';
-  };
-  const daysInMonth = new Date(
-    currentDate.getFullYear(),
-    currentDate.getMonth() + 1,
-    0
-  ).getDate();
-  const firstDayOfMonth = new Date(
-    currentDate.getFullYear(),
-    currentDate.getMonth(),
-    1
-  ).getDay();
-
-  const days = [];
-
-  // Previous month days
-  for (let i = 0; i < firstDayOfMonth; i++) {
-    days.push({ day: null, isCurrentMonth: false });
-  }
-
-  // Current month days
-  for (let i = 1; i <= daysInMonth; i++) {
-    days.push({ day: i, isCurrentMonth: true });
-  }
-
-  // Fill remaining cells
-  while (days.length < 35) {
-    days.push({ day: null, isCurrentMonth: false });
-  }
-
-  const today = new Date();
-  const isToday = (day: number | null) =>
-    day !== null &&
-    today.getDate() === day &&
-    today.getMonth() === currentDate.getMonth() &&
-    today.getFullYear() === currentDate.getFullYear();
-
-  const getEventsForDay = (day: number | null) => {
-    if (day === null) return [];
-    const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-    return events.filter((event) => {
-      const eventDate = new Date(event.startTime);
-      return (
-        eventDate.getDate() === date.getDate() &&
-        eventDate.getMonth() === date.getMonth() &&
-        eventDate.getFullYear() === date.getFullYear()
-      );
-    });
-  };
-
-  return (
-    <div>
-      {/* Day headers - Skylight style */}
-      <div className="mb-2 grid grid-cols-7 gap-2">
-        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
-          <div
-            key={day}
-            className="py-3 text-center text-sm font-semibold text-muted-foreground uppercase tracking-wide"
-          >
-            {day}
-          </div>
-        ))}
-      </div>
-
-      {/* Calendar grid - Skylight rounded cells */}
-      <div className="grid grid-cols-7 gap-1">
-        {days.map(({ day, isCurrentMonth }, i) => {
-          const dayEvents = getEventsForDay(day);
-          return (
-            <div
-              key={i}
-              className={cn(
-                'min-h-28 rounded-xl p-2 transition-all duration-200 cursor-pointer border',
-                isCurrentMonth
-                  ? 'bg-card hover:bg-accent border-border'
-                  : 'bg-muted/50 border-transparent text-muted-foreground',
-                isToday(day) && 'ring-2 ring-primary ring-offset-2 ring-offset-background'
-              )}
-              onDoubleClick={() => {
-                if (day !== null && isCurrentMonth) {
-                  // Create a date at 9 AM by default for month view
-                  const clickedDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day, 9, 0, 0);
-                  onSlotDoubleClick(clickedDate);
-                }
-              }}
-            >
-              {day !== null && (
-                <>
-                  <span
-                    className={cn(
-                      'inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium transition-colors',
-                      isToday(day)
-                        ? 'bg-primary text-primary-foreground shadow-sm'
-                        : 'text-foreground hover:bg-muted'
-                    )}
-                  >
-                    {day}
-                  </span>
-                  <div className="mt-2 space-y-1.5">
-                    {dayEvents.slice(0, 2).map((event) => {
-                      const color = getEventColor(event);
-                      return (
-                        <div
-                          key={event.id}
-                          className="truncate rounded-md px-2 py-1 text-xs font-semibold cursor-pointer transition-all duration-200 hover:scale-[1.02] hover:shadow-md border"
-                          style={{
-                            backgroundColor: `${color}35`,
-                            color: color,
-                            borderColor: `${color}50`,
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onEventClick(event);
-                          }}
-                        >
-                          {event.title}
-                        </div>
-                      );
-                    })}
-                    {dayEvents.length > 2 && (
-                      <div className="px-2 text-xs font-medium text-primary cursor-pointer hover:underline">
-                        +{dayEvents.length - 2} more
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function WeekView({
-  currentDate,
-  events,
-  calendars,
-  colorPalette,
-  onEventClick,
-  onSlotDoubleClick,
-}: {
-  currentDate: Date;
-  events: CalendarEvent[];
-  calendars: CalendarType[];
-  colorPalette: string;
-  onEventClick: (event: CalendarEvent) => void;
-  onSlotDoubleClick: (date: Date) => void;
-}) {
-  const getEventColor = (event: CalendarEvent) => {
-    if (event.color) return event.color;
-    const calendar = calendars.find((c) => c.id === event.calendarId);
-    if (calendar?.colorIndex !== undefined && calendar.colorIndex >= 0) {
-      return getColorForIndex(colorPalette as import('@/lib/theme-presets').ColorPalette, calendar.colorIndex);
-    }
-    return calendar?.color || '#4A90D9';
-  };
-  const startOfWeek = new Date(currentDate);
-  startOfWeek.setDate(currentDate.getDate() - currentDate.getDay());
-
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const date = new Date(startOfWeek);
-    date.setDate(startOfWeek.getDate() + i);
-    return date;
-  });
-
-  const hours = Array.from({ length: 24 }, (_, i) => i);
-
-  const today = new Date();
-  const isToday = (date: Date) =>
-    date.getDate() === today.getDate() &&
-    date.getMonth() === today.getMonth() &&
-    date.getFullYear() === today.getFullYear();
-
-  const getEventsForDay = (date: Date) => {
-    return events.filter((event) => {
-      const eventDate = new Date(event.startTime);
-      return (
-        eventDate.getDate() === date.getDate() &&
-        eventDate.getMonth() === date.getMonth() &&
-        eventDate.getFullYear() === date.getFullYear()
-      );
-    });
-  };
-
-  const getAllDayEventsForDay = (date: Date) => {
-    return getEventsForDay(date).filter((event) => event.allDay);
-  };
-
-  const getTimedEventsForDay = (date: Date) => {
-    return getEventsForDay(date).filter((event) => !event.allDay);
-  };
-
-  const hasAnyAllDayEvents = days.some((date) => getAllDayEventsForDay(date).length > 0);
-
-  const formatHour = (hour: number) => {
-    if (hour === 0) return '12 AM';
-    if (hour < 12) return `${hour} AM`;
-    if (hour === 12) return '12 PM';
-    return `${hour - 12} PM`;
-  };
-
-  // Get background color based on time of day - subtle night indicator only
-  const getTimeSlotBg = (hour: number) => {
-    if (hour < 6 || hour >= 21) {
-      // Night (before 6 AM or after 9 PM) - subtle gray
-      return 'bg-muted/50';
-    }
-    return 'bg-card';
-  };
-
-  return (
-    <div className="overflow-auto rounded-xl bg-card border border-border">
-      {/* Day headers - Skylight style */}
-      <div className="grid grid-cols-8 gap-px bg-border sticky top-0 z-10">
-        <div className="bg-card p-3" /> {/* Empty corner */}
-        {days.map((date, i) => (
-          <div
-            key={i}
-            className={cn(
-              'bg-card p-3 text-center transition-colors',
-              isToday(date) && 'bg-primary/10'
-            )}
-          >
-            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              {date.toLocaleDateString(undefined, { weekday: 'short' })}
-            </div>
-            <div
-              className={cn(
-                'mt-1 inline-flex h-10 w-10 items-center justify-center rounded-full text-lg font-semibold transition-colors',
-                isToday(date)
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-foreground'
-              )}
-            >
-              {date.getDate()}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* All-day events row */}
-      {hasAnyAllDayEvents && (
-        <div className="grid grid-cols-8 gap-px bg-border border-b border-border">
-          <div className="bg-card p-2 text-xs font-medium text-muted-foreground text-right pr-3">
-            All day
-          </div>
-          {days.map((date, dayIndex) => {
-            const allDayEvents = getAllDayEventsForDay(date);
-            return (
-              <div
-                key={dayIndex}
-                className={cn(
-                  'bg-card min-h-10 p-1',
-                  isToday(date) && 'bg-primary/10'
-                )}
-              >
-                {allDayEvents.map((event) => {
-                  const color = getEventColor(event);
-                  return (
-                    <div
-                      key={event.id}
-                      className="rounded-md px-2 py-1 text-xs font-semibold cursor-pointer transition-all duration-200 hover:scale-[1.02] truncate mb-1 border"
-                      style={{
-                        backgroundColor: `${color}35`,
-                        color: color,
-                        borderColor: `${color}50`,
-                      }}
-                      onClick={() => onEventClick(event)}
-                    >
-                      {event.title}
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Time grid */}
-      <div className="grid grid-cols-8 gap-px bg-border">
-        {hours.map((hour) => (
-          <React.Fragment key={hour}>
-            {/* Time label */}
-            <div className={cn('p-2 text-xs font-medium text-muted-foreground text-right pr-3', getTimeSlotBg(hour))}>
-              {formatHour(hour)}
-            </div>
-            {/* Day columns */}
-            {days.map((date, dayIndex) => {
-              const dayEvents = getTimedEventsForDay(date).filter((event) => {
-                const eventHour = new Date(event.startTime).getHours();
-                return eventHour === hour;
-              });
-              return (
-                <div
-                  key={dayIndex}
-                  className={cn(
-                    'min-h-14 border-t border-border relative cursor-pointer hover:bg-accent',
-                    isToday(date) ? 'bg-primary/10' : getTimeSlotBg(hour)
-                  )}
-                  onDoubleClick={(e) => {
-                    // Calculate minutes based on click position within the cell
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const relativeY = e.clientY - rect.top;
-                    const minutes = relativeY < rect.height / 2 ? 0 : 30;
-                    const clickedDate = new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, minutes, 0);
-                    onSlotDoubleClick(clickedDate);
-                  }}
-                >
-                  {dayEvents.map((event) => {
-                    const color = getEventColor(event);
-                    return (
-                      <div
-                        key={event.id}
-                        className="absolute inset-x-1 top-1 rounded-md px-2 py-1 text-xs font-semibold cursor-pointer transition-all duration-200 hover:scale-[1.02] hover:shadow-md truncate border"
-                        style={{
-                          backgroundColor: `${color}35`,
-                          color: color,
-                          borderColor: `${color}50`,
-                        }}
-                        onClick={() => onEventClick(event)}
-                      >
-                        {event.title}
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </React.Fragment>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function DayView({
-  currentDate,
-  events,
-  calendars,
-  colorPalette,
-  onEventClick,
-  onSlotDoubleClick,
-}: {
-  currentDate: Date;
-  events: CalendarEvent[];
-  calendars: CalendarType[];
-  colorPalette: string;
-  onEventClick: (event: CalendarEvent) => void;
-  onSlotDoubleClick: (date: Date) => void;
-}) {
-  const getEventColor = (event: CalendarEvent) => {
-    if (event.color) return event.color;
-    const calendar = calendars.find((c) => c.id === event.calendarId);
-    if (calendar?.colorIndex !== undefined && calendar.colorIndex >= 0) {
-      return getColorForIndex(colorPalette as import('@/lib/theme-presets').ColorPalette, calendar.colorIndex);
-    }
-    return calendar?.color || '#4A90D9';
-  };
-
-  const hours = Array.from({ length: 24 }, (_, i) => i);
-
-  const today = new Date();
-  const isToday =
-    currentDate.getDate() === today.getDate() &&
-    currentDate.getMonth() === today.getMonth() &&
-    currentDate.getFullYear() === today.getFullYear();
-
-  const dayEvents = events.filter((event) => {
-    const eventDate = new Date(event.startTime);
-    return (
-      eventDate.getDate() === currentDate.getDate() &&
-      eventDate.getMonth() === currentDate.getMonth() &&
-      eventDate.getFullYear() === currentDate.getFullYear()
-    );
-  });
-
-  const allDayEvents = dayEvents.filter((event) => event.allDay);
-  const timedEvents = dayEvents.filter((event) => !event.allDay);
-
-  const formatHour = (hour: number) => {
-    if (hour === 0) return '12 AM';
-    if (hour < 12) return `${hour} AM`;
-    if (hour === 12) return '12 PM';
-    return `${hour - 12} PM`;
-  };
-
-  const getEventsForHour = (hour: number) => {
-    return timedEvents.filter((event) => {
-      const eventHour = new Date(event.startTime).getHours();
-      return eventHour === hour;
-    });
-  };
-
-  // Get background color based on time of day - subtle night indicator only
-  const getTimeSlotBg = (hour: number) => {
-    if (hour < 6 || hour >= 21) {
-      // Night (before 6 AM or after 9 PM) - subtle gray
-      return 'bg-muted/50';
-    }
-    return 'bg-card';
-  };
-
-  return (
-    <div className="overflow-auto rounded-xl bg-card border border-border">
-      {/* Day header - matches Week view style */}
-      <div className="flex border-b border-border">
-        <div className="w-24 p-3 bg-card" /> {/* Empty corner to match time column */}
-        <div
-          className={cn(
-            'flex-1 p-3 text-center transition-colors bg-card',
-            isToday && 'bg-primary/10'
-          )}
-        >
-          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-            {currentDate.toLocaleDateString(undefined, { weekday: 'short' })}
-          </div>
-          <div
-            className={cn(
-              'mt-1 inline-flex h-10 w-10 items-center justify-center rounded-full text-lg font-semibold transition-colors',
-              isToday
-                ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'text-foreground'
-            )}
-          >
-            {currentDate.getDate()}
-          </div>
-        </div>
-      </div>
-
-      {/* All-day events */}
-      {allDayEvents.length > 0 && (
-        <div className="border-b border-border p-3 bg-muted/30">
-          <div className="flex">
-            <div className="w-24 p-2 text-sm font-medium text-muted-foreground text-right pr-4">
-              All day
-            </div>
-            <div className="flex-1 p-1 space-y-2">
-              {allDayEvents.map((event) => {
-                const color = getEventColor(event);
-                return (
-                  <div
-                    key={event.id}
-                    className="rounded-lg px-4 py-2 text-sm font-semibold cursor-pointer transition-all duration-200 hover:scale-[1.01] hover:shadow-md border"
-                    style={{
-                      backgroundColor: `${color}35`,
-                      color: color,
-                      borderColor: `${color}50`,
-                    }}
-                    onClick={() => onEventClick(event)}
-                  >
-                    {event.title}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Time slots */}
-      <div className="divide-y divide-border">
-        {hours.map((hour) => {
-          const hourEvents = getEventsForHour(hour);
-          return (
-            <div key={hour} className={cn('flex min-h-14', getTimeSlotBg(hour))}>
-              <div className="w-24 p-3 text-sm font-medium text-muted-foreground text-right pr-4 border-r border-border">
-                {formatHour(hour)}
-              </div>
-              <div
-                className="flex-1 p-2 relative cursor-pointer hover:bg-accent"
-                onDoubleClick={(e) => {
-                  // Calculate minutes based on click position within the cell
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const relativeY = e.clientY - rect.top;
-                  const minutes = relativeY < rect.height / 2 ? 0 : 30;
-                  const clickedDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), hour, minutes, 0);
-                  onSlotDoubleClick(clickedDate);
-                }}
-              >
-                {hourEvents.map((event) => {
-                  const color = getEventColor(event);
-                  return (
-                    <div
-                      key={event.id}
-                      className="rounded-lg px-4 py-2 text-sm cursor-pointer transition-all duration-200 hover:scale-[1.01] hover:shadow-md mb-2 border"
-                      style={{
-                        backgroundColor: `${color}35`,
-                        color: color,
-                        borderColor: `${color}50`,
-                      }}
-                      onClick={() => onEventClick(event)}
-                    >
-                      <div className="font-semibold">{event.title}</div>
-                      <div className="text-xs opacity-80 mt-0.5">
-                        {new Date(event.startTime).toLocaleTimeString(undefined, {
-                          hour: 'numeric',
-                          minute: '2-digit',
-                        })}
-                        {' - '}
-                        {new Date(event.endTime).toLocaleTimeString(undefined, {
-                          hour: 'numeric',
-                          minute: '2-digit',
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function getStartDate(date: Date, view: ViewMode): Date {
   const d = new Date(date);
   if (view === 'month') {
@@ -1428,6 +993,9 @@ function getStartDate(date: Date, view: ViewMode): Date {
     d.setDate(d.getDate() - d.getDay());
   } else if (view === 'week') {
     d.setDate(d.getDate() - d.getDay());
+  } else if (view === 'agenda') {
+    // Show a month's worth of events starting from currentDate.
+    // Nothing to adjust.
   }
   d.setHours(0, 0, 0, 0);
   return d;
@@ -1441,6 +1009,8 @@ function getEndDate(date: Date, view: ViewMode): Date {
     d.setDate(d.getDate() + (6 - d.getDay()));
   } else if (view === 'week') {
     d.setDate(d.getDate() + (6 - d.getDay()));
+  } else if (view === 'agenda') {
+    d.setMonth(d.getMonth() + 1);
   }
   d.setHours(23, 59, 59, 999);
   return d;

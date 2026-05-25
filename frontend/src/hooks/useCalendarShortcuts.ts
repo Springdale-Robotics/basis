@@ -9,6 +9,7 @@ export interface CalendarShortcutHandlers {
   onMonthView?: () => void;
   onWeekView?: () => void;
   onDayView?: () => void;
+  onAgendaView?: () => void;
   onEscape?: () => void;
   onDelete?: () => void;
   onEdit?: () => void;
@@ -94,6 +95,13 @@ export function useCalendarShortcuts(handlers: CalendarShortcutHandlers) {
         }
         break;
 
+      case 'a':
+        if (!hasModifier) {
+          event.preventDefault();
+          handlersRef.current.onAgendaView?.();
+        }
+        break;
+
       case 'Escape':
         handlersRef.current.onEscape?.();
         break;
@@ -129,6 +137,7 @@ export const KEYBOARD_SHORTCUTS = [
   { key: 'm', description: 'Month view' },
   { key: 'w', description: 'Week view' },
   { key: 'd', description: 'Day view' },
+  { key: 'a', description: 'Agenda view' },
   { key: 'e', description: 'Edit selected event' },
   { key: 'Esc', description: 'Close dialog' },
 ];

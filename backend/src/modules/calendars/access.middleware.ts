@@ -30,7 +30,10 @@ export function requireCalendarAccess(min: CalendarPermissionLevel) {
   return async (request: FastifyRequest): Promise<void> => {
     if (!request.user) throw Errors.unauthorized();
     const params = (request.params as Record<string, string> | undefined) ?? {};
-    const calendarId = params.id ?? params.calendarId;
+    // Prefer the explicit calendarId param when both are present. Event routes
+    // are shaped `/:calendarId/events/:id` — picking `id` there would resolve
+    // to the event id (not the calendar id) and always 403.
+    const calendarId = params.calendarId ?? params.id;
     if (!calendarId) {
       throw Errors.validation('Calendar id missing on request');
     }
