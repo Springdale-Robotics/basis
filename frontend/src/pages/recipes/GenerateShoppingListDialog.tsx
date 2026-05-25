@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ShoppingCart, Check, Loader2, AlertCircle, Package } from 'lucide-react';
+import { ShoppingCart, Check, Loader2, Package } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -12,13 +12,9 @@ import {
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { recipesApi, type ShoppingListItem, type GenerateShoppingListResponse } from '@/api/recipes';
-import { cn } from '@/lib/utils';
+import { recipesApi, type GenerateShoppingListResponse } from '@/api/recipes';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
 
 interface GenerateShoppingListDialogProps {
@@ -39,7 +35,6 @@ export function GenerateShoppingListDialog({
   const { isAdvanced } = useInventoryTier();
   const [step, setStep] = useState<Step>('options');
   const [checkInventory, setCheckInventory] = useState(false);
-  const [servingsMultiplier, setServingsMultiplier] = useState(1);
   const [previewData, setPreviewData] = useState<GenerateShoppingListResponse | null>(null);
 
   const queryClient = useQueryClient();
@@ -50,7 +45,6 @@ export function GenerateShoppingListDialog({
         startDate: startDate.toISOString().split('T')[0],
         endDate: endDate.toISOString().split('T')[0],
         checkInventory,
-        servingsMultiplier,
       }),
     onSuccess: (data) => {
       setPreviewData(data);
@@ -64,7 +58,6 @@ export function GenerateShoppingListDialog({
         startDate: startDate.toISOString().split('T')[0],
         endDate: endDate.toISOString().split('T')[0],
         checkInventory,
-        servingsMultiplier,
       }),
     onSuccess: (data) => {
       setPreviewData(data);
@@ -76,7 +69,6 @@ export function GenerateShoppingListDialog({
   const handleClose = () => {
     setStep('options');
     setCheckInventory(true);
-    setServingsMultiplier(1);
     setPreviewData(null);
     onOpenChange(false);
   };
@@ -105,9 +97,14 @@ export function GenerateShoppingListDialog({
 
         {step === 'options' && (
           <>
-            <div className="space-y-6 py-4">
+            <div className="space-y-4 py-4">
+              <p className="text-sm text-muted-foreground">
+                Ingredients are scaled by each meal's own servings setting. Adjust
+                a meal's servings in the meal plan to change how much is added.
+              </p>
+
               {isAdvanced && (
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between rounded-lg border p-3">
                   <div className="space-y-0.5">
                     <Label htmlFor="check-inventory">Check current inventory</Label>
                     <p className="text-xs text-muted-foreground">
@@ -121,25 +118,6 @@ export function GenerateShoppingListDialog({
                   />
                 </div>
               )}
-
-              <div className="space-y-2">
-                <Label htmlFor="servings-multiplier">Servings multiplier</Label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    id="servings-multiplier"
-                    type="number"
-                    min={0.5}
-                    max={10}
-                    step={0.5}
-                    value={servingsMultiplier}
-                    onChange={(e) => setServingsMultiplier(parseFloat(e.target.value) || 1)}
-                    className="w-24"
-                  />
-                  <span className="text-sm text-muted-foreground">
-                    x original recipe servings
-                  </span>
-                </div>
-              </div>
             </div>
 
             <DialogFooter>
@@ -156,7 +134,7 @@ export function GenerateShoppingListDialog({
 
         {step === 'preview' && previewData && (
           <>
-            <ScrollArea className="max-h-[400px] pr-4">
+            <div className="max-h-[400px] overflow-y-auto">
               <div className="space-y-4 py-4">
                 {previewData.items.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-8 text-center">
@@ -225,7 +203,7 @@ export function GenerateShoppingListDialog({
                   </>
                 )}
               </div>
-            </ScrollArea>
+            </div>
 
             <DialogFooter>
               <Button variant="outline" onClick={() => setStep('options')}>

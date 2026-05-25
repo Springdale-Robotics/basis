@@ -1359,17 +1359,15 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         startDate: z.coerce.date(),
         endDate: z.coerce.date(),
         checkInventory: z.boolean().default(true),
-        servingsMultiplier: z.number().positive().default(1),
       });
 
-      const { startDate, endDate, checkInventory, servingsMultiplier } = schema.parse(request.body);
+      const { startDate, endDate, checkInventory } = schema.parse(request.body);
 
       const result = await generateShoppingListFromMealPlans(
         request.user!.householdId,
         startDate,
         endDate,
-        checkInventory,
-        servingsMultiplier
+        checkInventory
       );
 
       return { success: true, data: result };
@@ -1385,17 +1383,15 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         startDate: z.coerce.date(),
         endDate: z.coerce.date(),
         checkInventory: z.boolean().default(true),
-        servingsMultiplier: z.number().positive().default(1),
       });
 
-      const { startDate, endDate, checkInventory, servingsMultiplier } = schema.parse(request.body);
+      const { startDate, endDate, checkInventory } = schema.parse(request.body);
 
       const result = await generateShoppingListFromMealPlans(
         request.user!.householdId,
         startDate,
         endDate,
-        checkInventory,
-        servingsMultiplier
+        checkInventory
       );
 
       // Add items to shopping list
@@ -1462,9 +1458,8 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       const schema = z.object({
         startDate: z.string(),
         endDate: z.string(),
-        servingsMultiplier: z.number().positive().default(1),
       });
-      const { startDate, endDate, servingsMultiplier } = schema.parse(request.body);
+      const { startDate, endDate } = schema.parse(request.body);
 
       const { generateFromMealPlan } = await import('../../services/shopping-list-generation.service.js');
 
@@ -1480,7 +1475,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         request.user!.householdId,
         startDate,
         endDate,
-        { tier, confidenceThresholds: thresholds, servingsMultiplier },
+        { tier, confidenceThresholds: thresholds },
       );
 
       return { success: true, data: { items: preview } };
@@ -1585,6 +1580,38 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
+  app.patch<{ Params: { id: string } }>(
+    '/meal-plans/:id',
+    { preHandler: [authMiddleware, requireMealPlanAccess('edit')] },
+    async (request) => {
+      const schema = z.object({
+        servingsMultiplier: z.number().min(0.5).max(10).optional(),
+      });
+      const updates = schema.parse(request.body);
+
+      const [updated] = await db
+        .update(mealPlans)
+        .set({
+          ...(updates.servingsMultiplier !== undefined && {
+            servingsMultiplier: updates.servingsMultiplier.toString(),
+          }),
+        })
+        .where(
+          and(
+            eq(mealPlans.id, request.params.id),
+            eq(mealPlans.householdId, request.user!.householdId)
+          )
+        )
+        .returning();
+
+      if (!updated) {
+        throw Errors.notFound('Meal plan not found');
+      }
+
+      return { success: true, data: { mealPlan: updated } };
+    }
+  );
+
   app.delete<{ Params: { id: string } }>(
     '/meal-plans/:id',
     { preHandler: [authMiddleware, requireMealPlanAccess('edit')] },
@@ -1608,8 +1635,7 @@ async function generateShoppingListFromMealPlans(
   householdId: string,
   startDate: Date,
   endDate: Date,
-  checkInventory: boolean,
-  servingsMultiplier: number
+  checkInventory: boolean
 ): Promise<{
   items: Array<{
     name: string;
@@ -1633,8 +1659,18 @@ async function generateShoppingListFromMealPlans(
     ),
   });
 
-  // Get unique recipe IDs
-  const recipeIds = [...new Set(plans.map(p => p.recipeId))];
+  // Sum each meal plan's own servings multiplier per recipe.
+  // A recipe planned twice — once at 1× and once at 1.5× — contributes 2.5× of its ingredient quantities.
+  const recipeMultipliers = new Map<string, number>();
+  for (const plan of plans) {
+    const planMult = plan.servingsMultiplier
+      ? parseFloat(plan.servingsMultiplier)
+      : 1;
+    recipeMultipliers.set(
+      plan.recipeId,
+      (recipeMultipliers.get(plan.recipeId) ?? 0) + planMult
+    );
+  }
 
   // Aggregate ingredients across all recipes
   const aggregated = new Map<string, {
@@ -1645,7 +1681,7 @@ async function generateShoppingListFromMealPlans(
     recipes: Set<string>;
   }>();
 
-  for (const recipeId of recipeIds) {
+  for (const [recipeId, totalMultiplier] of recipeMultipliers) {
     const recipe = await db.query.recipes.findFirst({
       where: eq(recipes.id, recipeId),
     });
@@ -1656,12 +1692,9 @@ async function generateShoppingListFromMealPlans(
       where: eq(recipeIngredients.recipeId, recipeId),
     });
 
-    // Count how many times this recipe appears in the date range
-    const recipeCount = plans.filter(p => p.recipeId === recipeId).length;
-
     for (const ing of ingredients) {
       const key = ing.inventoryItemId || ing.name.toLowerCase();
-      const quantity = (parseFloat(ing.quantity || '0') * servingsMultiplier * recipeCount);
+      const quantity = parseFloat(ing.quantity || '0') * totalMultiplier;
 
       if (aggregated.has(key)) {
         const existing = aggregated.get(key)!;

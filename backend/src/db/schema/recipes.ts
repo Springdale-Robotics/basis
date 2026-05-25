@@ -82,7 +82,7 @@ export const mealPlans = pgTable('meal_plans', {
     .references(() => recipes.id, { onDelete: 'cascade' }),
   plannedDate: date('planned_date').notNull(),
   mealType: mealTypeEnum('meal_type').notNull(),
-  servingsMultiplier: decimal('servings_multiplier', { precision: 5, scale: 2 }).default('1'),
+  servingsMultiplier: decimal('servings_multiplier', { precision: 10, scale: 6 }).default('1'),
   cookedAt: timestamp('cooked_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -107,7 +107,7 @@ export const activeCookingSessions = pgTable('active_cooking_sessions', {
   startedAt: timestamp('started_at').defaultNow().notNull(),
   currentStep: integer('current_step').default(0).notNull(),
   activeTimers: jsonb('active_timers').$type<ActiveTimer[]>().default([]),
-  servingsMultiplier: decimal('servings_multiplier', { precision: 5, scale: 2 }).default('1'),
+  servingsMultiplier: decimal('servings_multiplier', { precision: 10, scale: 6 }).default('1'),
 });
 
 export interface ActiveTimer {

@@ -196,7 +196,6 @@ export interface GenerateShoppingListRequest {
   startDate: string;
   endDate: string;
   checkInventory?: boolean;
-  servingsMultiplier?: number;
 }
 
 export interface ShoppingListItem {
@@ -295,6 +294,9 @@ export const recipesApi = {
 
   createMealPlan: (data: CreateMealPlanRequest) =>
     apiPost<{ mealPlan: MealPlan }>('/recipes/meal-plans', data),
+
+  updateMealPlan: (id: string, data: { servingsMultiplier?: number }) =>
+    apiPatch<{ mealPlan: MealPlan }>(`/recipes/meal-plans/${id}`, data),
 
   deleteMealPlan: (id: string) =>
     apiDelete<{ message: string }>(`/recipes/meal-plans/${id}`),
