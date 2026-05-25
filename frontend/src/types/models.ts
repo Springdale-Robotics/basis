@@ -306,6 +306,7 @@ export interface InventoryItem {
   minStockQuantity?: number;
   defaultAreaId?: string;
   density?: number;
+  needsDensity?: boolean;
   defaultShelfLifeDays?: number | null;
   quantityUnitWeights?: Record<string, number>;
   stockEntries?: StockEntry[];
@@ -341,6 +342,7 @@ export interface ShoppingListItem {
   category?: string;
   checked: boolean;
   source: 'manual' | 'meal_plan' | 'low_stock' | 'recipe';
+  sources?: Array<'manual' | 'meal_plan' | 'low_stock' | 'recipe'>;
   addedBy: string;
   defaultAreaId?: string;
   createdAt: string;

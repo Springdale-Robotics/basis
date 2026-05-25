@@ -8,7 +8,7 @@ import { requireInventoryAccess, requireShoppingListAccess } from '../../middlew
 import { Errors } from '../../lib/errors.js';
 import { randomBytes } from 'crypto';
 import { shoppingListSourceSchema } from '../../lib/validators.js';
-import { convertWithDensity, normalizeUnit } from '../../lib/unit-conversions.js';
+import { convertWithDensity, normalizeUnit, getUnitCategory } from '../../lib/unit-conversions.js';
 import {
   getItemConfidence,
   getInventoryConfidenceMap,
@@ -338,6 +338,12 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
       if (input.defaultAreaId !== undefined) updateData.defaultAreaId = input.defaultAreaId;
       if (input.density !== undefined) updateData.density = input.density.toString();
       if (input.quantityUnitWeights !== undefined) updateData.quantityUnitWeights = input.quantityUnitWeights;
+      // Clear the "needs density" flag once the user supplies one. If they're
+      // adding a quantityUnitWeight that's a different signal (count units only),
+      // but density covers the cross-dimension case that set the flag.
+      if (input.density !== undefined && input.density != null) {
+        updateData.needsDensity = false;
+      }
 
       const [updated] = await db
         .update(inventoryItems)
@@ -380,7 +386,11 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
       const [updated] = await db
         .update(inventoryItems)
-        .set({ quantityUnitWeights: updatedWeights, updatedAt: new Date() })
+        .set({
+          quantityUnitWeights: updatedWeights,
+          needsDensity: false,
+          updatedAt: new Date(),
+        })
         .where(eq(inventoryItems.id, request.params.id))
         .returning();
 
@@ -860,6 +870,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           unit: input.unit,
           addedBy: request.user!.id,
           targetAreaId: input.targetAreaId,
+          sources: ['manual'],
         })
         .returning();
 
@@ -918,9 +929,10 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     '/shopping-list/:id/check',
     { preHandler: [authMiddleware, requireShoppingListAccess('edit')] },
     async (request) => {
-      const { acquiredQuantity, keepRemainder } = z
+      const { acquiredQuantity, acquiredUnit, keepRemainder } = z
         .object({
           acquiredQuantity: z.number().min(0).optional(),
+          acquiredUnit: z.string().max(50).optional(),
           keepRemainder: z.boolean().optional(),
         })
         .parse(request.body || {});
@@ -944,18 +956,81 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           .set({ isChecked: false, updatedAt: new Date() })
           .where(eq(shoppingList.id, request.params.id))
           .returning();
-        return { success: true, data: { item: updated, remainderItem: null } };
+        return { success: true, data: { item: updated, remainderItem: null, conversion: null } };
       }
 
       // If checking with partial quantity
       const originalQuantity = Number(current.quantity) || 0;
+      const requestedUnit = current.unit ?? null;
       const acquired = acquiredQuantity !== undefined ? acquiredQuantity : originalQuantity;
+      const newUnit = acquiredUnit?.trim() || requestedUnit;
+      const unitChanged =
+        !!acquiredUnit &&
+        !!requestedUnit &&
+        normalizeUnit(acquiredUnit) !== normalizeUnit(requestedUnit);
+
+      // Look up the linked inventory item (if any) so we can check whether the
+      // acquired unit can be converted back to the requested one.
+      const inventoryItem = current.itemId
+        ? await db.query.inventoryItems.findFirst({
+            where: eq(inventoryItems.id, current.itemId),
+          })
+        : null;
+
+      // Compute conversion when the unit changed.
+      let conversion: {
+        canConvert: boolean;
+        factor: number | null;
+        sameDimension: boolean;
+        missingDensity: boolean;
+        requestedUnit: string | null;
+        acquiredUnit: string | null;
+      } | null = null;
+
+      if (unitChanged && requestedUnit && acquiredUnit) {
+        const fromCat = getUnitCategory(acquiredUnit);
+        const toCat = getUnitCategory(requestedUnit);
+        const sameDimension = fromCat === toCat && fromCat !== 'other';
+        const density = inventoryItem?.density ? Number(inventoryItem.density) : null;
+        const factor = convertWithDensity(
+          1,
+          acquiredUnit,
+          requestedUnit,
+          density,
+          (inventoryItem?.quantityUnitWeights ?? undefined) as Record<string, number> | undefined
+        );
+        const canConvert = factor !== null;
+        const missingDensity = !sameDimension && !canConvert && !density;
+        conversion = {
+          canConvert,
+          factor,
+          sameDimension,
+          missingDensity,
+          requestedUnit,
+          acquiredUnit,
+        };
+
+        // Flag the inventory item if we can't auto-convert and density is missing.
+        if (inventoryItem && missingDensity && !inventoryItem.needsDensity) {
+          await db
+            .update(inventoryItems)
+            .set({ needsDensity: true, updatedAt: new Date() })
+            .where(eq(inventoryItems.id, inventoryItem.id));
+        }
+      }
+
+      // "Did we get enough?" is judged in the requested unit. If a conversion
+      // was possible, normalize the acquired amount before comparing.
+      const acquiredInRequested =
+        unitChanged && conversion?.canConvert && conversion.factor !== null
+          ? acquired * conversion.factor
+          : acquired;
       let remainderItem = null;
 
       // If we got less than needed and want to keep remainder
-      if (keepRemainder && acquired < originalQuantity && acquired > 0) {
-        const remainingQuantity = originalQuantity - acquired;
-        // Create new item with remaining quantity
+      if (keepRemainder && acquiredInRequested < originalQuantity && acquired > 0) {
+        const remainingQuantity = originalQuantity - acquiredInRequested;
+        // Create new item with remaining quantity in the requested unit
         const [newItem] = await db
           .insert(shoppingList)
           .values({
@@ -963,28 +1038,31 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
             itemId: current.itemId,
             customName: current.customName,
             quantity: remainingQuantity.toString(),
-            unit: current.unit,
+            unit: requestedUnit,
             isChecked: false,
             addedBy: request.user!.id,
             source: current.source,
+            sources: current.sources,
             targetAreaId: current.targetAreaId,
           })
           .returning();
         remainderItem = newItem;
       }
 
-      // Update the original item with acquired quantity and check it off
+      // Update the original item: store the acquired qty/unit verbatim so
+      // put-away inserts inventory in the unit the user actually bought.
       const [updated] = await db
         .update(shoppingList)
         .set({
           isChecked: true,
           quantity: acquired.toString(),
+          unit: newUnit,
           updatedAt: new Date(),
         })
         .where(eq(shoppingList.id, request.params.id))
         .returning();
 
-      return { success: true, data: { item: updated, remainderItem } };
+      return { success: true, data: { item: updated, remainderItem, conversion } };
     }
   );
 
@@ -1412,6 +1490,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
             unit: body.unit ?? item.defaultUnit ?? null,
             addedBy: request.user!.id,
             source: 'low_stock',
+            sources: ['low_stock'],
           });
         }
       }

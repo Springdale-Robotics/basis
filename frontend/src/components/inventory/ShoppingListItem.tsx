@@ -31,7 +31,17 @@ export function ShoppingListItem({
     meal_plan: 'Meal Plan',
     low_stock: 'Low Stock',
     recipe: 'Recipe',
-  };
+  } as const;
+
+  // Multiple distinct sources have contributed to this row's quantity — show
+  // a "Mixed" badge listing them so a manual entry doesn't disguise a
+  // meal-plan contribution.
+  const sources = item.sources ?? [item.source];
+  const uniqueSources = Array.from(new Set(sources));
+  const isMixed = uniqueSources.length > 1;
+  const mixedTooltip = uniqueSources
+    .map((s) => sourceLabel[s] ?? s)
+    .join(' + ');
 
   return (
     <div
@@ -65,13 +75,15 @@ export function ShoppingListItem({
           )}
           <Badge
             variant="secondary"
+            title={isMixed ? mixedTooltip : undefined}
             className={cn(
               'text-xs',
-              item.source === 'low_stock' && 'bg-warning-muted text-warning-muted-foreground',
-              item.source === 'meal_plan' && 'bg-info-muted text-info-muted-foreground'
+              !isMixed && item.source === 'low_stock' && 'bg-warning-muted text-warning-muted-foreground',
+              !isMixed && item.source === 'meal_plan' && 'bg-info-muted text-info-muted-foreground',
+              isMixed && 'bg-primary/15 text-primary'
             )}
           >
-            {sourceLabel[item.source] || 'Manual'}
+            {isMixed ? `Mixed (${mixedTooltip})` : sourceLabel[item.source] || 'Manual'}
           </Badge>
         </div>
       </div>

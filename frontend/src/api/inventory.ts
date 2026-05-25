@@ -202,6 +202,7 @@ export const inventoryApi = {
       category?: string;
       isChecked: boolean;
       source: 'manual' | 'meal_plan' | 'low_stock' | 'recipe';
+      sources?: Array<'manual' | 'meal_plan' | 'low_stock' | 'recipe'>;
       addedBy: string;
       targetAreaId?: string;
       createdAt: string;
@@ -227,6 +228,7 @@ export const inventoryApi = {
         category: item.category,
         checked: item.isChecked,
         source: item.source,
+        sources: item.sources,
         addedBy: item.addedBy,
         createdAt: item.createdAt,
         updatedAt: item.updatedAt,
@@ -246,6 +248,7 @@ export const inventoryApi = {
       category?: string;
       isChecked: boolean;
       source: 'manual' | 'meal_plan' | 'low_stock' | 'recipe';
+      sources?: Array<'manual' | 'meal_plan' | 'low_stock' | 'recipe'>;
       addedBy: string;
       createdAt: string;
       updatedAt: string;
@@ -262,6 +265,7 @@ export const inventoryApi = {
         category: response.item.category,
         checked: response.item.isChecked,
         source: response.item.source,
+        sources: response.item.sources,
         addedBy: response.item.addedBy,
         createdAt: response.item.createdAt,
         updatedAt: response.item.updatedAt,
@@ -281,8 +285,22 @@ export const inventoryApi = {
     }
   ) => apiPatch<{ item: unknown }>(`/inventory/shopping-list/${id}`, data),
 
-  checkShoppingListItem: (id: string, options?: { acquiredQuantity?: number; keepRemainder?: boolean }) =>
-    apiPost<{ item: ShoppingListItem; remainderItem: ShoppingListItem | null }>(`/inventory/shopping-list/${id}/check`, options || {}),
+  checkShoppingListItem: (
+    id: string,
+    options?: { acquiredQuantity?: number; acquiredUnit?: string; keepRemainder?: boolean }
+  ) =>
+    apiPost<{
+      item: ShoppingListItem;
+      remainderItem: ShoppingListItem | null;
+      conversion: {
+        canConvert: boolean;
+        factor: number | null;
+        sameDimension: boolean;
+        missingDensity: boolean;
+        requestedUnit: string | null;
+        acquiredUnit: string | null;
+      } | null;
+    }>(`/inventory/shopping-list/${id}/check`, options || {}),
 
   deleteShoppingListItem: (id: string) =>
     apiDelete<{ message: string }>(`/inventory/shopping-list/${id}`),

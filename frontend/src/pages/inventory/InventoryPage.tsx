@@ -837,8 +837,17 @@ export function InventoryPage() {
           )}
           <span className="text-base shrink-0">{getItemIcon(item)}</span>
           <div className="min-w-0">
-            <p className="font-medium truncate">
-              {item.name}
+            <p className="font-medium truncate flex items-center gap-2">
+              <span className="truncate">{item.name}</span>
+              {item.needsDensity && (
+                <Badge
+                  variant="outline"
+                  className="shrink-0 border-amber-500/40 bg-amber-50 text-amber-900 text-[10px] py-0 px-1.5 dark:bg-amber-950/40 dark:text-amber-200"
+                  title="This item has been bought in a unit that needs a density to convert. Edit the item to add one."
+                >
+                  Needs density
+                </Badge>
+              )}
             </p>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               {item.category && <span>{item.category}</span>}

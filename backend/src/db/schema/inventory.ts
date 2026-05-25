@@ -12,7 +12,7 @@ import {
   pgEnum,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import { households } from './households';
 import { users } from './users';
 import { recipes, mealPlans } from './recipes';
@@ -118,6 +118,10 @@ export const inventoryItems = pgTable('inventory_items', {
   density: decimal('density', { precision: 8, scale: 4 }),
   // Per-item count unit -> grams mappings (e.g., { "each": 50, "dozen": 600 })
   quantityUnitWeights: jsonb('quantity_unit_weights').$type<Record<string, number>>().default({}),
+  // True when this item has been seen in incompatible units (volume vs weight
+  // with no density / no quantityUnitWeight to bridge). Set during check-off,
+  // cleared when the user provides density or a covering weight.
+  needsDensity: boolean('needs_density').notNull().default(false),
   category: varchar('category', { length: 100 }),
   keepInStock: boolean('keep_in_stock').default(false).notNull(),
   minStockQuantity: decimal('min_stock_quantity', { precision: 10, scale: 3 }),
@@ -172,6 +176,10 @@ export const shoppingList = pgTable('shopping_list', {
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
   source: shoppingListSourceEnum('source').notNull().default('manual'),
+  // All source labels that have contributed to this row. Starts as `[source]`,
+  // grows when a merge brings in a different source. Lets the UI surface a
+  // "Mixed" badge instead of pretending a meal-plan top-up was manual.
+  sources: shoppingListSourceEnum('sources').array().notNull().default(sql`ARRAY[]::shopping_list_source[]`),
   targetAreaId: uuid('target_area_id').references(() => inventoryAreas.id, {
     onDelete: 'set null',
   }),

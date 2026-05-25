@@ -1394,32 +1394,90 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         checkInventory
       );
 
-      // Add items to shopping list
-      const addedItems = [];
-      for (const item of result.items) {
-        // Check if already on shopping list
-        const existing = await db.query.shoppingList.findFirst({
-          where: and(
+      // Fetch all open shopping-list rows with their linked inventory name in
+      // one query, so we can match by either inventory item ID or normalized
+      // name across the linked/custom boundary.
+      const openRows = await db
+        .select({
+          id: shoppingList.id,
+          itemId: shoppingList.itemId,
+          customName: shoppingList.customName,
+          quantity: shoppingList.quantity,
+          unit: shoppingList.unit,
+          source: shoppingList.source,
+          sources: shoppingList.sources,
+          inventoryName: inventoryItems.name,
+        })
+        .from(shoppingList)
+        .leftJoin(inventoryItems, eq(shoppingList.itemId, inventoryItems.id))
+        .where(
+          and(
             eq(shoppingList.householdId, request.user!.householdId),
-            eq(shoppingList.isChecked, false),
-            item.inventoryItemId
-              ? eq(shoppingList.itemId, item.inventoryItemId)
-              : eq(shoppingList.customName, item.name)
-          ),
-        });
+            eq(shoppingList.isChecked, false)
+          )
+        );
+
+      const normalize = (s: string | null | undefined) =>
+        (s ?? '').trim().toLowerCase();
+      const unitsCompatible = (a: string | null | undefined, b: string | null | undefined) => {
+        const an = normalize(a);
+        const bn = normalize(b);
+        return an === bn || an === '' || bn === '';
+      };
+
+      // Mutable map so a single merge target isn't double-claimed by two new
+      // items in the same generate pass.
+      const liveRows = new Map(openRows.map((r) => [r.id, r]));
+
+      const addedItems: typeof shoppingList.$inferSelect[] = [];
+      let mergedCount = 0;
+
+      for (const item of result.items) {
+        const itemName = normalize(item.name);
+        let existing = null as (typeof openRows)[number] | null;
+        for (const row of liveRows.values()) {
+          if (!unitsCompatible(row.unit, item.unit)) continue;
+          if (item.inventoryItemId && row.itemId === item.inventoryItemId) {
+            existing = row;
+            break;
+          }
+          const rowName = normalize(row.customName ?? row.inventoryName);
+          if (rowName && rowName === itemName) {
+            existing = row;
+            break;
+          }
+        }
 
         if (existing) {
-          // Merge quantities
           const existingQty = parseFloat(existing.quantity || '0');
+          const newQty = existingQty + item.quantity;
+          // Existing rows from before sources[] existed have an empty array;
+          // seed from the legacy `source` column in that case.
+          const priorSources =
+            existing.sources && existing.sources.length > 0
+              ? existing.sources
+              : [existing.source];
+          const mergedSources = priorSources.includes('meal_plan')
+            ? priorSources
+            : [...priorSources, 'meal_plan' as const];
           await db
             .update(shoppingList)
             .set({
-              quantity: (existingQty + item.quantity).toString(),
+              quantity: newQty.toString(),
+              // Backfill a missing linked-item ID / unit when the new entry
+              // resolves a previously-unlinked row.
+              ...(existing.itemId == null && item.inventoryItemId
+                ? { itemId: item.inventoryItemId }
+                : {}),
+              ...(!existing.unit && item.unit ? { unit: item.unit } : {}),
+              sources: mergedSources,
               updatedAt: new Date(),
             })
             .where(eq(shoppingList.id, existing.id));
+          existing.quantity = newQty.toString();
+          existing.sources = mergedSources;
+          mergedCount += 1;
         } else {
-          // Add new item
           const [added] = await db
             .insert(shoppingList)
             .values({
@@ -1430,10 +1488,22 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
               unit: item.unit,
               addedBy: request.user!.id,
               source: 'meal_plan',
+              sources: ['meal_plan'],
             })
             .returning();
 
           addedItems.push(added);
+          // Allow subsequent items in the same batch to merge into this row.
+          liveRows.set(added.id, {
+            id: added.id,
+            itemId: added.itemId,
+            customName: added.customName,
+            quantity: added.quantity,
+            unit: added.unit,
+            source: added.source,
+            sources: added.sources,
+            inventoryName: null,
+          });
         }
       }
 
@@ -1441,7 +1511,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         success: true,
         data: {
           addedCount: addedItems.length,
-          mergedCount: result.items.length - addedItems.length,
+          mergedCount,
           items: result.items,
         },
       };

@@ -14,6 +14,7 @@ import { AddToListDialog } from '@/components/inventory/AddToListDialog';
 import { CheckOffItemDialog } from '@/components/inventory/CheckOffItemDialog';
 import { inventoryApi } from '@/api/inventory';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
+import { toast } from '@/hooks/useToast';
 import { cn } from '@/lib/utils';
 import type { ShoppingListItem } from '@/types/models';
 
@@ -41,12 +42,33 @@ export function ShoppingListPage() {
   });
 
   const checkItemMutation = useMutation({
-    mutationFn: ({ id, options }: { id: string; options?: { acquiredQuantity?: number; keepRemainder?: boolean } }) =>
-      inventoryApi.checkShoppingListItem(id, options),
-    onSuccess: () => {
+    mutationFn: ({
+      id,
+      options,
+    }: {
+      id: string;
+      options?: { acquiredQuantity?: number; acquiredUnit?: string; keepRemainder?: boolean };
+    }) => inventoryApi.checkShoppingListItem(id, options),
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['shopping-list'] });
+      // Also invalidate inventory items so the needs-density badge picks up
+      // any flag the backend just raised.
+      queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
       setCheckOffDialogOpen(false);
       setSelectedItem(null);
+
+      const conv = data.conversion;
+      if (conv?.missingDensity) {
+        toast({
+          title: 'Density needed for this item',
+          description: `Stored as ${conv.acquiredUnit}. Add a density on the inventory item so we can convert to ${conv.requestedUnit}.`,
+        });
+      } else if (conv?.canConvert && conv.factor !== null) {
+        toast({
+          title: 'Converted',
+          description: `1 ${conv.acquiredUnit} = ${conv.factor.toFixed(3)} ${conv.requestedUnit}.`,
+        });
+      }
     },
   });
 
@@ -75,7 +97,11 @@ export function ShoppingListPage() {
     }
   };
 
-  const handleCheckOffConfirm = (acquiredQuantity: number, keepRemainder: boolean) => {
+  const handleCheckOffConfirm = (
+    acquiredQuantity: number,
+    keepRemainder: boolean,
+    acquiredUnit?: string
+  ) => {
     if (!selectedItem) return;
 
     if (acquiredQuantity === 0) {
@@ -86,7 +112,7 @@ export function ShoppingListPage() {
     } else {
       checkItemMutation.mutate({
         id: selectedItem.id,
-        options: { acquiredQuantity, keepRemainder },
+        options: { acquiredQuantity, acquiredUnit, keepRemainder },
       });
     }
   };
@@ -214,20 +240,30 @@ export function ShoppingListPage() {
                           {item.quantity} {item.unit}
                         </p>
                       </div>
-                      {(item.source !== 'low_stock' || isAdvanced) && (
-                        <Badge
-                          variant={
-                            item.source === 'meal_plan'
-                              ? 'default'
-                              : item.source === 'low_stock'
-                              ? 'secondary'
-                              : 'outline'
-                          }
-                          className="text-xs"
-                        >
-                          {item.source.replace('_', ' ')}
-                        </Badge>
-                      )}
+                      {(() => {
+                        const sources = item.sources ?? [item.source];
+                        const unique = Array.from(new Set(sources));
+                        const mixed = unique.length > 1;
+                        if (!mixed && item.source === 'low_stock' && !isAdvanced) return null;
+                        const labels = unique.map((s) => s.replace('_', ' '));
+                        return (
+                          <Badge
+                            variant={
+                              mixed
+                                ? 'default'
+                                : item.source === 'meal_plan'
+                                ? 'default'
+                                : item.source === 'low_stock'
+                                ? 'secondary'
+                                : 'outline'
+                            }
+                            title={mixed ? labels.join(' + ') : undefined}
+                            className="text-xs"
+                          >
+                            {mixed ? `Mixed (${labels.join(' + ')})` : item.source.replace('_', ' ')}
+                          </Badge>
+                        );
+                      })()}
                       <Button
                         variant="ghost"
                         size="icon"

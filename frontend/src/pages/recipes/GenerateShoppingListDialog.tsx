@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ShoppingCart, Check, Loader2, Package } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ShoppingCart, Check, Loader2, Package, Calendar, UtensilsCrossed } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -39,11 +38,23 @@ export function GenerateShoppingListDialog({
 
   const queryClient = useQueryClient();
 
+  const startStr = startDate.toISOString().split('T')[0];
+  const endStr = endDate.toISOString().split('T')[0];
+
+  const { data: mealPlansData } = useQuery({
+    queryKey: ['meal-plans', startStr, endStr],
+    queryFn: () => recipesApi.getMealPlans({ start: startStr, end: endStr }),
+    enabled: open,
+  });
+
+  const mealPlans = mealPlansData?.mealPlans ?? [];
+  const recipeCount = new Set(mealPlans.map((m) => m.recipeId)).size;
+
   const previewMutation = useMutation({
     mutationFn: () =>
       recipesApi.previewShoppingList({
-        startDate: startDate.toISOString().split('T')[0],
-        endDate: endDate.toISOString().split('T')[0],
+        startDate: startStr,
+        endDate: endStr,
         checkInventory,
       }),
     onSuccess: (data) => {
@@ -55,8 +66,8 @@ export function GenerateShoppingListDialog({
   const generateMutation = useMutation({
     mutationFn: () =>
       recipesApi.generateShoppingList({
-        startDate: startDate.toISOString().split('T')[0],
-        endDate: endDate.toISOString().split('T')[0],
+        startDate: startStr,
+        endDate: endStr,
         checkInventory,
       }),
     onSuccess: (data) => {
@@ -73,10 +84,14 @@ export function GenerateShoppingListDialog({
     onOpenChange(false);
   };
 
+  const sameYear = startDate.getFullYear() === endDate.getFullYear();
   const dateRangeLabel = `${startDate.toLocaleDateString(undefined, {
+    weekday: 'short',
     month: 'short',
     day: 'numeric',
-  })} - ${endDate.toLocaleDateString(undefined, {
+    ...(sameYear ? {} : { year: 'numeric' }),
+  })} – ${endDate.toLocaleDateString(undefined, {
+    weekday: 'short',
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -90,15 +105,26 @@ export function GenerateShoppingListDialog({
             <ShoppingCart className="h-5 w-5" />
             Generate Shopping List
           </DialogTitle>
-          <DialogDescription>
-            Create a shopping list from your meal plans for {dateRangeLabel}
-          </DialogDescription>
         </DialogHeader>
+
+        {/* Date range + meal summary card — always visible while the dialog is open. */}
+        <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Calendar className="h-4 w-4 text-primary" />
+            {dateRangeLabel}
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <UtensilsCrossed className="h-3.5 w-3.5" />
+            {mealPlans.length === 0
+              ? 'No meals planned in this range'
+              : `${mealPlans.length} meal${mealPlans.length === 1 ? '' : 's'} planned across ${recipeCount} recipe${recipeCount === 1 ? '' : 's'}`}
+          </div>
+        </div>
 
         {step === 'options' && (
           <>
-            <div className="space-y-4 py-4">
-              <p className="text-sm text-muted-foreground">
+            <div className="space-y-4 py-2">
+              <p className="text-xs text-muted-foreground">
                 Ingredients are scaled by each meal's own servings setting. Adjust
                 a meal's servings in the meal plan to change how much is added.
               </p>
@@ -124,7 +150,10 @@ export function GenerateShoppingListDialog({
               <Button variant="outline" onClick={handleClose}>
                 Cancel
               </Button>
-              <Button onClick={() => previewMutation.mutate()} disabled={previewMutation.isPending}>
+              <Button
+                onClick={() => previewMutation.mutate()}
+                disabled={previewMutation.isPending || mealPlans.length === 0}
+              >
                 {previewMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Preview List
               </Button>
