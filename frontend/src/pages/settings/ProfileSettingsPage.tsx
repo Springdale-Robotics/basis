@@ -12,6 +12,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { usersApi } from '@/api/users';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
+import { AppPasswordsCard } from '@/components/profile/AppPasswordsCard';
 
 const profileSchema = z.object({
   displayName: z.string().min(1, 'Display name is required'),
@@ -117,6 +118,8 @@ export function ProfileSettingsPage() {
           <Button variant="outline">Change Password</Button>
         </CardContent>
       </Card>
+
+      <AppPasswordsCard />
     </div>
   );
 }

@@ -5,6 +5,7 @@ export * from './devices';
 export * from './sessions';
 export * from './permissions';
 export * from './groups';
+export * from './app-passwords';
 
 // Feature tables
 export * from './calendars';

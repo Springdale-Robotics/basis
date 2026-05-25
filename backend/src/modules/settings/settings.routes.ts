@@ -7,6 +7,16 @@ import { authMiddleware, requireAdmin } from '../../middleware/auth.middleware.j
 import { Errors } from '../../lib/errors.js';
 import { hexColorSchema } from '../../lib/validators.js';
 import { config } from '../../config/index.js';
+import {
+  configureFunnel,
+  configureServe,
+  disableFunnel,
+  disableServe,
+  getServeStatus,
+  getTailscaleStatus,
+} from '../../lib/tailscale.js';
+
+const PUBLIC_ICS_PATH = '/api/v1/calendars/public';
 
 const updateThemeSchema = z.object({
   mode: z.enum(['light', 'dark', 'system']).optional(),
@@ -35,6 +45,41 @@ const configureDdnsSchema = z.object({
   domain: z.string().min(1).max(255),
   credentials: z.string().min(1),
   updateIntervalMinutes: z.number().int().min(5).max(60).default(15),
+});
+
+const remoteAccessUrlSchema = z
+  .string()
+  .url('Must be a valid URL')
+  .max(255)
+  .refine((u) => /^https?:\/\//.test(u), 'Must start with http:// or https://')
+  .refine((u) => !u.endsWith('/'), 'Must not end with a trailing slash');
+
+const updateRemoteAccessSchema = z.object({
+  mode: z.enum(['local_only', 'cloudflare', 'tailscale', 'custom_domain']).optional(),
+  publicUrl: remoteAccessUrlSchema.optional().nullable(),
+  localUrl: remoteAccessUrlSchema.optional().nullable(),
+  cloudflare: z
+    .object({
+      tunnelId: z.string(),
+      tunnelToken: z.string(),
+    })
+    .optional()
+    .nullable(),
+  tailscale: z
+    .object({
+      hostname: z.string(),
+      tailnet: z.string(),
+      magicDnsUrl: z.string(),
+    })
+    .optional()
+    .nullable(),
+  customDomain: z
+    .object({
+      domain: z.string(),
+      sslConfigured: z.boolean(),
+    })
+    .optional()
+    .nullable(),
 });
 
 export async function settingsRoutes(app: FastifyInstance): Promise<void> {
@@ -270,6 +315,217 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       const remoteAccess = settings?.remoteAccess || { mode: 'local_only' };
 
       return { success: true, data: { remoteAccess } };
+    }
+  );
+
+  // Update remote access configuration (deep merge into settings.remoteAccess).
+  // Sub-objects passed as null are cleared; omitted fields are preserved.
+  app.patch(
+    '/remote-access',
+    { preHandler: [authMiddleware, requireAdmin()] },
+    async (request) => {
+      const input = updateRemoteAccessSchema.parse(request.body);
+
+      const current = await db.query.households.findFirst({
+        where: eq(households.id, request.user!.householdId),
+        columns: { settings: true },
+      });
+
+      const settings = (current?.settings as Record<string, unknown> | null) ?? {};
+      const existingRemoteAccess = (settings.remoteAccess as Record<string, unknown> | undefined) ?? {
+        mode: 'local_only',
+      };
+
+      const newRemoteAccess: Record<string, unknown> = { ...existingRemoteAccess };
+      for (const [key, value] of Object.entries(input)) {
+        if (value === null) {
+          delete newRemoteAccess[key];
+        } else if (value !== undefined) {
+          newRemoteAccess[key] = value;
+        }
+      }
+
+      await db
+        .update(households)
+        .set({
+          settings: { ...settings, remoteAccess: newRemoteAccess },
+          updatedAt: new Date(),
+        })
+        .where(eq(households.id, request.user!.householdId));
+
+      return { success: true, data: { remoteAccess: newRemoteAccess } };
+    }
+  );
+
+  // ─── Tailscale auto-detection + serve config ──────────────────────────
+
+  app.get(
+    '/remote-access/tailscale/detect',
+    { preHandler: [authMiddleware] },
+    async () => {
+      const status = await getTailscaleStatus();
+      const serve = await getServeStatus();
+      return {
+        success: true,
+        data: {
+          ...status,
+          serve,
+        },
+      };
+    }
+  );
+
+  app.post(
+    '/remote-access/tailscale/enable',
+    { preHandler: [authMiddleware, requireAdmin()] },
+    async (request, reply) => {
+      const status = await getTailscaleStatus();
+      if (!status.available || !status.hostname) {
+        reply.code(409);
+        return {
+          success: false,
+          error: {
+            code: 'TAILSCALE_UNAVAILABLE',
+            message: 'Tailscale is not available on this host',
+            issues: status.issues,
+          },
+        };
+      }
+      const result = await configureServe(config.PORT);
+      if (!result.success) {
+        reply.code(409);
+        return {
+          success: false,
+          error: {
+            code: 'TAILSCALE_SERVE_FAILED',
+            message: result.error ?? 'tailscale serve failed',
+            issue: result.issue,
+          },
+        };
+      }
+
+      // Persist the URL into household settings so other code (CalDAV PROPFIND,
+      // public-ICS links, etc.) picks it up via getCanonicalUrl().
+      const publicUrl = `https://${status.hostname}`;
+      const current = await db.query.households.findFirst({
+        where: eq(households.id, request.user!.householdId),
+        columns: { settings: true },
+      });
+      const existing = (current?.settings as Record<string, unknown>) ?? {};
+      const existingRemote =
+        (existing.remoteAccess as Record<string, unknown> | undefined) ?? {};
+      const newRemote = {
+        ...existingRemote,
+        mode: 'tailscale',
+        publicUrl,
+        tailscale: {
+          hostname: status.hostname,
+          tailnet: status.tailnet ?? '',
+          magicDnsUrl: publicUrl,
+        },
+      };
+      await db
+        .update(households)
+        .set({
+          settings: { ...existing, remoteAccess: newRemote },
+          updatedAt: new Date(),
+        })
+        .where(eq(households.id, request.user!.householdId));
+
+      return {
+        success: true,
+        data: { publicUrl, remoteAccess: newRemote },
+      };
+    }
+  );
+
+  app.post(
+    '/remote-access/tailscale/disable',
+    { preHandler: [authMiddleware, requireAdmin()] },
+    async (request, reply) => {
+      const result = await disableServe();
+      if (!result.success) {
+        reply.code(409);
+        return {
+          success: false,
+          error: {
+            code: 'TAILSCALE_RESET_FAILED',
+            message: result.error ?? 'tailscale serve reset failed',
+          },
+        };
+      }
+      // Clear the publicUrl so we don't keep advertising an https URL that no
+      // longer terminates anywhere.
+      const current = await db.query.households.findFirst({
+        where: eq(households.id, request.user!.householdId),
+        columns: { settings: true },
+      });
+      const existing = (current?.settings as Record<string, unknown>) ?? {};
+      const existingRemote =
+        (existing.remoteAccess as Record<string, unknown> | undefined) ?? {};
+      const { publicUrl: _ignored, ...rest } = existingRemote;
+      await db
+        .update(households)
+        .set({
+          settings: { ...existing, remoteAccess: rest },
+          updatedAt: new Date(),
+        })
+        .where(eq(households.id, request.user!.householdId));
+      return { success: true, data: { remoteAccess: rest } };
+    }
+  );
+
+  app.post(
+    '/remote-access/tailscale/funnel/enable',
+    { preHandler: [authMiddleware, requireAdmin()] },
+    async (_request, reply) => {
+      const status = await getTailscaleStatus();
+      if (!status.available) {
+        reply.code(409);
+        return {
+          success: false,
+          error: {
+            code: 'TAILSCALE_UNAVAILABLE',
+            message: 'Tailscale is not available on this host',
+            issues: status.issues,
+          },
+        };
+      }
+      const result = await configureFunnel(PUBLIC_ICS_PATH, config.PORT);
+      if (!result.success) {
+        reply.code(409);
+        return {
+          success: false,
+          error: {
+            code: 'TAILSCALE_FUNNEL_FAILED',
+            message: result.error ?? 'tailscale funnel failed',
+            issue: result.issue,
+          },
+        };
+      }
+      return {
+        success: true,
+        data: {
+          path: PUBLIC_ICS_PATH,
+          publicHostname: status.hostname,
+        },
+      };
+    }
+  );
+
+  app.post(
+    '/remote-access/tailscale/funnel/disable',
+    { preHandler: [authMiddleware, requireAdmin()] },
+    async (_request, reply) => {
+      const result = await disableFunnel(PUBLIC_ICS_PATH);
+      if (!result.success) {
+        reply.code(409);
+        return {
+          success: false,
+          error: { code: 'TAILSCALE_FUNNEL_RESET_FAILED', message: result.error },
+        };
+      }
+      return { success: true, data: { message: 'Funnel disabled' } };
     }
   );
 

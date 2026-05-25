@@ -43,16 +43,25 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { calendarsApi, type PermissionLevel } from '@/api/calendars';
+import { IntraHouseholdAccess } from '@/components/calendar/CalendarSharingDialog';
 import type { Calendar } from '@/types/models';
 import { toast } from '@/hooks/useToast';
 import { useTheme } from '@/hooks/useTheme';
 import { useCalendarColor } from '@/hooks/useCalendarColor';
 import { COLOR_PALETTES, getColorForIndex } from '@/lib/theme-presets';
 
-interface CalendarFormData {
+export type CalendarAccessPreset =
+  | 'everyone'      // No rules: every household member gets edit
+  | 'admins_only'   // role=admin, edit
+  | 'kids_only'     // role=kid, edit
+  | 'just_me'       // user=<creator>, edit
+  | 'custom';       // Open the share dialog after create
+
+export interface CalendarFormData {
   name: string;
   colorIndex: number;
   type: 'individual' | 'group';
+  accessPreset?: CalendarAccessPreset; // create-mode only
 }
 
 interface CalendarFormProps {
@@ -63,6 +72,8 @@ interface CalendarFormProps {
   onDelete?: () => void;
   isSubmitting?: boolean;
   isDeleting?: boolean;
+  /** Which tab the dialog opens to in edit mode (default: 'general'). */
+  initialTab?: 'general' | 'sharing' | 'public';
 }
 
 const permissionLabels: Record<PermissionLevel, string> = {
@@ -79,6 +90,7 @@ export function CalendarForm({
   onDelete,
   isSubmitting,
   isDeleting,
+  initialTab = 'general',
 }: CalendarFormProps) {
   const isEditing = !!calendar;
   const navigate = useNavigate();
@@ -109,6 +121,7 @@ export function CalendarForm({
           name: '',
           colorIndex: 0,
           type: 'group',
+          accessPreset: 'everyone',
         },
   });
 
@@ -190,7 +203,7 @@ export function CalendarForm({
 
   useEffect(() => {
     if (open) {
-      setActiveTab('general');
+      setActiveTab(initialTab);
       if (calendar) {
         reset({
           name: calendar.name,
@@ -202,10 +215,11 @@ export function CalendarForm({
           name: '',
           colorIndex: 0,
           type: 'group',
+          accessPreset: 'everyone',
         });
       }
     }
-  }, [open, calendar, reset]);
+  }, [open, calendar, reset, initialTab]);
 
   const handleFormSubmit = (data: CalendarFormData) => {
     onSubmit(data);
@@ -338,14 +352,29 @@ export function CalendarForm({
               </TabsContent>
 
               {/* Sharing Tab */}
-              <TabsContent value="sharing" className="space-y-4 pt-4 min-h-[320px]">
-                {sharesLoading ? (
-                  <div className="flex justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin" />
+              <TabsContent value="sharing" className="space-y-6 pt-4 min-h-[320px]">
+                {/* Inside-household access (roles, groups, individual users) */}
+                {calendar && (
+                  <div className="space-y-2">
+                    <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Inside this household
+                    </Label>
+                    <IntraHouseholdAccess calendar={calendar} open={open} />
                   </div>
-                ) : (
-                  <>
-                    {/* Current Shares */}
+                )}
+
+                {/* Connected-household sharing (cross-household) */}
+                <div className="space-y-2">
+                  <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Connected households
+                  </Label>
+                  {sharesLoading ? (
+                    <div className="flex justify-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin" />
+                    </div>
+                  ) : (
+                    <>
+                      {/* Current Shares */}
                     {sharesData?.shares && sharesData.shares.length > 0 && (
                       <div className="space-y-2">
                         <Label>Shared With</Label>
@@ -435,7 +464,8 @@ export function CalendarForm({
                       </Button>
                     </DialogFooter>
                   </>
-                )}
+                  )}
+                </div>
               </TabsContent>
 
               {/* Public Link Tab */}
@@ -624,6 +654,26 @@ export function CalendarForm({
                     <SelectItem value="individual">Personal</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="access">Who can see this calendar?</Label>
+                <Select
+                  value={watch('accessPreset') ?? 'everyone'}
+                  onValueChange={(v) => setValue('accessPreset', v as CalendarAccessPreset)}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="everyone">Everyone in this household</SelectItem>
+                    <SelectItem value="admins_only">Admins / Parents only</SelectItem>
+                    <SelectItem value="kids_only">Kids only</SelectItem>
+                    <SelectItem value="just_me">Just me</SelectItem>
+                    <SelectItem value="custom">Custom — I’ll pick after</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  You can change this any time from the calendar’s sharing settings.
+                </p>
               </div>
 
               <DialogFooter>

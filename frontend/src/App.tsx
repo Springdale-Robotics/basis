@@ -21,6 +21,7 @@ import { SetupPage } from './pages/setup/SetupPage';
 // Main pages
 import { DashboardPage } from './pages/dashboard/DashboardPage';
 import { CalendarPage } from './pages/calendar/CalendarPage';
+import { ConnectDevicePage } from './pages/calendar/ConnectDevicePage';
 import { RecipesPage } from './pages/recipes/RecipesPage';
 import { RecipeDetailPage } from './pages/recipes/RecipeDetailPage';
 import { CookModePage } from './pages/recipes/CookModePage';
@@ -68,6 +69,7 @@ export function App() {
 
                   {/* Calendar */}
                   <Route path="calendar" element={<CalendarPage />} />
+                  <Route path="calendar/connect" element={<ConnectDevicePage />} />
 
                   {/* Recipes */}
                   <Route path="recipes" element={<RecipesPage />} />

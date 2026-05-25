@@ -7,6 +7,7 @@ import { authMiddleware, requireMember } from '../../middleware/auth.middleware.
 import { Errors } from '../../lib/errors.js';
 import { generateIcsContent } from './ics.service.js';
 import { logger } from '../../lib/logger.js';
+import { getCanonicalUrl } from '../../lib/url.js';
 
 /**
  * Generate a secure random token for public calendar URLs
@@ -81,10 +82,10 @@ export async function calendarPublicRoutes(app: FastifyInstance): Promise<void> 
         })
         .where(eq(calendars.id, calendarId));
 
-      // Build the public URL
-      const baseUrl = request.headers['x-forwarded-host']
-        ? `${request.headers['x-forwarded-proto'] || 'https'}://${request.headers['x-forwarded-host']}`
-        : `${request.protocol}://${request.hostname}`;
+      // Build the public URL via the canonical-URL helper, which prefers the
+      // operator-configured remoteAccess.publicUrl before falling back to
+      // request-derived values.
+      const baseUrl = await getCanonicalUrl(request, request.user!.householdId);
 
       const feedUrl = `${baseUrl}/api/v1/calendars/public/${publicToken}/feed.ics`;
       const webcalUrl = feedUrl.replace(/^https?:\/\//, 'webcal://');
@@ -134,10 +135,7 @@ export async function calendarPublicRoutes(app: FastifyInstance): Promise<void> 
         };
       }
 
-      // Build the public URL
-      const baseUrl = request.headers['x-forwarded-host']
-        ? `${request.headers['x-forwarded-proto'] || 'https'}://${request.headers['x-forwarded-host']}`
-        : `${request.protocol}://${request.hostname}`;
+      const baseUrl = await getCanonicalUrl(request, request.user!.householdId);
 
       const feedUrl = `${baseUrl}/api/v1/calendars/public/${calendar.publicToken}/feed.ics`;
       const webcalUrl = feedUrl.replace(/^https?:\/\//, 'webcal://');

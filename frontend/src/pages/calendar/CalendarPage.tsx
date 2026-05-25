@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ChevronLeft, ChevronRight, Keyboard, CalendarDays, PanelLeftClose, PanelLeft, Camera } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, Keyboard, CalendarDays, PanelLeftClose, PanelLeft, Camera, Share2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -8,7 +9,9 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EventForm } from '@/components/calendar/EventForm';
 import { EventDetail } from '@/components/calendar/EventDetail';
-import { CalendarForm } from '@/components/calendar/CalendarForm';
+import { CalendarForm, type CalendarAccessPreset } from '@/components/calendar/CalendarForm';
+import { AccessTooltip } from '@/components/calendar/CalendarSidebar';
+import { useAuth } from '@/hooks/useAuth';
 import { EditRecurringEventDialog, type RecurrenceEditScope } from '@/components/calendar/EditRecurringEventDialog';
 import { DeleteRecurringEventDialog, type RecurrenceDeleteScope } from '@/components/calendar/DeleteRecurringEventDialog';
 import { CalendarSearch, CalendarSearchRef } from '@/components/calendar/CalendarSearch';
@@ -42,6 +45,7 @@ export function CalendarPage() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [calendarFormOpen, setCalendarFormOpen] = useState(false);
+  const [calendarFormTab, setCalendarFormTab] = useState<'general' | 'sharing' | 'public'>('general');
   const [selectedCalendar, setSelectedCalendar] = useState<CalendarType | null>(null);
   const [visibleCalendars, setVisibleCalendars] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -53,6 +57,7 @@ export function CalendarPage() {
   const queryClient = useQueryClient();
   const searchRef = useRef<CalendarSearchRef>(null);
   const { colorPalette } = useTheme();
+  const { user } = useAuth();
 
   const startDate = getStartDate(currentDate, viewMode);
   const endDate = getEndDate(currentDate, viewMode);
@@ -81,13 +86,55 @@ export function CalendarPage() {
 
   // Calendar CRUD mutations
   const createCalendarMutation = useMutation({
-    mutationFn: (data: { name: string; colorIndex: number; type: 'individual' | 'group' }) =>
-      calendarsApi.create(data),
-    onSuccess: (result) => {
+    mutationFn: async (data: {
+      name: string;
+      colorIndex: number;
+      type: 'individual' | 'group';
+      accessPreset?: CalendarAccessPreset;
+    }) => {
+      const result = await calendarsApi.create({
+        name: data.name,
+        colorIndex: data.colorIndex,
+        type: data.type,
+      });
+      // Apply the access preset, if any. 'everyone' is the default (no rules
+      // means everyone gets edit), so we skip the API call there.
+      const preset = data.accessPreset ?? 'everyone';
+      const calendarId = result.calendar.id;
+      if (preset === 'admins_only') {
+        await calendarsApi.upsertAccessRule(calendarId, {
+          principalType: 'role',
+          principalId: 'admin',
+          permissionLevel: 'edit',
+        });
+      } else if (preset === 'kids_only') {
+        await calendarsApi.upsertAccessRule(calendarId, {
+          principalType: 'role',
+          principalId: 'kid',
+          permissionLevel: 'edit',
+        });
+      } else if (preset === 'just_me' && user?.id) {
+        await calendarsApi.upsertAccessRule(calendarId, {
+          principalType: 'user',
+          principalId: user.id,
+          permissionLevel: 'edit',
+        });
+      }
+      return { result, openCustom: preset === 'custom' };
+    },
+    onSuccess: ({ result, openCustom }) => {
       queryClient.invalidateQueries({ queryKey: ['calendars'] });
+      queryClient.invalidateQueries({ queryKey: ['calendar-access', result.calendar.id] });
       setVisibleCalendars((prev) => [...prev, result.calendar.id]);
       setCalendarFormOpen(false);
-      setSelectedCalendar(null);
+      if (openCustom) {
+        // Open the just-created calendar in edit mode so the user can finish
+        // configuring access via the share dialog.
+        setSelectedCalendar(result.calendar);
+        setCalendarFormOpen(true);
+      } else {
+        setSelectedCalendar(null);
+      }
       toast({ title: 'Calendar created' });
     },
     onError: (error) => {
@@ -146,15 +193,28 @@ export function CalendarPage() {
 
   const handleCreateCalendar = () => {
     setSelectedCalendar(null);
+    setCalendarFormTab('general');
     setCalendarFormOpen(true);
   };
 
   const handleEditCalendar = (calendar: CalendarType) => {
     setSelectedCalendar(calendar);
+    setCalendarFormTab('general');
     setCalendarFormOpen(true);
   };
 
-  const handleCalendarFormSubmit = (data: { name: string; colorIndex: number; type: 'individual' | 'group' }) => {
+  const handleShareCalendar = (calendar: CalendarType) => {
+    setSelectedCalendar(calendar);
+    setCalendarFormTab('sharing');
+    setCalendarFormOpen(true);
+  };
+
+  const handleCalendarFormSubmit = (data: {
+    name: string;
+    colorIndex: number;
+    type: 'individual' | 'group';
+    accessPreset?: CalendarAccessPreset;
+  }) => {
     if (selectedCalendar) {
       updateCalendarMutation.mutate({ id: selectedCalendar.id, name: data.name, colorIndex: data.colorIndex });
     } else {
@@ -486,23 +546,37 @@ export function CalendarPage() {
                                     : 'transparent',
                                 }}
                               />
-                              <span
-                                className={cn(
-                                  'text-sm font-medium truncate',
-                                  !visibleCalendars.includes(calendar.id) && 'text-muted-foreground'
-                                )}
-                              >
-                                {calendar.name}
-                              </span>
+                              <AccessTooltip calendarId={calendar.id}>
+                                <span
+                                  className={cn(
+                                    'text-sm font-medium truncate cursor-default',
+                                    !visibleCalendars.includes(calendar.id) && 'text-muted-foreground'
+                                  )}
+                                >
+                                  {calendar.name}
+                                </span>
+                              </AccessTooltip>
                             </div>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 opacity-0 group-hover:opacity-100 shrink-0"
-                              onClick={() => handleEditCalendar(calendar)}
-                            >
-                              <Settings className="h-3.5 w-3.5" />
-                            </Button>
+                            <div className="flex items-center opacity-0 group-hover:opacity-100 shrink-0">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                onClick={() => handleShareCalendar(calendar)}
+                                title="Share / access"
+                              >
+                                <Share2 className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                onClick={() => handleEditCalendar(calendar)}
+                                title="Edit calendar"
+                              >
+                                <Settings className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
                           </div>
                           );
                         })
@@ -571,6 +645,20 @@ export function CalendarPage() {
                   )}
                 </div>
               </ScrollArea>
+
+              <div className="mt-3 border-t pt-3">
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start text-muted-foreground"
+                >
+                  <Link to="/settings/calendars">
+                    <Settings className="mr-2 h-3.5 w-3.5" />
+                    Calendar settings
+                  </Link>
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -760,6 +848,7 @@ export function CalendarPage() {
           if (!open) setSelectedCalendar(null);
         }}
         calendar={selectedCalendar}
+        initialTab={calendarFormTab}
         onSubmit={handleCalendarFormSubmit}
         onDelete={() => selectedCalendar && deleteCalendarMutation.mutate(selectedCalendar.id)}
         isSubmitting={createCalendarMutation.isPending || updateCalendarMutation.isPending}

@@ -5,16 +5,51 @@ import {
   calendars,
   sharedResources,
   connectedHouseholds,
+  groups,
+  users,
 } from '../../db/schema/index.js';
 import { eq, and, or, inArray } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { emitHouseholdEvent } from '../../websocket/events.js';
 import { logger } from '../../lib/logger.js';
+import {
+  deleteAccessRule,
+  listAccessRules,
+  upsertAccessRule,
+} from './access.service.js';
 
 // Permission levels for calendar sharing (RFC 5545 aligned)
 const permissionLevelSchema = z.enum(['view_busy', 'view', 'edit']);
 type PermissionLevel = z.infer<typeof permissionLevelSchema>;
+
+const ROLE_NAMES = ['admin', 'member', 'kid', 'visitor'] as const;
+const ROLE_LABELS: Record<string, string> = {
+  admin: 'Admins (Parents)',
+  member: 'Members',
+  kid: 'Kids',
+  visitor: 'Visitors',
+};
+const accessRuleSchema = z
+  .object({
+    principalType: z.enum(['user', 'group', 'role']),
+    principalId: z.string().min(1),
+    permissionLevel: permissionLevelSchema,
+  })
+  .refine(
+    (v) => {
+      if (v.principalType === 'role') {
+        return (ROLE_NAMES as readonly string[]).includes(v.principalId);
+      }
+      // user / group principals are UUIDs
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.principalId);
+    },
+    {
+      message:
+        'principalId must be a UUID for user/group, or one of admin|member|kid|visitor for role',
+      path: ['principalId'],
+    }
+  );
 
 const shareCalendarSchema = z.object({
   householdId: z.string().uuid(),
@@ -343,6 +378,129 @@ export async function calendarSharingRoutes(app: FastifyInstance): Promise<void>
         success: true,
         data: { calendars: enrichedCalendars },
       };
+    }
+  );
+
+  // ===== INTRA-HOUSEHOLD CALENDAR ACCESS =====
+  // For "Parents calendar" / "Kids calendar" scoping within a household.
+  // Unlike the cross-household routes above, these reference users/groups
+  // within the operator's own household.
+
+  // List access rules for a calendar
+  app.get<{ Params: { id: string } }>(
+    '/:id/access',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const { id: calendarId } = request.params;
+      const calendar = await db.query.calendars.findFirst({
+        where: and(
+          eq(calendars.id, calendarId),
+          eq(calendars.householdId, request.user!.householdId)
+        ),
+      });
+      if (!calendar) throw Errors.notFound('Calendar');
+
+      const rules = await listAccessRules(calendarId);
+
+      // Enrich with display info so the UI can render names
+      const userIds = rules.filter((r) => r.principalType === 'user').map((r) => r.principalId);
+      const groupIds = rules.filter((r) => r.principalType === 'group').map((r) => r.principalId);
+      const [userRows, groupRows] = await Promise.all([
+        userIds.length
+          ? db.query.users.findMany({
+              where: inArray(users.id, userIds),
+              columns: { id: true, displayName: true, email: true },
+            })
+          : Promise.resolve([] as { id: string; displayName: string; email: string }[]),
+        groupIds.length
+          ? db.query.groups.findMany({
+              where: inArray(groups.id, groupIds),
+              columns: { id: true, name: true },
+            })
+          : Promise.resolve([] as { id: string; name: string }[]),
+      ]);
+      const userMap = new Map(userRows.map((u) => [u.id, u]));
+      const groupMap = new Map(groupRows.map((g) => [g.id, g]));
+
+      return {
+        success: true,
+        data: {
+          rules: rules.map((r) => ({
+            ...r,
+            principalLabel:
+              r.principalType === 'user'
+                ? userMap.get(r.principalId)?.displayName ?? 'Unknown user'
+                : r.principalType === 'group'
+                ? groupMap.get(r.principalId)?.name ?? 'Unknown group'
+                : ROLE_LABELS[r.principalId] ?? r.principalId,
+          })),
+        },
+      };
+    }
+  );
+
+  // Create or update an access rule (upsert by principal)
+  app.put<{ Params: { id: string } }>(
+    '/:id/access',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const input = accessRuleSchema.parse(request.body);
+      const { id: calendarId } = request.params;
+      const householdId = request.user!.householdId;
+
+      const calendar = await db.query.calendars.findFirst({
+        where: and(eq(calendars.id, calendarId), eq(calendars.householdId, householdId)),
+      });
+      if (!calendar) throw Errors.notFound('Calendar');
+
+      // Verify the principal is within the operator's household (roles are
+      // system-wide enum values and don't need household membership checks).
+      if (input.principalType === 'user') {
+        const u = await db.query.users.findFirst({
+          where: and(eq(users.id, input.principalId), eq(users.householdId, householdId)),
+          columns: { id: true },
+        });
+        if (!u) throw Errors.forbidden('User is not in this household');
+      } else if (input.principalType === 'group') {
+        const g = await db.query.groups.findFirst({
+          where: and(eq(groups.id, input.principalId), eq(groups.householdId, householdId)),
+          columns: { id: true },
+        });
+        if (!g) throw Errors.forbidden('Group is not in this household');
+      }
+      // principalType === 'role' is validated by the zod schema's refine.
+
+      const rule = await upsertAccessRule(
+        calendarId,
+        input.principalType,
+        input.principalId,
+        input.permissionLevel
+      );
+      emitHouseholdEvent(householdId, 'calendar:access_changed', {
+        calendarId,
+        ruleId: rule.id,
+      });
+      return { success: true, data: { rule } };
+    }
+  );
+
+  // Delete an access rule
+  app.delete<{ Params: { id: string; ruleId: string } }>(
+    '/:id/access/:ruleId',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const { id: calendarId, ruleId } = request.params;
+      const householdId = request.user!.householdId;
+
+      const calendar = await db.query.calendars.findFirst({
+        where: and(eq(calendars.id, calendarId), eq(calendars.householdId, householdId)),
+      });
+      if (!calendar) throw Errors.notFound('Calendar');
+
+      const removed = await deleteAccessRule(calendarId, ruleId);
+      if (!removed) throw Errors.notFound('Access rule');
+      emitHouseholdEvent(householdId, 'calendar:access_changed', { calendarId, ruleId });
+      return { success: true, data: { message: 'Access rule removed' } };
     }
   );
 

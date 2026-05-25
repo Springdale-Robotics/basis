@@ -15,6 +15,7 @@ import { CalendarSettingsPage } from './CalendarSettingsPage';
 import { StorageSettingsPage } from './StorageSettingsPage';
 import { GroupsSettingsPage } from './GroupsSettingsPage';
 import { FeaturePermissionsPage } from './FeaturePermissionsPage';
+import { RemoteAccessSettingsPage } from './RemoteAccessSettingsPage';
 
 export function SettingsPage() {
   const { canAdmin } = useFeaturePermissions();
@@ -70,7 +71,7 @@ export function SettingsPage() {
             <Route path="storage" element={<StorageSettingsPage />} />
             <Route path="calendars" element={<CalendarSettingsPage />} />
             <Route path="devices" element={<PlaceholderSettings title="Devices" />} />
-            <Route path="remote-access" element={<PlaceholderSettings title="Remote Access" />} />
+            <Route path="remote-access" element={<RemoteAccessSettingsPage />} />
             <Route path="backup" element={<PlaceholderSettings title="Backup" />} />
             <Route path="connections" element={<PlaceholderSettings title="Connections" />} />
             <Route path="features" element={<PlaceholderSettings title="Features" />} />

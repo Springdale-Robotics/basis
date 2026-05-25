@@ -11,6 +11,7 @@ import {
 } from '../../db/schema/index.js';
 import { eq, and, gte, lte, or, inArray, ilike, sql, isNull, isNotNull } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
+import { requireCalendarAccess } from './access.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { hexColorSchema, calendarTypeSchema, iCalRRuleSchema } from '../../lib/validators.js';
 import { emitCalendarEvent } from '../../websocket/events.js';
@@ -269,7 +270,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
   // Get events for a calendar (with recurrence expansion)
   app.get<{ Params: { calendarId: string }; Querystring: { start?: string; end?: string; expandRecurring?: string } }>(
     '/:calendarId/events',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireCalendarAccess('view')] },
     async (request) => {
       const { start, end, expandRecurring } = dateRangeQuery.parse(request.query);
 
@@ -377,7 +378,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
   // Create event
   app.post<{ Params: { calendarId: string } }>(
     '/:calendarId/events',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireMember(), requireCalendarAccess('edit')] },
     async (request) => {
       const input = createEventSchema.parse(request.body);
 
@@ -463,7 +464,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
   // Get event by ID
   app.get<{ Params: { calendarId: string; id: string } }>(
     '/:calendarId/events/:id',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireCalendarAccess('view')] },
     async (request) => {
       // Check if this is a virtual instance ID (masterId_timestamp)
       const instanceInfo = parseInstanceId(request.params.id);
@@ -506,7 +507,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
   // Update event (with recurring event scope support)
   app.patch<{ Params: { calendarId: string; id: string } }>(
     '/:calendarId/events/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireMember(), requireCalendarAccess('edit')] },
     async (request) => {
       const input = updateEventSchema.parse(request.body);
       const { scope, originalStartTime, ...updateData } = input;
@@ -671,7 +672,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
   // Delete event (with recurring event scope support)
   app.delete<{ Params: { calendarId: string; id: string } }>(
     '/:calendarId/events/:id',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireMember(), requireCalendarAccess('edit')] },
     async (request) => {
       const input = deleteEventSchema.parse(request.body || {});
       const { scope, originalStartTime } = input;
@@ -806,7 +807,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
   // Create exception for a recurring event instance
   app.post<{ Params: { calendarId: string; id: string } }>(
     '/:calendarId/events/:id/exceptions',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireMember(), requireCalendarAccess('edit')] },
     async (request) => {
       const input = createExceptionSchema.parse(request.body);
 
@@ -889,7 +890,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
   // Delete a single instance of a recurring event (by original start time)
   app.delete<{ Params: { calendarId: string; id: string; originalStartTime: string } }>(
     '/:calendarId/events/:id/instances/:originalStartTime',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireMember(), requireCalendarAccess('edit')] },
     async (request) => {
       // Verify calendar exists and is not read-only
       const calendar = await db.query.calendars.findFirst({

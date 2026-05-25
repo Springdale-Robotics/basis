@@ -1,4 +1,5 @@
 import { Plus, Settings, Share2, RefreshCw, AlertCircle, Users } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -8,7 +9,7 @@ import { cn } from '@/lib/utils';
 import { useTheme } from '@/hooks/useTheme';
 import { getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
 import type { Calendar } from '@/types/models';
-import type { SharedCalendar } from '@/api/calendars';
+import { calendarsApi, type SharedCalendar } from '@/api/calendars';
 
 interface CalendarSidebarProps {
   calendars: Calendar[];
@@ -213,9 +214,11 @@ function CalendarItem({
             backgroundColor: isVisible ? calendarColor : 'transparent',
           }}
         />
-        <span className={cn('text-sm truncate', !isVisible && 'text-muted-foreground')}>
-          {calendar.name}
-        </span>
+        <AccessTooltip calendarId={calendar.id} disabled={isShared || isSynced}>
+          <span className={cn('text-sm truncate cursor-default', !isVisible && 'text-muted-foreground')}>
+            {calendar.name}
+          </span>
+        </AccessTooltip>
         {isSynced && getSyncStatusIndicator()}
         {isShared && sharedByName && (
           <Tooltip>
@@ -249,5 +252,45 @@ function CalendarItem({
         </Button>
       </div>
     </div>
+  );
+}
+
+// Hovering a calendar name shows who has access. Lazy-fetches the rules on
+// first render via React Query (cached). For shared/synced calendars we skip
+// the query since the access endpoint is on the owning side.
+export function AccessTooltip({
+  calendarId,
+  disabled,
+  children,
+}: {
+  calendarId: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  const { data } = useQuery({
+    queryKey: ['calendar-access', calendarId],
+    queryFn: () => calendarsApi.listAccessRules(calendarId),
+    enabled: !disabled,
+    staleTime: 30_000,
+  });
+
+  if (disabled) return <>{children}</>;
+
+  const rules = data?.rules ?? [];
+  const summary = rules.length === 0
+    ? 'Everyone in the household can edit'
+    : rules.map((r) => `${r.principalLabel}: ${r.permissionLevel}`).join(' · ');
+
+  // Self-contained provider so this component can be dropped anywhere without
+  // requiring a parent TooltipProvider.
+  return (
+    <TooltipProvider>
+      <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side="right" className="max-w-xs">
+        <p className="text-xs">{summary}</p>
+      </TooltipContent>
+    </Tooltip>
+    </TooltipProvider>
   );
 }

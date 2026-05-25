@@ -407,6 +407,14 @@ export async function scheduleRecurringJobs(): Promise<void> {
     }
   );
 
+  // Tailscale serve health probe — daily, idempotent, no-op when tailscale
+  // not in use.
+  const { scheduleTailscaleHealthJob, startTailscaleHealthWorker } = await import(
+    './tailscale-health.worker.js'
+  );
+  startTailscaleHealthWorker();
+  await scheduleTailscaleHealthJob();
+
   logger.info('Recurring jobs scheduled');
 }
 

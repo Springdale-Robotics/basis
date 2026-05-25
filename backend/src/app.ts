@@ -41,34 +41,51 @@ import { musicRoutes } from './modules/music/music.routes.js';
 import { groupsRoutes } from './modules/groups/groups.routes.js';
 import { permissionsRoutes } from './modules/permissions/permissions.routes.js';
 import { imageParseRoutes } from './modules/image-parse/image-parse.routes.js';
+import { appPasswordsRoutes } from './modules/app-passwords/app-passwords.routes.js';
+import { caldavRoutes, caldavWellKnownRoutes, caldavRootProbeRoutes } from './modules/caldav/caldav.routes.js';
+import { connectRoutes, connectDownloadRoutes } from './modules/connect/connect.routes.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: false, // We use our own logger
     requestIdHeader: 'x-request-id',
     genReqId: () => randomUUID(),
+    // Trust X-Forwarded-* from reverse proxies (Caddy, nginx, Cloudflare Tunnel, Tailscale serve).
+    // Required for getCanonicalUrl() to honor the proxy-supplied scheme/host when no publicUrl is set.
+    trustProxy: true,
   });
 
   // Request ID middleware (run first)
   app.addHook('onRequest', requestIdMiddleware);
+
+  // CalDAV / WebDAV content types — registered globally so the /.well-known
+  // probes and /dav routes both accept iOS's text/xml bodies without Fastify
+  // rejecting them with FST_ERR_CTP_INVALID_MEDIA_TYPE before our handlers run.
+  app.addContentTypeParser(
+    ['application/xml', 'text/xml', 'text/calendar', 'application/octet-stream'],
+    { parseAs: 'string' },
+    (_req, body, done) => done(null, body)
+  );
 
   // Security headers
   await app.register(fastifyHelmet, {
     contentSecurityPolicy: isDev ? false : undefined,
   });
 
-  // CORS
+  // CORS for API routes. strictPreflight: false lets non-browser OPTIONS
+  // requests (e.g. CalDAV clients) fall through to their own handlers instead
+  // of being rejected with "Invalid Preflight Request".
   const corsOrigins = config.CORS_ORIGINS
     ? config.CORS_ORIGINS.split(',').map((o) => o.trim())
     : [];
 
-  await app.register(fastifyCors, {
-    origin: corsOrigins.length > 0 ? corsOrigins : true,
-    credentials: true,
-  });
+  // CORS is registered later, inside a scope that wraps all API routes.
+  // CalDAV/WebDAV routes mount outside that scope and bypass CORS entirely —
+  // they're native (non-browser) clients that don't send Origin headers.
 
-  // Compression
-  await app.register(fastifyCompress);
+  // Compression registered inside the API scope below — CalDAV responses
+  // shouldn't be gzipped (native clients may not negotiate encoding correctly,
+  // and we hit an empty-body bug with fastify-compress + application/xml).
 
   // Cookies
   await app.register(fastifyCookie, {
@@ -136,39 +153,53 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.setErrorHandler(errorHandler);
   app.setNotFoundHandler(notFoundHandler);
 
-  // Register routes
-  await app.register(healthRoutes, { prefix: '/api/v1/health' });
-  await app.register(setupRoutes, { prefix: '/api/v1/setup' });
-  await app.register(authRoutes, { prefix: '/api/v1/auth' });
-  await app.register(householdsRoutes, { prefix: '/api/v1/households' });
-  await app.register(usersRoutes, { prefix: '/api/v1/users' });
-  await app.register(devicesRoutes, { prefix: '/api/v1/devices' });
-  await app.register(calendarsRoutes, { prefix: '/api/v1/calendars' });
-  await app.register(syncRoutes, { prefix: '/api/v1/calendars' });
-  await app.register(calendarSharingRoutes, { prefix: '/api/v1/calendars' });
-  await app.register(calendarPublicRoutes, { prefix: '/api/v1/calendars' });
-  await app.register(recipesRoutes, { prefix: '/api/v1/recipes' });
-  await app.register(inventoryRoutes, { prefix: '/api/v1/inventory' });
-  await app.register(tasksRoutes, { prefix: '/api/v1/tasks' });
-  await app.register(filesRoutes, { prefix: '/api/v1/files' });
-  await app.register(listsRoutes, { prefix: '/api/v1/lists' });
-  await app.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
-  await app.register(settingsRoutes, { prefix: '/api/v1/settings' });
-  await app.register(backupRoutes, { prefix: '/api/v1/backup' });
-  await app.register(connectionsRoutes, { prefix: '/api/v1/connections' });
+  // ─── API surface (browser-facing, CORS-enabled) ────────────────────────
+  // All /api/* routes live inside a Fastify scope so the CORS plugin is
+  // limited to them. CalDAV at /dav/ and /.well-known/caldav stay outside.
+  await app.register(async (apiScope) => {
+    await apiScope.register(fastifyCors, {
+      origin: corsOrigins.length > 0 ? corsOrigins : true,
+      credentials: true,
+    });
+    await apiScope.register(fastifyCompress);
 
-  // Media routes
-  await app.register(photosRoutes, { prefix: '/api/v1/photos' });
-  await app.register(videosRoutes, { prefix: '/api/v1/videos' });
-  await app.register(moviesRoutes, { prefix: '/api/v1/media' });
-  await app.register(musicRoutes, { prefix: '/api/v1/music' });
+    await apiScope.register(healthRoutes, { prefix: '/api/v1/health' });
+    await apiScope.register(setupRoutes, { prefix: '/api/v1/setup' });
+    await apiScope.register(authRoutes, { prefix: '/api/v1/auth' });
+    await apiScope.register(householdsRoutes, { prefix: '/api/v1/households' });
+    await apiScope.register(usersRoutes, { prefix: '/api/v1/users' });
+    await apiScope.register(devicesRoutes, { prefix: '/api/v1/devices' });
+    await apiScope.register(calendarsRoutes, { prefix: '/api/v1/calendars' });
+    await apiScope.register(syncRoutes, { prefix: '/api/v1/calendars' });
+    await apiScope.register(calendarSharingRoutes, { prefix: '/api/v1/calendars' });
+    await apiScope.register(calendarPublicRoutes, { prefix: '/api/v1/calendars' });
+    await apiScope.register(recipesRoutes, { prefix: '/api/v1/recipes' });
+    await apiScope.register(inventoryRoutes, { prefix: '/api/v1/inventory' });
+    await apiScope.register(tasksRoutes, { prefix: '/api/v1/tasks' });
+    await apiScope.register(filesRoutes, { prefix: '/api/v1/files' });
+    await apiScope.register(listsRoutes, { prefix: '/api/v1/lists' });
+    await apiScope.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
+    await apiScope.register(settingsRoutes, { prefix: '/api/v1/settings' });
+    await apiScope.register(backupRoutes, { prefix: '/api/v1/backup' });
+    await apiScope.register(connectionsRoutes, { prefix: '/api/v1/connections' });
+    await apiScope.register(photosRoutes, { prefix: '/api/v1/photos' });
+    await apiScope.register(videosRoutes, { prefix: '/api/v1/videos' });
+    await apiScope.register(moviesRoutes, { prefix: '/api/v1/media' });
+    await apiScope.register(musicRoutes, { prefix: '/api/v1/music' });
+    await apiScope.register(groupsRoutes, { prefix: '/api/v1/groups' });
+    await apiScope.register(permissionsRoutes, { prefix: '/api/v1/permissions' });
+    await apiScope.register(imageParseRoutes, { prefix: '/api/v1/image-parse' });
+    await apiScope.register(appPasswordsRoutes, { prefix: '/api/v1/users/me/app-passwords' });
+    await apiScope.register(connectRoutes, { prefix: '/api/v1/users/me/connect' });
+    await apiScope.register(connectDownloadRoutes, { prefix: '/api/v1/connect' });
+  });
 
-  // Groups and permissions
-  await app.register(groupsRoutes, { prefix: '/api/v1/groups' });
-  await app.register(permissionsRoutes, { prefix: '/api/v1/permissions' });
-
-  // Image parsing
-  await app.register(imageParseRoutes, { prefix: '/api/v1/image-parse' });
+  // ─── CalDAV (native-client surface, no CORS) ───────────────────────────
+  await app.register(caldavRoutes, { prefix: '/dav' });
+  await app.register(caldavWellKnownRoutes, { prefix: '/.well-known' });
+  // Catch the legacy probe paths iOS Calendar tries before falling back to
+  // /.well-known/caldav (PROPFIND only — GET / still serves the SPA).
+  await app.register(caldavRootProbeRoutes);
 
   return app;
 }

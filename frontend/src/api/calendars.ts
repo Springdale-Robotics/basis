@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPatch, apiDelete } from './client';
+import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from './client';
 import type {
   Calendar,
   CalendarEvent,
@@ -325,4 +325,29 @@ export const calendarsApi = {
 
   revokePublicLink: (calendarId: string) =>
     apiDelete<{ message: string }>(`/calendars/${calendarId}/public-link`),
+
+  // Intra-household access (per-user / per-group within the household)
+  listAccessRules: (calendarId: string) =>
+    apiGet<{ rules: CalendarAccessRule[] }>(`/calendars/${calendarId}/access`),
+
+  upsertAccessRule: (
+    calendarId: string,
+    data: {
+      principalType: 'user' | 'group' | 'role';
+      principalId: string;
+      permissionLevel: PermissionLevel;
+    }
+  ) => apiPut<{ rule: CalendarAccessRule }>(`/calendars/${calendarId}/access`, data),
+
+  deleteAccessRule: (calendarId: string, ruleId: string) =>
+    apiDelete<{ message: string }>(`/calendars/${calendarId}/access/${ruleId}`),
 };
+
+export interface CalendarAccessRule {
+  id: string;
+  principalType: 'user' | 'group' | 'role';
+  principalId: string;
+  principalLabel: string;
+  permissionLevel: PermissionLevel;
+  createdAt: string;
+}

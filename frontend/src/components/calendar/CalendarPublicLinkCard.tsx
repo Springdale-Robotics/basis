@@ -32,8 +32,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { calendarsApi } from '@/api/calendars';
+import { settingsApi } from '@/api/settings';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import type { Calendar } from '@/types/models';
 import { toast } from '@/hooks/useToast';
+import { getErrorMessage } from '@/lib/api-error';
 
 interface CalendarPublicLinkCardProps {
   calendar: Calendar;
@@ -252,6 +255,8 @@ export function CalendarPublicLinkCard({ calendar }: CalendarPublicLinkCardProps
                   Revoke Access
                 </Button>
               </div>
+
+              <TailscaleFunnelToggle />
             </div>
           )}
         </CardContent>
@@ -283,5 +288,92 @@ export function CalendarPublicLinkCard({ calendar }: CalendarPublicLinkCardProps
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+// ─── Tailscale Funnel toggle ──────────────────────────────────────────────
+// When the host is on Tailscale and the operator wants the public ICS feed
+// reachable from the public internet (so Google Calendar etc. can poll it),
+// this exposes ONLY the /api/v1/calendars/public path via Tailscale Funnel.
+// The rest of the server stays tailnet-only.
+
+function TailscaleFunnelToggle() {
+  const queryClient = useQueryClient();
+  const { data: detect, isLoading } = useQuery({
+    queryKey: ['settings', 'remote-access', 'tailscale'],
+    queryFn: settingsApi.detectTailscale,
+  });
+
+  const enableMutation = useMutation({
+    mutationFn: settingsApi.enableTailscaleFunnel,
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['settings', 'remote-access', 'tailscale'] });
+      toast({
+        title: 'Public access enabled',
+        description: `https://${res.publicHostname}${res.path} is now reachable from the public internet.`,
+      });
+    },
+    onError: (err) =>
+      toast({
+        title: 'Could not enable Funnel',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      }),
+  });
+
+  const disableMutation = useMutation({
+    mutationFn: settingsApi.disableTailscaleFunnel,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings', 'remote-access', 'tailscale'] });
+      toast({ title: 'Funnel disabled' });
+    },
+    onError: (err) =>
+      toast({
+        title: 'Could not disable Funnel',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      }),
+  });
+
+  if (isLoading || !detect?.available) return null;
+
+  // We don't have a "funnel status" endpoint yet (the lib's getServeStatus
+  // could be extended) — so keep this as an enable/disable pair with the
+  // operator's last action implied. A follow-up could surface the bound state.
+  return (
+    <Alert className="mt-2">
+      <Globe className="h-4 w-4" />
+      <AlertTitle>Make publicly subscribable</AlertTitle>
+      <AlertDescription className="space-y-2">
+        <p className="text-xs">
+          Tailscale Funnel can expose <em>only</em> the public ICS feeds to the public internet, so
+          calendar services like Google Calendar can subscribe. The rest of your server stays on the
+          tailnet.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Requires Funnel to be enabled for your tailnet (admin console → Access controls).
+        </p>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => enableMutation.mutate()}
+            disabled={enableMutation.isPending}
+          >
+            {enableMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Enable Funnel
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => disableMutation.mutate()}
+            disabled={disableMutation.isPending}
+          >
+            {disableMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Disable
+          </Button>
+        </div>
+      </AlertDescription>
+    </Alert>
   );
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import {
   RefreshCw,
   Link2,
@@ -50,8 +50,8 @@ import { formatDistanceToNow } from 'date-fns';
 import { toast } from '@/hooks/useToast';
 import { useTheme } from '@/hooks/useTheme';
 import { COLOR_PALETTES, getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
-import { CalendarSharingDialog } from '@/components/calendar/CalendarSharingDialog';
-import { CalendarPublicLinkCard } from '@/components/calendar/CalendarPublicLinkCard';
+import { CalendarForm } from '@/components/calendar/CalendarForm';
+import { AppPasswordsCard } from '@/components/profile/AppPasswordsCard';
 import { cn } from '@/lib/utils';
 
 const colorPaletteEntries = Object.entries(COLOR_PALETTES) as [ColorPalette, (typeof COLOR_PALETTES)[ColorPalette]][];
@@ -79,9 +79,7 @@ export function CalendarSettingsPage() {
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importCalendarId, setImportCalendarId] = useState('');
-  const [manageCalendar, setManageCalendar] = useState<Calendar | null>(null);
-  const [sharingDialogOpen, setSharingDialogOpen] = useState(false);
-  const [publicLinkDialogOpen, setPublicLinkDialogOpen] = useState(false);
+  const [editingCalendar, setEditingCalendar] = useState<Calendar | null>(null);
 
   // Check URL params for OAuth callbacks
   const oauthError = searchParams.get('error');
@@ -230,6 +228,31 @@ export function CalendarSettingsPage() {
     },
   });
 
+  // Used by the CalendarForm at the bottom of the page (the single
+  // per-calendar editor that replaces the old Manage modal).
+  const updateCalendarMutation = useMutation({
+    mutationFn: ({ id, name, colorIndex }: { id: string; name: string; colorIndex: number }) =>
+      calendarsApi.update(id, { name, colorIndex }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['calendars'] });
+      setEditingCalendar(null);
+      toast({ title: 'Calendar updated' });
+    },
+    onError: () =>
+      toast({ title: 'Update failed', description: 'Could not update calendar.', variant: 'destructive' }),
+  });
+
+  const deleteCalendarMutation = useMutation({
+    mutationFn: (id: string) => calendarsApi.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['calendars'] });
+      setEditingCalendar(null);
+      toast({ title: 'Calendar deleted' });
+    },
+    onError: () =>
+      toast({ title: 'Delete failed', description: 'Could not delete calendar.', variant: 'destructive' }),
+  });
+
   const importMutation = useMutation({
     mutationFn: ({ calendarId, file }: { calendarId: string; file: File }) =>
       calendarsApi.importIcs(calendarId, file),
@@ -318,6 +341,28 @@ export function CalendarSettingsPage() {
         </Card>
       )}
 
+      {/* Connect a device */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Connect a device to your account</CardTitle>
+          <CardDescription>
+            Install Home Manager's calendar on your iPhone, Mac, Android, or any CalDAV client.
+            One install per device — your phone will see <em>all</em> calendars you have access
+            to, not just one. iOS gets a one-tap QR install; other clients copy-paste.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild>
+            <Link to="/calendar/connect">Open device wizard</Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Connected devices (per-user app passwords) — same card used on the
+          Profile page; included here so calendar setup and audit live in one
+          place. */}
+      <AppPasswordsCard />
+
       {/* Color Palette */}
       <Card>
         <CardHeader>
@@ -392,7 +437,7 @@ export function CalendarSettingsPage() {
                   calendarColor={getCalendarColor(calendar)}
                   onSync={() => syncMutation.mutate(calendar.id)}
                   onDisconnect={() => disconnectMutation.mutate(calendar.id)}
-                  onManage={() => setManageCalendar(calendar)}
+                  onManage={() => setEditingCalendar(calendar)}
                   isSyncing={syncMutation.isPending}
                   isDisconnecting={disconnectMutation.isPending}
                 />
@@ -481,16 +526,18 @@ export function CalendarSettingsPage() {
         </CardContent>
       </Card>
 
-      {/* My Calendars Section */}
+      {/* My Calendars Section — Edit opens the same CalendarForm dialog as
+          the calendar sidebar so there's exactly one editor for per-calendar
+          settings (name, color, sharing, public link, delete). */}
       {localCalendars.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <CalendarIcon className="h-5 w-5" />
-              My Calendars
+              Calendars in this household
             </CardTitle>
             <CardDescription>
-              Manage sharing and public access for your calendars.
+              Edit name, color, sharing rules, and public links per calendar.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -516,10 +563,10 @@ export function CalendarSettingsPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setManageCalendar(calendar)}
+                      onClick={() => setEditingCalendar(calendar)}
                     >
                       <Settings className="mr-2 h-4 w-4" />
-                      Manage
+                      Edit
                     </Button>
                   </div>
                 </div>
@@ -790,95 +837,25 @@ export function CalendarSettingsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Manage Calendar Dialog */}
-      <Dialog open={!!manageCalendar && !sharingDialogOpen && !publicLinkDialogOpen} onOpenChange={(open) => {
-        if (!open) setManageCalendar(null);
-      }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Settings className="h-5 w-5" />
-              Manage Calendar
-            </DialogTitle>
-            <DialogDescription>
-              {manageCalendar?.name}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3">
-            <Button
-              variant="outline"
-              className="w-full justify-between"
-              onClick={() => setSharingDialogOpen(true)}
-            >
-              <div className="flex items-center gap-2">
-                <Share2 className="h-4 w-4" />
-                Share with Households
-              </div>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-
-            <Button
-              variant="outline"
-              className="w-full justify-between"
-              onClick={() => setPublicLinkDialogOpen(true)}
-            >
-              <div className="flex items-center gap-2">
-                <Globe className="h-4 w-4" />
-                Public Subscription Link
-              </div>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setManageCalendar(null)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Calendar Sharing Dialog */}
-      {manageCalendar && (
-        <CalendarSharingDialog
-          calendar={manageCalendar}
-          open={sharingDialogOpen}
-          onOpenChange={(open) => {
-            setSharingDialogOpen(open);
-            if (!open) setManageCalendar(null);
+      {/* Per-calendar editor — same CalendarForm used from the sidebar so
+          there's only one place for sharing/public link/name/color/delete. */}
+      {editingCalendar && (
+        <CalendarForm
+          open={!!editingCalendar}
+          onOpenChange={(open) => { if (!open) setEditingCalendar(null); }}
+          calendar={editingCalendar}
+          onSubmit={(data) => {
+            updateCalendarMutation.mutate({
+              id: editingCalendar.id,
+              name: data.name,
+              colorIndex: data.colorIndex,
+            });
           }}
+          onDelete={() => deleteCalendarMutation.mutate(editingCalendar.id)}
+          isSubmitting={updateCalendarMutation.isPending}
+          isDeleting={deleteCalendarMutation.isPending}
         />
       )}
-
-      {/* Public Link Dialog */}
-      <Dialog open={publicLinkDialogOpen && !!manageCalendar} onOpenChange={(open) => {
-        setPublicLinkDialogOpen(open);
-        if (!open) setManageCalendar(null);
-      }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Globe className="h-5 w-5" />
-              Public Subscription Link
-            </DialogTitle>
-            <DialogDescription>
-              {manageCalendar?.name}
-            </DialogDescription>
-          </DialogHeader>
-
-          {manageCalendar && <CalendarPublicLinkCard calendar={manageCalendar} />}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => {
-              setPublicLinkDialogOpen(false);
-              setManageCalendar(null);
-            }}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

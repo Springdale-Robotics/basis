@@ -701,6 +701,14 @@ EOF
     echo -e "${GREEN}Done.${NC}"
     ;;
 
+  init)
+    # One-shot privileged setup — Tailscale operator grant, data dir, etc.
+    # All sudo operations live here so the web UI never needs to prompt.
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    echo -e "${BLUE}Running privileged setup (will prompt for sudo password)...${NC}"
+    sudo bash "$SCRIPT_DIR/scripts/install.sh" "${@:2}"
+    ;;
+
   clean)
     echo -e "${YELLOW}This will remove all containers, volumes, and node_modules. Are you sure? [y/N]${NC}"
     read -r response
@@ -823,6 +831,7 @@ EOF
     echo -e "  ${GREEN}test backend${NC}         Run backend tests"
     echo -e "  ${GREEN}test frontend${NC}        Run frontend tests"
     echo -e "  ${GREEN}install${NC}              Install all npm dependencies"
+    echo -e "  ${GREEN}init${NC}                 One-shot privileged setup (Tailscale operator perms, data dir)"
     echo -e "  ${GREEN}clean${NC}                Remove everything (confirms first)"
     echo -e "  ${GREEN}prune${NC}                Full Docker cleanup including volumes (confirms first)"
     echo -e "  ${GREEN}help${NC}                 Show this help"

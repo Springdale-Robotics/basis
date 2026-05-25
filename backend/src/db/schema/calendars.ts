@@ -38,6 +38,12 @@ export const calendars = pgTable('calendars', {
   syncError: text('sync_error'),
   publicToken: varchar('public_token', { length: 64 }),
   publicTokenCreatedAt: timestamp('public_token_created_at'),
+  // CalDAV sync primitives — bumped together on any event change in this calendar.
+  // ctag = arbitrary opaque token (legacy compat: getctag property).
+  // syncToken = monotonic per-calendar counter (RFC 6578 sync-collection REPORT).
+  ctag: varchar('ctag', { length: 64 }),
+  syncToken: integer('sync_token').notNull().default(0),
+  timezone: varchar('timezone', { length: 64 }).notNull().default('UTC'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -66,6 +72,8 @@ export const calendarEvents = pgTable('calendar_events', {
   originalStartTime: timestamp('original_start_time', { withTimezone: true }),  // Original occurrence time (unique identifier for exception)
   recurrenceStatus: recurrenceStatusEnum('recurrence_status'),  // 'master' | 'exception' | 'cancelled'
   externalId: varchar('external_id', { length: 255 }),
+  // Bumped on every event write — drives ETag for CalDAV GET/PUT.
+  revision: integer('revision').notNull().default(1),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -118,12 +126,71 @@ export const calendarVisibility = pgTable('calendar_visibility', {
   isDefaultVisible: boolean('is_default_visible').default(true).notNull(),
 });
 
+// Intra-household calendar access control.
+//
+// A calendar with NO rows here means "all household members, edit" (backward
+// compatible with the pre-existing behavior). Adding rows narrows the scope:
+// listed principals get the given permission, everyone else gets nothing.
+// Used by both REST endpoints and the CalDAV server.
+export const calendarAccessPrincipalEnum = pgEnum('calendar_access_principal', [
+  'user',
+  'group',
+  'role',
+]);
+export const calendarAccessLevelEnum = pgEnum('calendar_access_level', [
+  'view_busy',
+  'view',
+  'edit',
+]);
+
+// Per-calendar change journal for RFC 6578 sync-collection REPORT. The CalDAV
+// client sends its last seen syncToken and gets back the deltas since.
+export const calendarChangeTypeEnum = pgEnum('calendar_change_type', [
+  'add',
+  'update',
+  'delete',
+]);
+
+export const calendarChanges = pgTable(
+  'calendar_changes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    calendarId: uuid('calendar_id')
+      .notNull()
+      .references(() => calendars.id, { onDelete: 'cascade' }),
+    eventUid: varchar('event_uid', { length: 255 }).notNull(),
+    changeType: calendarChangeTypeEnum('change_type').notNull(),
+    syncToken: integer('sync_token').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  }
+);
+
+export const calendarAccess = pgTable('calendar_access', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  calendarId: uuid('calendar_id')
+    .notNull()
+    .references(() => calendars.id, { onDelete: 'cascade' }),
+  principalType: calendarAccessPrincipalEnum('principal_type').notNull(),
+  // text rather than uuid: holds a UUID for user/group rules, or a role name
+  // ("admin" | "member" | "kid" | "visitor") for role rules. A CHECK
+  // constraint in the DB enforces the role values when principalType='role'.
+  principalId: text('principal_id').notNull(),
+  permissionLevel: calendarAccessLevelEnum('permission_level').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
 export type Calendar = typeof calendars.$inferSelect;
 export type NewCalendar = typeof calendars.$inferInsert;
 export type CalendarEvent = typeof calendarEvents.$inferSelect;
 export type NewCalendarEvent = typeof calendarEvents.$inferInsert;
 export type CalendarVisibility = typeof calendarVisibility.$inferSelect;
 export type NewCalendarVisibility = typeof calendarVisibility.$inferInsert;
+export type CalendarAccess = typeof calendarAccess.$inferSelect;
+export type NewCalendarAccess = typeof calendarAccess.$inferInsert;
+export type CalendarPermissionLevel = 'view_busy' | 'view' | 'edit';
+export type CalendarChange = typeof calendarChanges.$inferSelect;
+export type NewCalendarChange = typeof calendarChanges.$inferInsert;
+export type CalendarChangeType = 'add' | 'update' | 'delete';
 export type EventAttendee = typeof eventAttendees.$inferSelect;
 export type NewEventAttendee = typeof eventAttendees.$inferInsert;
 export type EventReminder = typeof eventReminders.$inferSelect;
