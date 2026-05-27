@@ -1,11 +1,11 @@
 #!/bin/bash
 # Basis Quick Install
-# Usage: curl -fsSL https://get.homemanager.app/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/Springdale-Robotics/basis/main/backend/deploy/get-basis.sh | bash
 
 set -e
 
-REPO_URL="${REPO_URL:-https://github.com/your-username/homemanager}"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/homemanager}"
+REPO_URL="${REPO_URL:-https://github.com/Springdale-Robotics/basis}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/basis}"
 BRANCH="${BRANCH:-main}"
 
 echo "Downloading Basis..."

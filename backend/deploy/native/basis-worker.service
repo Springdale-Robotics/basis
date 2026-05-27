@@ -1,6 +1,6 @@
 [Unit]
 Description=Basis background worker (BullMQ jobs)
-Documentation=https://github.com/Springdale-Robotics/homemanager
+Documentation=https://github.com/Springdale-Robotics/basis
 After=network-online.target postgresql.service redis-server.service basis.service
 Wants=network-online.target
 Requires=postgresql.service redis-server.service

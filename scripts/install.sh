@@ -2,8 +2,7 @@
 # Basis — one-shot privileged installer.
 #
 # Usage:
-#   curl -fsSL homemanager.app/install.sh | sudo bash
-#   # or, from a checkout:
+#   # from a checkout (recommended while the repo is private):
 #   sudo bash scripts/install.sh
 #
 # This is the ONE elevated step for a Basis deployment. It bundles

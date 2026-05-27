@@ -31,7 +31,7 @@ export async function parseRecipeFromUrl(url: string): Promise<UrlParseResult> {
   try {
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; Basis/1.0; +https://homemanager.app)',
+        'User-Agent': 'Mozilla/5.0 (compatible; Basis/1.0)',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
     });

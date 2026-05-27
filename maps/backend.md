@@ -18,7 +18,7 @@ All paths relative to project root (`homemanager/`).
 - `docker-entrypoint.sh` - Waits for postgres/redis, runs migrations if AUTO_MIGRATE=true, starts server
 - `nginx.conf` - Nginx reverse proxy config with SSL, WebSocket support
 - `Caddyfile` - Caddy config with automatic HTTPS
-- `get-homemanager.sh` - One-liner download script: `curl -fsSL .../install.sh | bash`
+- `get-basis.sh` - One-liner download script: `curl -fsSL .../install.sh | bash`
 
 ## backend/install.sh
 Zero-prompt installer:

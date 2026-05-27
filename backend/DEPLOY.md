@@ -18,8 +18,12 @@ Open the URL in your browser to create your household and admin account.
 ## One-Liner Install (Remote)
 
 ```bash
-curl -fsSL https://get.homemanager.app/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Springdale-Robotics/basis/main/backend/deploy/get-basis.sh | bash
 ```
+
+> Note: this URL becomes reachable once the repo is public. For now, clone the
+> repo locally and run `backend/install.sh` (Docker) or
+> `sudo bash backend/deploy/native/install.sh --source $(pwd)` (native).
 
 ---
 
