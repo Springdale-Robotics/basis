@@ -91,7 +91,9 @@ export function HouseholdSettingsPage() {
   const categoryMutation = useMutation({
     mutationFn: (update: { customCategories?: string[]; hiddenCategories?: string[] }) =>
       settingsApi.updateHouseholdSettings({
-        inventory: update,
+        // Include current inventory state — backend does a shallow merge at the
+        // top level, so omitting tier here would clobber it.
+        inventory: { ...household?.settings?.inventory, tier, ...update },
       }),
     onSuccess: () => {
       refetch();
@@ -366,15 +368,6 @@ export function HouseholdSettingsPage() {
         </CardContent>
       </Card>
 
-      <Card className="border-destructive">
-        <CardHeader>
-          <CardTitle className="text-destructive">Danger Zone</CardTitle>
-          <CardDescription>Irreversible actions</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button variant="destructive">Delete Household</Button>
-        </CardContent>
-      </Card>
     </div>
   );
 }

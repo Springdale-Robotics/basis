@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -485,15 +485,14 @@ function GroupDialog({
     },
   });
 
-  // Reset form when dialog opens with different group
-  useState(() => {
+  useEffect(() => {
     if (open) {
       reset({
         name: group?.name || '',
         description: group?.description || '',
       });
     }
-  });
+  }, [open, group, reset]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

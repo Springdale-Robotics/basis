@@ -12,6 +12,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
 import { settingsApi, type FeatureSettings } from '@/api/settings';
 import { toast } from '@/hooks/useToast';
 
@@ -100,14 +101,15 @@ export function FeatureSettingsPage() {
   }, [data]);
 
   const update = useMutation({
-    mutationFn: (patch: Partial<FeatureSettings>) =>
-      settingsApi.updateFeatures(patch),
+    mutationFn: (vars: { patch: Partial<FeatureSettings>; previous: FeatureSettings }) =>
+      settingsApi.updateFeatures(vars.patch),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['settings', 'features'] });
       queryClient.invalidateQueries({ queryKey: ['feature-permissions'] });
       if (res?.features) setFeatures(withDefaults(res.features));
     },
-    onError: () => {
+    onError: (_err, vars) => {
+      setFeatures(vars.previous);
       toast({
         title: 'Could not update features',
         description: 'Please try again.',
@@ -119,7 +121,15 @@ export function FeatureSettingsPage() {
   if (isLoading || !features) {
     return (
       <Card>
-        <CardContent className="p-6">Loading…</CardContent>
+        <CardHeader>
+          <Skeleton className="h-5 w-24" />
+          <Skeleton className="mt-2 h-4 w-72" />
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-16 w-full" />
+          ))}
+        </CardContent>
       </Card>
     );
   }
@@ -157,8 +167,9 @@ export function FeatureSettingsPage() {
                 checked={!!features[meta.key]}
                 disabled={update.isPending}
                 onCheckedChange={(v) => {
+                  const previous = features;
                   setFeatures({ ...features, [meta.key]: v });
-                  update.mutate({ [meta.key]: v });
+                  update.mutate({ patch: { [meta.key]: v }, previous });
                 }}
               />
             </div>

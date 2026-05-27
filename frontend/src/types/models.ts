@@ -30,7 +30,7 @@ export interface HouseholdSettings {
   };
   theme?: ThemeConfig;
   inventory?: {
-    tier: 'basic' | 'advanced';
+    tier?: 'basic' | 'advanced';
     confidenceThresholds?: { high: number; medium: number };
     enabledUnits?: string[] | null;
     /** Additional categories added by the household (merged with defaults) */

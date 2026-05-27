@@ -49,21 +49,19 @@ import { useAuth } from '@/hooks/useAuth';
 
 const ROLES: UserRole[] = ['admin', 'member', 'kid', 'visitor'];
 
-const PERMISSION_LABELS: Record<PermissionLevel, string> = {
-  admin: 'Full Control',
-  edit: 'Can Edit',
-  view: 'View Only',
-  view_busy: 'View Busy Only',
-  none: 'No Access',
-};
-
-const PERMISSION_BADGE_VARIANTS: Record<PermissionLevel, 'default' | 'secondary' | 'outline' | 'destructive'> = {
-  admin: 'default',
-  edit: 'secondary',
-  view: 'outline',
-  view_busy: 'outline',
-  none: 'destructive',
-};
+function PermissionLevelOptions({ feature }: { feature: Feature }) {
+  return (
+    <>
+      <SelectItem value="admin">Full Control</SelectItem>
+      <SelectItem value="edit">Can Edit</SelectItem>
+      <SelectItem value="view">View Only</SelectItem>
+      {feature === 'calendars' && (
+        <SelectItem value="view_busy">View Busy Only</SelectItem>
+      )}
+      <SelectItem value="none">No Access</SelectItem>
+    </>
+  );
+}
 
 export function FeaturePermissionsPage() {
   const queryClient = useQueryClient();
@@ -291,10 +289,7 @@ export function FeaturePermissionsPage() {
                                       <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      <SelectItem value="admin">Full Control</SelectItem>
-                                      <SelectItem value="edit">Can Edit</SelectItem>
-                                      <SelectItem value="view">View Only</SelectItem>
-                                      <SelectItem value="none">No Access</SelectItem>
+                                      <PermissionLevelOptions feature={feature.id as Feature} />
                                     </SelectContent>
                                   </Select>
                                 )}
@@ -349,6 +344,7 @@ export function FeaturePermissionsPage() {
                                 key={override.id}
                                 override={override}
                                 type="user"
+                                feature={feature.id as Feature}
                                 onLevelChange={(level) =>
                                   setPermissionMutation.mutate({
                                     feature: feature.id as Feature,
@@ -375,6 +371,7 @@ export function FeaturePermissionsPage() {
                                 key={override.id}
                                 override={override}
                                 type="group"
+                                feature={feature.id as Feature}
                                 onLevelChange={(level) =>
                                   setPermissionMutation.mutate({
                                     feature: feature.id as Feature,
@@ -441,12 +438,14 @@ export function FeaturePermissionsPage() {
 function OverrideRow({
   override,
   type,
+  feature,
   onLevelChange,
   onRemove,
   isLoading,
 }: {
   override: FeaturePermission;
   type: 'user' | 'group';
+  feature: Feature;
   onLevelChange: (level: PermissionLevel) => void;
   onRemove: () => void;
   isLoading: boolean;
@@ -472,10 +471,7 @@ function OverrideRow({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="admin">Full Control</SelectItem>
-            <SelectItem value="edit">Can Edit</SelectItem>
-            <SelectItem value="view">View Only</SelectItem>
-            <SelectItem value="none">No Access</SelectItem>
+            <PermissionLevelOptions feature={feature} />
           </SelectContent>
         </Select>
         <Button variant="ghost" size="icon" onClick={onRemove} disabled={isLoading}>
@@ -584,10 +580,7 @@ function AddOverrideDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="admin">Full Control</SelectItem>
-                  <SelectItem value="edit">Can Edit</SelectItem>
-                  <SelectItem value="view">View Only</SelectItem>
-                  <SelectItem value="none">No Access</SelectItem>
+                  <PermissionLevelOptions feature={feature} />
                 </SelectContent>
               </Select>
             </div>

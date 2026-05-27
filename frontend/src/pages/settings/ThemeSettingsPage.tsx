@@ -3,11 +3,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -35,7 +30,7 @@ import {
 import { ThemeEditor } from '@/components/settings/ThemeEditor';
 import { type CustomTheme } from '@/stores/themeStore';
 import { cn } from '@/lib/utils';
-import { Sun, Moon, Monitor, ChevronDown, RotateCcw, Check, Plus, Pencil, Trash2 } from 'lucide-react';
+import { Sun, Moon, Monitor, RotateCcw, Check, Plus, Pencil, Trash2 } from 'lucide-react';
 
 const themes = [
   { id: 'light', label: 'Light', icon: Sun },
@@ -53,7 +48,6 @@ export function ThemeSettingsPage() {
     borderRadius,
     customColors,
     customThemes,
-    resolvedTheme,
     setTheme,
     setPresetId,
     setFontSize,
@@ -64,8 +58,6 @@ export function ThemeSettingsPage() {
     updateCustomTheme,
     deleteCustomTheme,
   } = useTheme();
-
-  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // Custom theme editor state
   const [editorOpen, setEditorOpen] = useState(false);
@@ -348,51 +340,6 @@ export function ThemeSettingsPage() {
             <div className="h-12 w-12 bg-primary" style={{ borderRadius: '1rem' }} />
           </div>
         </CardContent>
-      </Card>
-
-      {/* Advanced Color Customization */}
-      <Card>
-        <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-          <CardHeader className="pb-3">
-            <CollapsibleTrigger className="flex w-full items-center justify-between">
-              <div className="text-left">
-                <CardTitle className="text-base font-medium">Advanced Customization</CardTitle>
-                <CardDescription>Fine-tune individual colors</CardDescription>
-              </div>
-              <ChevronDown
-                className={cn(
-                  'h-5 w-5 text-muted-foreground transition-transform',
-                  advancedOpen && 'rotate-180'
-                )}
-              />
-            </CollapsibleTrigger>
-          </CardHeader>
-          <CollapsibleContent>
-            <CardContent>
-              <div className="rounded-lg border border-dashed p-6 text-center text-muted-foreground">
-                <p className="text-sm">
-                  Advanced color customization allows you to override individual colors
-                  from the selected theme preset.
-                </p>
-                <p className="mt-2 text-xs">
-                  Currently viewing: {resolvedTheme === 'dark' ? 'Dark' : 'Light'} mode
-                  {hasCustomColors && ' (with custom overrides)'}
-                </p>
-                {hasCustomColors && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-4"
-                    onClick={clearCustomColors}
-                  >
-                    <RotateCcw className="mr-2 h-4 w-4" />
-                    Clear Custom Colors
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </CollapsibleContent>
-        </Collapsible>
       </Card>
 
       {/* Actions */}
