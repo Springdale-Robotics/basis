@@ -161,14 +161,18 @@ export function emitCookingDeduction(householdId: string, payload: CookingDeduct
 export function emitTaskEvent(householdId: string, payload: TaskEventPayload): void {
   emitToHousehold(householdId, 'task:update', payload);
 
-  // Also notify assigned user
-  if (payload.task?.assignedTo) {
-    emitToUser(payload.task.assignedTo as string, 'task:assigned', payload);
+  // Notify the assigned user directly so a private inbox view updates without polling.
+  if (payload.task?.assigneeUserId) {
+    emitToUser(payload.task.assigneeUserId as string, 'task:assigned', payload);
   }
 }
 
 export function emitTaskCompleted(householdId: string, payload: TaskEventPayload): void {
   emitToHousehold(householdId, 'task:completed', payload);
+}
+
+export function emitTaskDeleted(householdId: string, taskId: string): void {
+  emitToHousehold(householdId, 'task:delete', { taskId });
 }
 
 // Recipe events
@@ -240,7 +244,7 @@ export function emitUserStatus(householdId: string, userId: string, online: bool
   });
 }
 
-// Rewards/achievements
+// Rewards
 export function emitRewardEvent(
   householdId: string,
   userId: string,
@@ -248,15 +252,6 @@ export function emitRewardEvent(
 ): void {
   emitToHousehold(householdId, 'reward:earned', { userId, ...payload });
   emitToUser(userId, 'reward:earned', payload);
-}
-
-export function emitAchievementUnlocked(
-  householdId: string,
-  userId: string,
-  payload: { achievementId: string; achievement: Record<string, unknown> }
-): void {
-  emitToHousehold(householdId, 'achievement:unlocked', { userId, ...payload });
-  emitToUser(userId, 'achievement:unlocked', payload);
 }
 
 // ===== INVENTORY CONFIDENCE EVENTS =====

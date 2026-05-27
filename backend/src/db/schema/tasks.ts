@@ -6,33 +6,80 @@ import {
   timestamp,
   integer,
   boolean,
-  jsonb,
   pgEnum,
+  check,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { households } from './households';
 import { users } from './users';
+import { groups } from './groups';
 
-export const taskStatusEnum = pgEnum('task_status', ['pending', 'in_progress', 'completed']);
+export const taskKindEnum = pgEnum('task_kind', ['task', 'chore']);
+export const taskStatusEnum = pgEnum('task_status', ['pending', 'completed']);
+export const recurrenceModeEnum = pgEnum('recurrence_mode', [
+  'schedule',
+  'reset_on_complete',
+]);
 
-export const tasks = pgTable('tasks', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  householdId: uuid('household_id')
-    .notNull()
-    .references(() => households.id, { onDelete: 'cascade' }),
-  createdBy: uuid('created_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  title: varchar('title', { length: 255 }).notNull(),
-  description: text('description'),
-  dueDate: timestamp('due_date'),
-  recurrenceRule: varchar('recurrence_rule', { length: 255 }),
-  assignedTo: uuid('assigned_to').references(() => users.id, { onDelete: 'set null' }),
-  status: taskStatusEnum('status').notNull().default('pending'),
-  isChore: boolean('is_chore').default(false).notNull(),
-  rewardPoints: integer('reward_points').default(0),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
+export const tasks = pgTable(
+  'tasks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    householdId: uuid('household_id')
+      .notNull()
+      .references(() => households.id, { onDelete: 'cascade' }),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+
+    kind: taskKindEnum('kind').notNull().default('task'),
+    title: varchar('title', { length: 255 }).notNull(),
+    description: text('description'),
+
+    // Polymorphic assignment: exactly one (or neither) of these is set.
+    // Neither set = unassigned to the household at large.
+    assigneeUserId: uuid('assignee_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    assigneeGroupId: uuid('assignee_group_id').references(() => groups.id, {
+      onDelete: 'set null',
+    }),
+
+    // Tasks: dueDate is the deadline. Chores: dueDate is the next due-by date
+    // (computed from cadence or rule on completion).
+    dueDate: timestamp('due_date'),
+
+    // Chore cadence in days, used when recurrenceMode = 'reset_on_complete'.
+    cadenceDays: integer('cadence_days'),
+
+    // Recurrence settings. NULL means non-recurring (one-shot task).
+    recurrenceMode: recurrenceModeEnum('recurrence_mode'),
+    // iCal RRULE string, used when recurrenceMode = 'schedule'.
+    recurrenceRule: varchar('recurrence_rule', { length: 255 }),
+
+    // Completion tracking. For chores, status stays 'pending' after completion
+    // (we just bump lastCompletedAt and recompute dueDate).
+    status: taskStatusEnum('status').notNull().default('pending'),
+    lastCompletedAt: timestamp('last_completed_at'),
+    lastCompletedBy: uuid('last_completed_by').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+
+    pinned: boolean('pinned').default(false).notNull(),
+    sortOrder: integer('sort_order').default(0).notNull(),
+
+    rewardPoints: integer('reward_points').default(0).notNull(),
+
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    check(
+      'tasks_assignee_xor',
+      sql`${table.assigneeUserId} IS NULL OR ${table.assigneeGroupId} IS NULL`,
+    ),
+  ],
+);
 
 export const rewards = pgTable('rewards', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -58,52 +105,8 @@ export const rewardHistory = pgTable('reward_history', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
-export const achievementCriteriaTypeEnum = pgEnum('achievement_criteria_type', [
-  'manual',
-  'automatic',
-  'milestone',
-]);
-
-export const achievements = pgTable('achievements', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  householdId: uuid('household_id')
-    .notNull()
-    .references(() => households.id, { onDelete: 'cascade' }),
-  name: varchar('name', { length: 255 }).notNull(),
-  description: text('description'),
-  icon: varchar('icon', { length: 50 }),
-  points: integer('points').default(0).notNull(),
-  criteriaType: achievementCriteriaTypeEnum('criteria_type').notNull().default('manual'),
-  criteria: jsonb('criteria').$type<AchievementCriteria>(),
-  createdBy: uuid('created_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
-
-export interface AchievementCriteria {
-  type: 'milestone' | 'manual';
-  metric?: string;
-  threshold?: number;
-}
-
-export const userAchievements = pgTable('user_achievements', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  achievementId: uuid('achievement_id')
-    .notNull()
-    .references(() => achievements.id, { onDelete: 'cascade' }),
-  awardedAt: timestamp('awarded_at').defaultNow().notNull(),
-  awardedBy: uuid('awarded_by').references(() => users.id, { onDelete: 'set null' }),
-  notes: text('notes'),
-});
-
 export type Task = typeof tasks.$inferSelect;
 export type NewTask = typeof tasks.$inferInsert;
 export type Reward = typeof rewards.$inferSelect;
 export type NewReward = typeof rewards.$inferInsert;
-export type Achievement = typeof achievements.$inferSelect;
-export type NewAchievement = typeof achievements.$inferInsert;
+export type RewardHistory = typeof rewardHistory.$inferSelect;

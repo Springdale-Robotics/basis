@@ -373,42 +373,37 @@ export interface Leftover {
   sourceRecipe?: { id: string; title: string };
 }
 
+export type TaskKind = 'task' | 'chore';
+export type TaskStatus = 'pending' | 'completed';
+export type RecurrenceMode = 'schedule' | 'reset_on_complete';
+
 export interface Task {
   id: string;
   householdId: string;
+  createdBy: string;
+  kind: TaskKind;
   title: string;
   description?: string;
-  status: 'pending' | 'in_progress' | 'completed';
-  priority?: 'low' | 'medium' | 'high' | 'urgent';
-  dueDate?: string;
-  isChore: boolean;
-  recurrence?: RecurrenceRule | string;
-  assignedTo?: string;
-  assigneeId?: string;
-  rewardPoints?: number;
-  points?: number;
-  completedAt?: string;
-  completedBy?: string;
-  createdBy: string;
+  assigneeUserId?: string | null;
+  assigneeGroupId?: string | null;
+  dueDate?: string | null;
+  cadenceDays?: number | null;
+  recurrenceMode?: RecurrenceMode | null;
+  recurrenceRule?: string | null;
+  status: TaskStatus;
+  lastCompletedAt?: string | null;
+  lastCompletedBy?: string | null;
+  pinned: boolean;
+  sortOrder: number;
+  rewardPoints: number;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface UserRewards {
   userId: string;
-  currentPoints: number;
+  points: number;
   lifetimePoints: number;
-  achievements: Achievement[];
-}
-
-export interface Achievement {
-  id: string;
-  name: string;
-  description: string;
-  icon: string;
-  pointsRequired?: number;
-  tasksRequired?: number;
-  earnedAt?: string;
 }
 
 export interface List {

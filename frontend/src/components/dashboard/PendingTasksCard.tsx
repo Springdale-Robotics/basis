@@ -20,7 +20,7 @@ export function PendingTasksCard() {
 
   const { data: tasksData, isLoading } = useQuery({
     queryKey: ['tasks', 'pending'],
-    queryFn: () => tasksApi.list({ status: 'pending', limit: 5 }),
+    queryFn: () => tasksApi.list({ kind: 'task', status: 'pending', limit: 5 }),
   });
 
   const completeTaskMutation = useMutation({
@@ -75,17 +75,9 @@ export function PendingTasksCard() {
                     )}
                   </div>
                 </div>
-                <Badge
-                  variant={
-                    task.priority === 'high'
-                      ? 'warning'
-                      : task.priority === 'medium'
-                      ? 'default'
-                      : 'secondary'
-                  }
-                >
-                  {task.priority}
-                </Badge>
+                {task.rewardPoints > 0 && (
+                  <Badge variant="secondary">{task.rewardPoints} pts</Badge>
+                )}
               </div>
             ))}
           </div>
