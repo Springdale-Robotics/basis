@@ -60,6 +60,9 @@ export const recipeIngredients = pgTable('recipe_ingredients', {
   recipeId: uuid('recipe_id')
     .notNull()
     .references(() => recipes.id, { onDelete: 'cascade' }),
+  // FK to inventory_items(id) is declared at the DB level (ON DELETE SET NULL)
+  // because adding it here would create a circular module import with
+  // ./inventory.ts. Migration enforces the constraint.
   inventoryItemId: uuid('inventory_item_id'),
   name: varchar('name', { length: 255 }).notNull(),
   quantity: decimal('quantity', { precision: 10, scale: 3 }),

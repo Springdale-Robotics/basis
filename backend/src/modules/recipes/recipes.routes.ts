@@ -803,43 +803,50 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
 
           let remaining = quantityToDeduct;
 
+          const density = item.density ? parseFloat(item.density) : null;
+          const quantityUnitSizes = (item.quantityUnitSizes as QuantityUnitSizes) || {};
+
           for (const stock of stockEntries) {
             if (remaining <= 0) break;
 
             const stockQty = parseFloat(stock.quantity);
+            const unitsDiffer =
+              !!ingredient.unit &&
+              !!stock.unit &&
+              normalizeUnit(ingredient.unit) !== normalizeUnit(stock.unit);
 
-            // Handle unit conversion if needed
+            // Pre-compute the two directions we may need. If either side can't
+            // convert, we can't safely touch this stock entry — bail out
+            // rather than mix units in arithmetic.
             let convertedRemaining = remaining;
-            if (ingredient.unit && stock.unit && normalizeUnit(ingredient.unit) !== normalizeUnit(stock.unit)) {
-              const density = item.density ? parseFloat(item.density) : null;
-              const quantityUnitSizes = (item.quantityUnitSizes as QuantityUnitSizes) || {};
-              const converted = convertWithDensity(remaining, ingredient.unit, stock.unit, density, quantityUnitSizes);
-              if (converted !== null) {
-                convertedRemaining = converted;
+            let stockInIngredientUnit = stockQty;
+            if (unitsDiffer) {
+              const forward = convertWithDensity(remaining, ingredient.unit!, stock.unit!, density, quantityUnitSizes);
+              const back = convertWithDensity(stockQty, stock.unit!, ingredient.unit!, density, quantityUnitSizes);
+              if (forward === null || back === null) {
+                // Can't bridge — leave the stock entry alone and flag the
+                // item so the user can supply the missing conversion. We
+                // still log nothing here and let needsConversion surface in
+                // the UI; the cook completes with under-deducted inventory.
+                if (!item.needsConversion) {
+                  await db
+                    .update(inventoryItems)
+                    .set({ needsConversion: true, updatedAt: new Date() })
+                    .where(eq(inventoryItems.id, item.id));
+                }
+                continue;
               }
+              convertedRemaining = forward;
+              stockInIngredientUnit = back;
             }
 
             if (stockQty <= convertedRemaining) {
-              // Stock is fully consumed. Reduce `remaining` (in ingredient
-              // unit) by this stock's contribution, also in ingredient unit.
-              // `stockQty` is in stock.unit, so convert it back to ingredient
-              // unit before subtracting. Falls back to the raw value only
-              // when both units are equivalent (no conversion needed).
+              // Consume this stock entry whole. Reduce `remaining`
+              // (ingredient unit) by the stock's equivalent in ingredient unit.
               await db.delete(inventoryStock).where(eq(inventoryStock.id, stock.id));
-              let stockInIngredientUnit = stockQty;
-              if (
-                ingredient.unit &&
-                stock.unit &&
-                normalizeUnit(ingredient.unit) !== normalizeUnit(stock.unit)
-              ) {
-                const density = item.density ? parseFloat(item.density) : null;
-                const quantityUnitSizes = (item.quantityUnitSizes as QuantityUnitSizes) || {};
-                const back = convertWithDensity(stockQty, stock.unit, ingredient.unit, density, quantityUnitSizes);
-                if (back !== null) stockInIngredientUnit = back;
-              }
               remaining = Math.max(0, remaining - stockInIngredientUnit);
             } else {
-              // Reduce the stock quantity
+              // Partial consumption: reduce stock by the converted amount.
               await db
                 .update(inventoryStock)
                 .set({

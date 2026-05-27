@@ -45,6 +45,8 @@ import { RelinkDialog } from '@/components/inventory/RelinkDialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { inventoryApi } from '@/api/inventory';
+import { toast } from '@/hooks/useToast';
+import { getErrorMessage } from '@/lib/api-error';
 import { formatDate, cn } from '@/lib/utils';
 import { calculateTotalStock, getItemIcon, categoryIcons } from '@/lib/inventory-constants';
 import { useCategories } from '@/hooks/useCategories';
@@ -511,6 +513,13 @@ export function InventoryPage() {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       setItemFormOpen(false);
     },
+    onError: (err) => {
+      toast({
+        title: "Couldn't save item",
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      });
+    },
   });
 
   const updateItemMutation = useMutation({
@@ -534,6 +543,13 @@ export function InventoryPage() {
       queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
       setEditingItem(null);
       setItemFormOpen(false);
+    },
+    onError: (err) => {
+      toast({
+        title: "Couldn't save item",
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      });
     },
   });
 
