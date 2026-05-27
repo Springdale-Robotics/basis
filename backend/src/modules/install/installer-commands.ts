@@ -54,6 +54,72 @@ const COMMANDS: InstallerCommand[] = [
     argv: ['bash', '-l'],
   },
   {
+    // Self-update: fetches the latest GitHub release tarball, extracts to
+    // /opt/basis/versions/<version>/, runs `npm ci` + build + migrations,
+    // swaps /opt/basis/current symlink, then triggers a detached systemd
+    // restart so the new code takes over.
+    //
+    // The restart is detached (`nohup ... &` + `disown`) so it survives
+    // the PTY being killed when the running backend exits. systemd's
+    // Restart=always will then bring the new code up — but for a clean
+    // handoff we explicitly `systemctl restart` instead of relying on
+    // crash-recovery semantics.
+    id: 'update-self',
+    description: 'Update Basis to the latest GitHub release.',
+    argv: [
+      'bash',
+      '-lc',
+      `set -eo pipefail
+echo "Checking GitHub for the latest Basis release..."
+LATEST=$(curl -fsSL https://api.github.com/repos/Springdale-Robotics/basis/releases \\
+  | grep -oE '"browser_download_url": ?"[^"]+basis-[^"]+\\.tar\\.gz"' \\
+  | head -1 \\
+  | sed -E 's/.*"(.+)"/\\1/')
+if [ -z "$LATEST" ]; then
+  echo "Could not find a release tarball. Aborting."
+  exit 1
+fi
+echo "Latest tarball: $LATEST"
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+echo "Downloading..."
+curl -fL "$LATEST" -o "$TMPDIR/release.tar.gz"
+echo "Extracting..."
+tar -xzf "$TMPDIR/release.tar.gz" -C "$TMPDIR"
+EXTRACTED=$(ls -d "$TMPDIR"/basis-* | head -1)
+NEW_VERSION=$(cat "$EXTRACTED/VERSION")
+DEST="/opt/basis/versions/$NEW_VERSION"
+echo "Staging version $NEW_VERSION at $DEST"
+mkdir -p "/opt/basis/versions"
+rm -rf "$DEST"
+mv "$EXTRACTED" "$DEST"
+
+echo "Installing backend dependencies..."
+cd "$DEST/backend"
+npm ci --no-audit --no-fund --omit=optional
+echo "Building backend..."
+npm run build
+
+echo "Running database migrations..."
+set -a; . /opt/basis/.env; set +a
+npm run db:migrate
+
+echo "Swapping current symlink atomically..."
+ln -sfn "versions/$NEW_VERSION" /opt/basis/current.new
+mv -T /opt/basis/current.new /opt/basis/current
+
+echo ""
+echo "✓ Update staged. Restarting basis.service in 3 seconds..."
+echo "  (Connection to this terminal will drop when the service restarts.)"
+# Detach the restart so it survives this PTY being killed by the service exit.
+nohup bash -c 'sleep 3 && sudo systemctl restart basis basis-worker' </dev/null >/dev/null 2>&1 &
+disown
+echo "Update complete — now at $NEW_VERSION"
+`,
+    ],
+  },
+  {
     id: 'install-tailscale-linux',
     description: 'Install Tailscale via the official one-liner, then sign in.',
     argv: [

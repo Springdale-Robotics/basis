@@ -186,4 +186,22 @@ export const settingsApi = {
       distro?: string;
       cloudflaredLocalPath: string | null;
     }>('/install/host-info'),
+
+  getVersionInfo: (includePrerelease = true) =>
+    apiGet<{
+      current: string;
+      productionInstall: boolean;
+      latest: {
+        version: string;
+        tag: string;
+        name: string;
+        body: string;
+        prerelease: boolean;
+        publishedAt: string;
+        url: string;
+        tarball?: string;
+      } | null;
+      updateAvailable: boolean;
+      checkError?: string;
+    }>(`/install/version?prerelease=${includePrerelease}`),
 };
