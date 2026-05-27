@@ -1,7 +1,14 @@
 import { useState, useRef } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { format, isToday, isTomorrow, isPast } from 'date-fns';
+import {
+  format,
+  isToday,
+  isTomorrow,
+  isPast,
+  isYesterday,
+  differenceInDays,
+} from 'date-fns';
 import {
   Check,
   Clock,
@@ -12,6 +19,7 @@ import {
   Star,
   Users,
   Hand,
+  CheckSquare,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -39,6 +47,8 @@ interface TaskRowProps {
   currentUserGroups: string[];
   selected: boolean;
   bulkMode: boolean;
+  /** Drag handle is only active when sort is Manual. */
+  manualSort: boolean;
   onToggleSelect: () => void;
   onComplete: () => void;
   onClaim: () => void;
@@ -53,7 +63,73 @@ function dueLabel(dueDate: string): { text: string; overdue: boolean } {
   const overdue = isPast(d) && !isToday(d);
   if (isToday(d)) return { text: 'Today', overdue: false };
   if (isTomorrow(d)) return { text: 'Tomorrow', overdue: false };
-  return { text: format(d, 'MMM d'), overdue };
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return {
+    text: sameYear ? format(d, 'MMM d') : format(d, 'MMM d, yyyy'),
+    overdue,
+  };
+}
+
+function lastDoneLabel(lastCompletedAt: string): string {
+  const d = new Date(lastCompletedAt);
+  if (isToday(d)) return 'Done today';
+  if (isYesterday(d)) return 'Done yesterday';
+  const days = differenceInDays(new Date(), d);
+  if (days < 7) return `Done ${days}d ago`;
+  if (days < 30) return `Done ${Math.floor(days / 7)}w ago`;
+  return `Done ${Math.floor(days / 30)}mo ago`;
+}
+
+const WEEKDAY_SHORT: Record<string, string> = {
+  SU: 'Sun',
+  MO: 'Mon',
+  TU: 'Tue',
+  WE: 'Wed',
+  TH: 'Thu',
+  FR: 'Fri',
+  SA: 'Sat',
+};
+
+function recurrenceLabel(task: Task): string | null {
+  if (!task.recurrenceMode) return null;
+  if (task.recurrenceMode === 'reset_on_complete') {
+    const d = task.cadenceDays ?? 0;
+    if (d === 1) return 'Daily';
+    if (d === 7) return 'Weekly';
+    if (d % 7 === 0) return `Every ${d / 7}w`;
+    if (d % 30 === 0) return `Every ${d / 30}mo`;
+    return `Every ${d}d`;
+  }
+  const rule = task.recurrenceRule;
+  if (!rule) return 'Repeats';
+  const m = rule.match(
+    /FREQ=(\w+)(?:;INTERVAL=(\d+))?(?:;BYDAY=([\w,]+))?/,
+  );
+  if (!m) return 'Repeats';
+  const freq = m[1];
+  const interval = m[2] ? parseInt(m[2], 10) : 1;
+  const byday = m[3];
+
+  if (freq === 'DAILY') return interval === 1 ? 'Daily' : `Every ${interval}d`;
+  if (freq === 'WEEKLY') {
+    if (byday) {
+      const days = byday
+        .split(',')
+        .map((d) => WEEKDAY_SHORT[d] ?? d)
+        .join(', ');
+      // Common shortcuts.
+      if (byday === 'MO,TU,WE,TH,FR') return 'Weekdays';
+      if (byday === 'SA,SU' || byday === 'SU,SA') return 'Weekends';
+      if (interval === 1) return days;
+      return `Every ${interval}w: ${days}`;
+    }
+    return interval === 1 ? 'Weekly' : `Every ${interval}w`;
+  }
+  if (freq === 'MONTHLY')
+    return interval === 1 ? 'Monthly' : `Every ${interval}mo`;
+  if (freq === 'YEARLY')
+    return interval === 1 ? 'Yearly' : `Every ${interval}y`;
+  return 'Repeats';
 }
 
 export function TaskRow({
@@ -64,6 +140,7 @@ export function TaskRow({
   currentUserGroups,
   selected,
   bulkMode,
+  manualSort,
   onToggleSelect,
   onComplete,
   onClaim,
@@ -72,7 +149,10 @@ export function TaskRow({
   onTogglePin,
   onAssign,
 }: TaskRowProps) {
-  const sortable = useSortable({ id: task.id });
+  const sortable = useSortable({
+    id: task.id,
+    disabled: !manualSort && !bulkMode ? false : false,
+  });
   const style = {
     transform: CSS.Transform.toString(sortable.transform),
     transition: sortable.transition,
@@ -80,7 +160,7 @@ export function TaskRow({
     opacity: sortable.isDragging ? 0.5 : undefined,
   };
 
-  // Touch swipe state — left to complete, right to snooze.
+  // Touch swipe state — left to complete.
   const [swipeX, setSwipeX] = useState(0);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
 
@@ -112,10 +192,21 @@ export function TaskRow({
 
   const isCompleted = task.status === 'completed';
   const due = task.dueDate ? dueLabel(task.dueDate) : null;
+  const recurLabel = recurrenceLabel(task);
   const canClaim =
     !!task.assigneeGroupId &&
     currentUserGroups.includes(task.assigneeGroupId) &&
     task.assigneeUserId !== currentUserId;
+
+  // Shift+click on complete circle enters bulk mode.
+  const handleCircleClick = (e: React.MouseEvent) => {
+    if (e.shiftKey || bulkMode) {
+      e.preventDefault();
+      onToggleSelect();
+    } else {
+      onComplete();
+    }
+  };
 
   return (
     <div
@@ -136,18 +227,22 @@ export function TaskRow({
         onTouchEnd={onTouchEnd}
         style={{ transform: `translateX(${swipeX}px)` }}
         className={cn(
-          'flex items-center gap-2 p-3 transition-transform',
+          'flex items-start gap-2 p-3 transition-transform',
           isCompleted && 'opacity-60',
           selected && 'ring-2 ring-primary',
         )}
       >
-        {bulkMode ? (
-          <Checkbox checked={selected} onCheckedChange={onToggleSelect} />
-        ) : (
+        {/* Drag handle, only active in manual sort. Hidden on mobile to save space. */}
+        {!bulkMode && (
           <button
             type="button"
-            aria-label="Drag to reorder"
-            className="cursor-grab text-muted-foreground hover:text-foreground touch-none"
+            aria-label={manualSort ? 'Drag to reorder' : 'Drag to reorder (switches to manual sort)'}
+            className={cn(
+              'hidden sm:flex shrink-0 self-stretch items-center touch-none',
+              manualSort
+                ? 'cursor-grab text-muted-foreground hover:text-foreground'
+                : 'cursor-grab text-muted-foreground/30 hover:text-muted-foreground',
+            )}
             {...sortable.attributes}
             {...sortable.listeners}
           >
@@ -155,19 +250,31 @@ export function TaskRow({
           </button>
         )}
 
-        <button
-          type="button"
-          onClick={onComplete}
-          aria-label={isCompleted ? 'Mark incomplete' : 'Complete'}
-          className={cn(
-            'shrink-0 h-6 w-6 rounded-full border-2 flex items-center justify-center transition-colors',
-            isCompleted
-              ? 'bg-success border-success text-success-foreground'
-              : 'border-muted-foreground/30 hover:border-foreground',
-          )}
-        >
-          {isCompleted && <Check className="h-3 w-3" />}
-        </button>
+        {/* Complete-circle. In bulk mode it's a selection checkbox. Shift-click
+            enters bulk mode. */}
+        {bulkMode ? (
+          <div className="self-center pt-0.5">
+            <Checkbox checked={selected} onCheckedChange={onToggleSelect} />
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={handleCircleClick}
+            aria-label={
+              isCompleted
+                ? 'Mark incomplete'
+                : 'Complete (shift+click to select)'
+            }
+            className={cn(
+              'mt-0.5 shrink-0 h-6 w-6 rounded-full border-2 flex items-center justify-center transition-colors',
+              isCompleted
+                ? 'bg-success border-success text-success-foreground'
+                : 'border-muted-foreground/30 hover:border-foreground',
+            )}
+          >
+            {isCompleted && <Check className="h-3 w-3" />}
+          </button>
+        )}
 
         <div className="min-w-0 flex-1">
           <button
@@ -188,21 +295,22 @@ export function TaskRow({
                 {task.title}
               </span>
             </div>
-            {task.kind === 'chore' && task.recurrenceMode === 'reset_on_complete' && (
-              <div className="mt-1.5 max-w-[160px]">
-                <ChoreDecayMeter
-                  lastCompletedAt={task.lastCompletedAt}
-                  cadenceDays={task.cadenceDays}
-                />
-              </div>
-            )}
+            {task.kind === 'chore' &&
+              task.recurrenceMode === 'reset_on_complete' && (
+                <div className="mt-1.5 max-w-[160px]">
+                  <ChoreDecayMeter
+                    lastCompletedAt={task.lastCompletedAt}
+                    cadenceDays={task.cadenceDays}
+                  />
+                </div>
+              )}
           </button>
 
           <div className="mt-1 flex items-center gap-2 flex-wrap text-xs">
             {due && (
               <span
                 className={cn(
-                  'flex items-center gap-0.5 text-muted-foreground',
+                  'flex items-center gap-1 text-muted-foreground',
                   due.overdue && 'text-destructive font-medium',
                 )}
               >
@@ -210,9 +318,16 @@ export function TaskRow({
                 {due.text}
               </span>
             )}
-            {task.recurrenceMode && (
-              <span className="flex items-center gap-0.5 text-muted-foreground">
+            {recurLabel && (
+              <span className="flex items-center gap-1 text-muted-foreground">
                 <Repeat className="h-3 w-3" />
+                {recurLabel}
+              </span>
+            )}
+            {task.kind === 'chore' && task.lastCompletedAt && (
+              <span className="flex items-center gap-1 text-muted-foreground">
+                <CheckSquare className="h-3 w-3" />
+                {lastDoneLabel(task.lastCompletedAt)}
               </span>
             )}
             {task.rewardPoints > 0 && (
@@ -224,7 +339,7 @@ export function TaskRow({
           </div>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-1 shrink-0 self-center">
           {canClaim && (
             <Button
               size="sm"
@@ -239,7 +354,7 @@ export function TaskRow({
           {!canClaim && (assignee || assigneeGroup) && (
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               {assignee ? (
-                <Avatar className="h-5 w-5">
+                <Avatar className="h-6 w-6">
                   <AvatarImage src={assignee.avatarUrl} />
                   <AvatarFallback className="text-[10px]">
                     {assignee.displayName?.[0]?.toUpperCase()}
@@ -248,7 +363,7 @@ export function TaskRow({
               ) : (
                 <Users className="h-4 w-4" />
               )}
-              <span className="hidden sm:inline">
+              <span className="hidden md:inline">
                 {assignee?.displayName ?? assigneeGroup?.name}
               </span>
             </span>
@@ -281,6 +396,9 @@ export function TaskRow({
               <DropdownMenuItem onClick={onEdit}>Edit</DropdownMenuItem>
               <DropdownMenuItem onClick={onTogglePin}>
                 {task.pinned ? 'Unpin' : 'Pin to top'}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onToggleSelect}>
+                {selected ? 'Deselect' : 'Select'}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem

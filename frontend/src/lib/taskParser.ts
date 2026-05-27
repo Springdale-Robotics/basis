@@ -70,12 +70,6 @@ function monthIndex(token: string): number {
   return MONTHS.findIndex((variants) => variants.some((v) => v === t));
 }
 
-function startOfDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
 function addDays(d: Date, days: number): Date {
   const x = new Date(d);
   x.setDate(x.getDate() + days);
@@ -173,7 +167,9 @@ function detectDate(input: string, now: Date): DateSuggestion | null {
         hasTime: true,
       };
     }
-    return { dueDate: startOfDay(d), matchedText, hasTime: false };
+    // No specific time given — default to 9am rather than midnight so the
+    // task doesn't show "12:00 AM" in pickers and notifications.
+    return { dueDate: applyTime(d, 9, 0), matchedText, hasTime: false };
   };
 
   // ----- 1. Relative phrases (today / tonight / tomorrow) -----

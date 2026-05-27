@@ -1,6 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { CheckSquare, Sparkles, X } from 'lucide-react';
+import {
+  ArrowDownAZ,
+  ArrowUpDown,
+  CalendarClock,
+  CheckSquare,
+  Clock,
+  GripVertical,
+  Sparkles,
+  Type,
+  X,
+} from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -16,26 +26,63 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
+import { format, isToday, isTomorrow } from 'date-fns';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { EditGate } from '@/components/permissions';
 import { TaskRow } from '@/components/tasks/TaskRow';
 import { QuickAddInput } from '@/components/tasks/QuickAddInput';
 import { TaskEditDialog } from '@/components/tasks/TaskEditDialog';
-import { AssigneePicker, type AssigneeValue } from '@/components/tasks/AssigneePicker';
+import {
+  AssigneePicker,
+  type AssigneeValue,
+} from '@/components/tasks/AssigneePicker';
 import { tasksApi } from '@/api/tasks';
 import { householdsApi } from '@/api/households';
 import { groupsApi } from '@/api/groups';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/useToast';
+import { cn } from '@/lib/utils';
 import type { Task, TaskKind } from '@/types/models';
 import type { CreateTaskRequest, UpdateTaskRequest } from '@/api/tasks';
 
 type Filter = 'all' | 'mine';
+type SortBy = 'due' | 'manual' | 'added' | 'title';
+
+const SORT_OPTIONS: { value: SortBy; label: string; icon: typeof Clock }[] = [
+  { value: 'due', label: 'Due date', icon: CalendarClock },
+  { value: 'added', label: 'Recently added', icon: Clock },
+  { value: 'title', label: 'Title (A–Z)', icon: ArrowDownAZ },
+  { value: 'manual', label: 'Manual', icon: GripVertical },
+];
+
+function storedSort(kind: TaskKind): SortBy {
+  if (typeof window === 'undefined') return 'due';
+  const v = window.localStorage.getItem(`tasks-sort-${kind}`);
+  if (v === 'due' || v === 'manual' || v === 'added' || v === 'title') return v;
+  return 'due';
+}
+
+function nextDueLabel(dueDate: string): string {
+  const d = new Date(dueDate);
+  if (isToday(d)) return 'today';
+  if (isTomorrow(d)) return 'tomorrow';
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return sameYear ? format(d, 'MMM d') : format(d, 'MMM d, yyyy');
+}
 
 export function TasksPage() {
   const queryClient = useQueryClient();
@@ -47,16 +94,30 @@ export function TasksPage() {
   const [editing, setEditing] = useState<Task | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [sortBy, setSortBy] = useState<SortBy>(() => storedSort('task'));
 
-  const tasksQueryKey = ['tasks', kind, filter, showCompleted] as const;
+  // Re-read sort preference when switching tabs.
+  useEffect(() => {
+    setSortBy(storedSort(kind));
+  }, [kind]);
 
-  const { data: tasksData, isLoading } = useQuery({
-    queryKey: tasksQueryKey,
+  // Persist sort preference per kind.
+  const updateSort = useCallback(
+    (next: SortBy) => {
+      setSortBy(next);
+      window.localStorage.setItem(`tasks-sort-${kind}`, next);
+    },
+    [kind],
+  );
+
+  // One query for both tabs — keeps counts in sync regardless of active tab.
+  const allTasksQueryKey = ['tasks', 'all', showCompleted] as const;
+  const { data: allTasksData, isLoading } = useQuery({
+    queryKey: allTasksQueryKey,
     queryFn: () =>
       tasksApi.list({
-        kind,
-        mine: filter === 'mine' ? true : undefined,
         status: showCompleted ? undefined : 'pending',
+        limit: 200,
       }),
   });
 
@@ -70,18 +131,12 @@ export function TasksPage() {
     queryFn: () => groupsApi.list(),
   });
 
-  const tasks = useMemo(() => tasksData?.tasks ?? [], [tasksData]);
+  const allTasks = useMemo(() => allTasksData?.tasks ?? [], [allTasksData]);
   const users = membersData?.members ?? [];
   const groups = groupsData?.groups ?? [];
 
-  // The set of groups the current user is in — needed to know if a task is
-  // "claimable" by them. We approximate from the groups list; the backend
-  // membership endpoint is per-group, so we fetch members eagerly only for
-  // groups the user might be in. For now we assume `groups.list` returns all
-  // groups in the household and we'll filter client-side via member fetches
-  // lazily. To keep this page snappy, we just provide an empty set when we
-  // haven't loaded membership; `Claim` button will only show if the server
-  // signals via the `mine` filter that the task could be theirs anyway.
+  // Resolve which groups the current user belongs to. Required for "Mine"
+  // filter and claim-button visibility.
   const [currentUserGroupIds, setCurrentUserGroupIds] = useState<Set<string>>(
     new Set(),
   );
@@ -106,18 +161,121 @@ export function TasksPage() {
     };
   }, [groups, user]);
 
+  // Per-tab pending counts. Always reflect both tabs regardless of active.
+  const taskCount = allTasks.filter(
+    (t) => t.kind === 'task' && t.status === 'pending',
+  ).length;
+  const choreCount = allTasks.filter(
+    (t) => t.kind === 'chore' && t.status === 'pending',
+  ).length;
+
+  // Tasks for the current tab + filter.
+  const filtered = useMemo(() => {
+    return allTasks.filter((t) => {
+      if (t.kind !== kind) return false;
+      if (filter === 'mine') {
+        const isMine =
+          t.assigneeUserId === user?.id ||
+          (t.assigneeGroupId && currentUserGroupIds.has(t.assigneeGroupId));
+        if (!isMine) return false;
+      }
+      return true;
+    });
+  }, [allTasks, kind, filter, user?.id, currentUserGroupIds]);
+
+  // Apply sort. Pinned items always stick to the top regardless of choice.
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    arr.sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      switch (sortBy) {
+        case 'manual':
+          return a.sortOrder - b.sortOrder;
+        case 'due': {
+          const ad = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+          const bd = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+          if (ad !== bd) return ad - bd;
+          return a.sortOrder - b.sortOrder;
+        }
+        case 'added':
+          return (
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          );
+        case 'title':
+          return a.title.localeCompare(b.title);
+      }
+    });
+    return arr;
+  }, [filtered, sortBy]);
+
+  // Local drag-reorder override. Cleared when underlying data changes
+  // shape (different tab, filter, or task count).
+  const [localOrder, setLocalOrder] = useState<string[] | null>(null);
+  useEffect(() => {
+    setLocalOrder(null);
+  }, [kind, filter, showCompleted, sortBy]);
+
+  const orderedTasks = useMemo(() => {
+    if (!localOrder) return sorted;
+    const byId = new Map(sorted.map((t) => [t.id, t]));
+    const reordered = localOrder
+      .map((id) => byId.get(id))
+      .filter((t): t is Task => !!t);
+    // Append any new items not in the local order.
+    const seen = new Set(localOrder);
+    return [...reordered, ...sorted.filter((t) => !seen.has(t.id))];
+  }, [sorted, localOrder]);
+
   // ===== Mutations =====
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ['tasks'] });
 
   const createMutation = useMutation({
     mutationFn: (data: CreateTaskRequest) => tasksApi.create(data),
-    onSuccess: () => {
+    onMutate: async (data) => {
+      await queryClient.cancelQueries({ queryKey: allTasksQueryKey });
+      const prev = queryClient.getQueryData<{ tasks: Task[] }>(allTasksQueryKey);
+      // Optimistic insert with a tentative ID so React keys stay stable.
+      if (prev) {
+        const optimistic: Task = {
+          id: `optimistic-${Date.now()}`,
+          householdId: user?.householdId ?? '',
+          createdBy: user?.id ?? '',
+          kind: data.kind,
+          title: data.title,
+          description: data.description ?? undefined,
+          assigneeUserId: data.assigneeUserId ?? undefined,
+          assigneeGroupId: data.assigneeGroupId ?? undefined,
+          dueDate: data.dueDate ?? undefined,
+          cadenceDays: data.cadenceDays ?? undefined,
+          recurrenceMode: data.recurrenceMode ?? undefined,
+          recurrenceRule: data.recurrenceRule ?? undefined,
+          status: 'pending',
+          lastCompletedAt: undefined,
+          lastCompletedBy: undefined,
+          pinned: data.pinned ?? false,
+          sortOrder: prev.tasks.length,
+          rewardPoints: data.rewardPoints ?? 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        queryClient.setQueryData(allTasksQueryKey, {
+          tasks: [...prev.tasks, optimistic],
+        });
+      }
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(allTasksQueryKey, ctx.prev);
+      toast({
+        title: 'Could not create task',
+        description: 'Try again or open More options.',
+      });
+    },
+    onSettled: () => {
       invalidate();
       setEditorOpen(false);
     },
-    onError: (e: Error) =>
-      toast({ title: 'Could not create task', description: e.message }),
   });
 
   const updateMutation = useMutation({
@@ -135,11 +293,12 @@ export function TasksPage() {
   const completeMutation = useMutation({
     mutationFn: (id: string) => tasksApi.complete(id),
     onMutate: async (id) => {
-      // Optimistic flip — feels immediate without the round-trip.
-      await queryClient.cancelQueries({ queryKey: tasksQueryKey });
-      const prev = queryClient.getQueryData<{ tasks: Task[] }>(tasksQueryKey);
+      await queryClient.cancelQueries({ queryKey: allTasksQueryKey });
+      const prev = queryClient.getQueryData<{ tasks: Task[] }>(
+        allTasksQueryKey,
+      );
       if (prev) {
-        queryClient.setQueryData(tasksQueryKey, {
+        queryClient.setQueryData(allTasksQueryKey, {
           tasks: prev.tasks.map((t) =>
             t.id === id
               ? {
@@ -153,8 +312,17 @@ export function TasksPage() {
       }
       return { prev };
     },
+    onSuccess: (result) => {
+      const completed = result?.task;
+      if (completed?.kind === 'chore' && completed?.dueDate) {
+        toast({
+          title: 'Marked done',
+          description: `Next due ${nextDueLabel(completed.dueDate)}.`,
+        });
+      }
+    },
     onError: (_e, _id, ctx) => {
-      if (ctx?.prev) queryClient.setQueryData(tasksQueryKey, ctx.prev);
+      if (ctx?.prev) queryClient.setQueryData(allTasksQueryKey, ctx.prev);
     },
     onSettled: invalidate,
   });
@@ -175,21 +343,8 @@ export function TasksPage() {
 
   const reorderMutation = useMutation({
     mutationFn: (taskIds: string[]) => tasksApi.reorder({ taskIds }),
-    onError: invalidate, // refetch on failure to restore server order
+    onError: invalidate,
   });
-
-  // ===== Local sort order (for optimistic drag-reorder) =====
-  const [localOrder, setLocalOrder] = useState<string[] | null>(null);
-  useEffect(() => {
-    setLocalOrder(null);
-  }, [kind, filter, showCompleted, tasks.length]);
-  const orderedTasks = useMemo(() => {
-    if (!localOrder) return tasks;
-    const byId = new Map(tasks.map((t) => [t.id, t]));
-    return localOrder
-      .map((id) => byId.get(id))
-      .filter((t): t is Task => !!t);
-  }, [tasks, localOrder]);
 
   // ===== Drag-and-drop =====
   const sensors = useSensors(
@@ -208,6 +363,8 @@ export function TasksPage() {
     if (from === -1 || to === -1) return;
     const next = arrayMove(ids, from, to);
     setLocalOrder(next);
+    // Dragging in any sort mode switches to Manual so the new order sticks.
+    if (sortBy !== 'manual') updateSort('manual');
     reorderMutation.mutate(next);
   };
 
@@ -234,7 +391,7 @@ export function TasksPage() {
     return () => window.removeEventListener('keydown', handler);
   }, [selectedIds]);
 
-  // ===== Bulk actions =====
+  // ===== Bulk =====
   const bulkMode = selectedIds.size > 0;
 
   const bulkComplete = () => {
@@ -271,6 +428,10 @@ export function TasksPage() {
     createMutation.mutate(data);
   };
 
+  const sortIcon = SORT_OPTIONS.find((o) => o.value === sortBy)?.icon ?? ArrowUpDown;
+  const SortIcon = sortIcon;
+  const sortLabel = SORT_OPTIONS.find((o) => o.value === sortBy)?.label ?? 'Sort';
+
   return (
     <div>
       <PageHeader
@@ -280,13 +441,14 @@ export function TasksPage() {
           <EditGate feature="tasks">
             <Button
               variant="outline"
+              size="sm"
               onClick={() => {
                 setEditing(null);
                 setEditorOpen(true);
               }}
             >
-              <Sparkles className="mr-2 h-4 w-4" />
-              More options
+              <Sparkles className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">More options</span>
             </Button>
           </EditGate>
         }
@@ -294,47 +456,74 @@ export function TasksPage() {
 
       <Tabs value={kind} onValueChange={(v) => setKind(v as TaskKind)}>
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <TabsList>
+          <TabsList className="self-start">
             <TabsTrigger value="task">
               Tasks
-              {orderedTasks.length > 0 && kind === 'task' && (
+              {taskCount > 0 && (
                 <Badge className="ml-2" variant="secondary">
-                  {orderedTasks.length}
+                  {taskCount}
                 </Badge>
               )}
             </TabsTrigger>
             <TabsTrigger value="chore">
               Chores
-              {orderedTasks.length > 0 && kind === 'chore' && (
+              {choreCount > 0 && (
                 <Badge className="ml-2" variant="secondary">
-                  {orderedTasks.length}
+                  {choreCount}
                 </Badge>
               )}
             </TabsTrigger>
           </TabsList>
 
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant={filter === 'all' ? 'secondary' : 'ghost'}
-              size="sm"
-              onClick={() => setFilter('all')}
-            >
-              All
-            </Button>
-            <Button
-              variant={filter === 'mine' ? 'secondary' : 'ghost'}
-              size="sm"
-              onClick={() => setFilter('mine')}
-            >
-              Mine
-            </Button>
-            <Button
-              variant={showCompleted ? 'secondary' : 'ghost'}
-              size="sm"
-              onClick={() => setShowCompleted((v) => !v)}
-            >
-              {showCompleted ? 'Hide done' : 'Show done'}
-            </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex rounded-md border bg-card p-0.5">
+              <Button
+                variant={filter === 'all' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7"
+                onClick={() => setFilter('all')}
+              >
+                All
+              </Button>
+              <Button
+                variant={filter === 'mine' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7"
+                onClick={() => setFilter('mine')}
+              >
+                Mine
+              </Button>
+            </div>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-8">
+                  <SortIcon className="mr-1.5 h-3.5 w-3.5" />
+                  <span className="hidden md:inline">Sort: </span>
+                  <span>{sortLabel}</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuLabel>Sort by</DropdownMenuLabel>
+                {SORT_OPTIONS.map((opt) => {
+                  const Icon = opt.icon;
+                  return (
+                    <DropdownMenuCheckboxItem
+                      key={opt.value}
+                      checked={sortBy === opt.value}
+                      onCheckedChange={() => updateSort(opt.value)}
+                    >
+                      <Icon className="mr-2 h-3.5 w-3.5" />
+                      {opt.label}
+                    </DropdownMenuCheckboxItem>
+                  );
+                })}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setShowCompleted((v) => !v)}>
+                  {showCompleted ? 'Hide completed' : 'Show completed'}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -348,7 +537,12 @@ export function TasksPage() {
           </EditGate>
 
           {bulkMode && (
-            <div className="flex flex-wrap items-center gap-2 rounded-md border bg-secondary/50 p-2">
+            <div
+              className={cn(
+                'sticky top-0 z-10 flex flex-wrap items-center gap-2',
+                'rounded-md border bg-secondary/90 backdrop-blur p-2',
+              )}
+            >
               <span className="text-sm font-medium">
                 {selectedIds.size} selected
               </span>
@@ -361,6 +555,7 @@ export function TasksPage() {
                 value={{}}
                 onChange={bulkAssign}
                 compact
+                placeholder="Reassign…"
               />
               <Button size="sm" variant="destructive" onClick={bulkDelete}>
                 Delete
@@ -370,6 +565,7 @@ export function TasksPage() {
                 variant="ghost"
                 onClick={() => setSelectedIds(new Set())}
                 className="ml-auto"
+                aria-label="Clear selection"
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -386,9 +582,7 @@ export function TasksPage() {
             <EmptyState
               icon={<CheckSquare className="h-12 w-12" />}
               title={
-                kind === 'chore'
-                  ? 'No chores yet'
-                  : 'Nothing to do — nice work'
+                kind === 'chore' ? 'No chores yet' : 'Nothing to do — nice work'
               }
               description={
                 kind === 'chore'
@@ -417,6 +611,7 @@ export function TasksPage() {
                       currentUserGroups={Array.from(currentUserGroupIds)}
                       selected={selectedIds.has(task.id)}
                       bulkMode={bulkMode}
+                      manualSort={sortBy === 'manual'}
                       onToggleSelect={() => toggleSelect(task.id)}
                       onComplete={() => completeMutation.mutate(task.id)}
                       onClaim={() => claimMutation.mutate(task.id)}

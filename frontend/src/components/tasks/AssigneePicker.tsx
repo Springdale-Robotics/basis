@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Check, ChevronsUpDown, Users, User as UserIcon } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Check, ChevronDown, Users, User as UserIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
@@ -10,7 +11,11 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import type { User } from '@/types/models';
 import type { Group } from '@/api/groups';
@@ -27,6 +32,8 @@ interface AssigneePickerProps {
   onChange: (value: AssigneeValue) => void;
   /** Compact label (used inside a task row). */
   compact?: boolean;
+  /** Override the default 'Unassigned' label on the trigger. */
+  placeholder?: string;
 }
 
 export function AssigneePicker({
@@ -35,6 +42,7 @@ export function AssigneePicker({
   value,
   onChange,
   compact,
+  placeholder = 'Unassigned',
 }: AssigneePickerProps) {
   const [open, setOpen] = useState(false);
 
@@ -47,23 +55,26 @@ export function AssigneePicker({
     [groups, value.groupId],
   );
 
+  const hasSelection = !!(selectedUser || selectedGroup);
   const triggerLabel = selectedUser
     ? selectedUser.displayName
     : selectedGroup
     ? selectedGroup.name
-    : 'Unassigned';
+    : placeholder;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant="ghost"
+          variant="outline"
           size={compact ? 'sm' : 'default'}
           role="combobox"
           aria-expanded={open}
+          aria-label={triggerLabel}
           className={cn(
-            'justify-between',
-            compact && 'h-7 px-2 text-xs font-normal',
+            'justify-between gap-1.5 font-normal',
+            compact && 'h-7 px-2 text-xs',
+            !hasSelection && 'text-muted-foreground',
           )}
         >
           <span className="flex items-center gap-2 truncate">
@@ -75,16 +86,25 @@ export function AssigneePicker({
                 </AvatarFallback>
               </Avatar>
             ) : selectedGroup ? (
-              <Users className="h-4 w-4 text-muted-foreground" />
+              <Users className="h-3.5 w-3.5" />
             ) : (
-              <UserIcon className="h-4 w-4 text-muted-foreground" />
+              <UserIcon className="h-3.5 w-3.5" />
             )}
-            <span className="truncate">{triggerLabel}</span>
+            {/* In compact mode, hide the label on narrow viewports so rows
+                don't push past the screen edge. */}
+            <span
+              className={cn(
+                'truncate',
+                compact && !hasSelection && 'hidden sm:inline',
+              )}
+            >
+              {triggerLabel}
+            </span>
           </span>
-          <ChevronsUpDown className="ml-2 h-3 w-3 opacity-50" />
+          <ChevronDown className="h-3 w-3 opacity-50 shrink-0" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-64 p-0">
+      <PopoverContent className="w-64 p-0" align="end">
         <Command>
           <CommandInput placeholder="Search…" />
           <CommandList>
@@ -104,9 +124,19 @@ export function AssigneePicker({
                 )}
               </CommandItem>
             </CommandGroup>
-            {groups.length > 0 && (
-              <CommandGroup heading="Groups">
-                {groups.map((g) => (
+            <CommandGroup heading="Groups">
+              {groups.length === 0 ? (
+                <div className="px-2 py-3 text-center text-xs text-muted-foreground">
+                  No groups yet.{' '}
+                  <Link
+                    to="/settings/groups"
+                    className="font-medium text-primary hover:underline"
+                  >
+                    Create one
+                  </Link>
+                </div>
+              ) : (
+                groups.map((g) => (
                   <CommandItem
                     key={g.id}
                     value={`group-${g.name}`}
@@ -121,9 +151,9 @@ export function AssigneePicker({
                       <Check className="ml-auto h-4 w-4" />
                     )}
                   </CommandItem>
-                ))}
-              </CommandGroup>
-            )}
+                ))
+              )}
+            </CommandGroup>
             {users.length > 0 && (
               <CommandGroup heading="People">
                 {users.map((u) => (

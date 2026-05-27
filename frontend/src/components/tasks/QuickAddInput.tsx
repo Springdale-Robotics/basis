@@ -111,7 +111,7 @@ export function QuickAddInput({
               ? 'Add a chore… (try "Take out trash every Tuesday")'
               : 'Add a task… (try "Renew passport by Mar 12")'
           }
-          className="border-0 shadow-none focus-visible:ring-0 px-1"
+          className="min-w-0 flex-1 border-0 shadow-none focus-visible:ring-0 px-1"
           disabled={isSubmitting}
         />
         <Button
