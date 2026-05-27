@@ -242,12 +242,25 @@ const quickCreateItemSchema = z.object({
   defaultAreaId: z.string().uuid().optional(),
 });
 
+const quantityUnitSizesSchema = z
+  .record(
+    z.string(),
+    z.object({ quantity: z.number().positive(), unit: z.string().min(1).max(50) })
+  )
+  .optional();
+
 const batchCreateItemsSchema = z.object({
   items: z.array(z.object({
     name: z.string().min(1).max(255),
     defaultUnit: z.string().max(50).optional(),
     category: z.string().max(100).optional(),
     defaultAreaId: z.string().uuid().optional(),
+    density: z.number().positive().optional(),
+    quantityUnitSizes: quantityUnitSizesSchema,
+    keepInStock: z.boolean().optional(),
+    minStockQuantity: z.number().positive().optional(),
+    defaultShelfLifeDays: z.number().int().positive().optional(),
+    barcode: z.string().max(255).optional(),
   })).min(1).max(50),
 });
 
@@ -263,6 +276,10 @@ const batchUpdateItemsSchema = z.object({
     keepInStock: z.boolean().optional(),
     minStockQuantity: z.number().positive().optional(),
     defaultAreaId: z.string().uuid().nullable().optional(),
+    defaultUnit: z.string().max(50).optional(),
+    density: z.number().positive().nullable().optional(),
+    quantityUnitSizes: quantityUnitSizesSchema,
+    defaultShelfLifeDays: z.number().int().positive().nullable().optional(),
   }),
 });
 
@@ -692,17 +709,34 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
       const createdItems = [];
 
       for (const itemData of input.items) {
-        const internalId = `HM-${randomBytes(3).toString('hex').toUpperCase()}`;
+        const internalId = itemData.barcode ? null : `HM-${randomBytes(3).toString('hex').toUpperCase()}`;
+
+        // Cycle-check any conversions on this item before insert.
+        if (itemData.quantityUnitSizes) {
+          for (const [key, entry] of Object.entries(itemData.quantityUnitSizes)) {
+            if (sizesEntryWouldCycle(itemData.quantityUnitSizes, key, entry)) {
+              throw Errors.validation(
+                `Conversion on "${itemData.name}" would create a cycle: ${key} → ${entry.unit}.`
+              );
+            }
+          }
+        }
 
         const [item] = await db
           .insert(inventoryItems)
           .values({
             householdId: request.user!.householdId,
             name: itemData.name,
+            barcode: itemData.barcode,
             internalId,
             defaultUnit: itemData.defaultUnit,
             category: itemData.category,
             defaultAreaId: itemData.defaultAreaId,
+            density: itemData.density?.toString(),
+            quantityUnitSizes: itemData.quantityUnitSizes || {},
+            keepInStock: itemData.keepInStock ?? false,
+            minStockQuantity: itemData.minStockQuantity?.toString(),
+            defaultShelfLifeDays: itemData.defaultShelfLifeDays,
           })
           .returning();
 
@@ -759,6 +793,17 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     async (request) => {
       const input = batchUpdateItemsSchema.parse(request.body);
 
+      // Sizes apply uniformly to every selected item — validate cycles once.
+      if (input.updates.quantityUnitSizes) {
+        for (const [key, entry] of Object.entries(input.updates.quantityUnitSizes)) {
+          if (sizesEntryWouldCycle(input.updates.quantityUnitSizes, key, entry)) {
+            throw Errors.validation(
+              `Conversion would create a cycle: ${key} → ${entry.unit}.`
+            );
+          }
+        }
+      }
+
       const updatedItems = [];
       for (const itemId of input.itemIds) {
         const updateData: Record<string, unknown> = { updatedAt: new Date() };
@@ -774,6 +819,22 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         }
         if (input.updates.defaultAreaId !== undefined) {
           updateData.defaultAreaId = input.updates.defaultAreaId;
+        }
+        if (input.updates.defaultUnit !== undefined) {
+          updateData.defaultUnit = input.updates.defaultUnit;
+        }
+        if (input.updates.density !== undefined) {
+          updateData.density = input.updates.density?.toString() ?? null;
+        }
+        if (input.updates.quantityUnitSizes !== undefined) {
+          updateData.quantityUnitSizes = input.updates.quantityUnitSizes;
+        }
+        if (input.updates.defaultShelfLifeDays !== undefined) {
+          updateData.defaultShelfLifeDays = input.updates.defaultShelfLifeDays;
+        }
+        // Either fix re-triggers the scan; clear so it re-evaluates on next read.
+        if (input.updates.density !== undefined || input.updates.quantityUnitSizes !== undefined) {
+          updateData.needsConversion = false;
         }
 
         const [updated] = await db

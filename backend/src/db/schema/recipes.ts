@@ -14,6 +14,11 @@ import { relations } from 'drizzle-orm';
 import { households } from './households';
 import { users } from './users';
 import { devices } from './devices';
+// Circular at the module level but only used inside lazy `references(() => …)`
+// callbacks, which drizzle-orm evaluates after all schema modules have
+// finished loading — the existing inventory.ts ↔ recipes.ts pair already
+// uses this pattern (inventory references recipes for leftovers etc.).
+import { inventoryItems } from './inventory';
 
 export const recipes = pgTable('recipes', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -60,10 +65,9 @@ export const recipeIngredients = pgTable('recipe_ingredients', {
   recipeId: uuid('recipe_id')
     .notNull()
     .references(() => recipes.id, { onDelete: 'cascade' }),
-  // FK to inventory_items(id) is declared at the DB level (ON DELETE SET NULL)
-  // because adding it here would create a circular module import with
-  // ./inventory.ts. Migration enforces the constraint.
-  inventoryItemId: uuid('inventory_item_id'),
+  inventoryItemId: uuid('inventory_item_id').references(() => inventoryItems.id, {
+    onDelete: 'set null',
+  }),
   name: varchar('name', { length: 255 }).notNull(),
   quantity: decimal('quantity', { precision: 10, scale: 3 }),
   unit: varchar('unit', { length: 50 }),

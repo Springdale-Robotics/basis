@@ -768,9 +768,14 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
-      // Deduct inventory if requested
+      // Deduct inventory if requested. Wrapped in a transaction with
+      // SELECT FOR UPDATE on each item's stock rows so two concurrent
+      // cook-finish requests for the same item can't both plan against
+      // the same tranches and over-deplete. The second transaction blocks
+      // until the first commits.
       if (deductInventory) {
-        const ingredients = await db.query.recipeIngredients.findMany({
+        await db.transaction(async (tx) => {
+        const ingredients = await tx.query.recipeIngredients.findMany({
           where: eq(recipeIngredients.recipeId, request.params.id),
         });
 
@@ -783,7 +788,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           if (adjustment?.skipDeduction) continue;
 
           // Get the inventory item for unit conversion info
-          const item = await db.query.inventoryItems.findFirst({
+          const item = await tx.query.inventoryItems.findFirst({
             where: eq(inventoryItems.id, ingredient.inventoryItemId),
           });
 
@@ -795,11 +800,16 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
 
           if (quantityToDeduct <= 0) continue;
 
-          // Get stock entries for this item, ordered by expiry date (FIFO)
-          const stockEntries = await db.query.inventoryStock.findMany({
-            where: eq(inventoryStock.itemId, ingredient.inventoryItemId),
-            orderBy: (s, { asc }) => [asc(s.expiryDate), asc(s.addedAt)],
-          });
+          // Get stock entries for this item with row-level locks, ordered by
+          // expiry date (FIFO). The lock is held until the transaction
+          // commits, so a concurrent cook finishing the same recipe can't
+          // see the same rows and double-deduct.
+          const stockEntries = await tx
+            .select()
+            .from(inventoryStock)
+            .where(eq(inventoryStock.itemId, ingredient.inventoryItemId))
+            .orderBy(asc(inventoryStock.expiryDate), asc(inventoryStock.addedAt))
+            .for('update');
 
           let remaining = quantityToDeduct;
 
@@ -829,7 +839,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
                 // still log nothing here and let needsConversion surface in
                 // the UI; the cook completes with under-deducted inventory.
                 if (!item.needsConversion) {
-                  await db
+                  await tx
                     .update(inventoryItems)
                     .set({ needsConversion: true, updatedAt: new Date() })
                     .where(eq(inventoryItems.id, item.id));
@@ -843,11 +853,11 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
             if (stockQty <= convertedRemaining) {
               // Consume this stock entry whole. Reduce `remaining`
               // (ingredient unit) by the stock's equivalent in ingredient unit.
-              await db.delete(inventoryStock).where(eq(inventoryStock.id, stock.id));
+              await tx.delete(inventoryStock).where(eq(inventoryStock.id, stock.id));
               remaining = Math.max(0, remaining - stockInIngredientUnit);
             } else {
               // Partial consumption: reduce stock by the converted amount.
-              await db
+              await tx
                 .update(inventoryStock)
                 .set({
                   quantity: (stockQty - convertedRemaining).toString(),
@@ -870,6 +880,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
             );
           }
         }
+        }); // end transaction
       }
 
       // Delete the cooking session
