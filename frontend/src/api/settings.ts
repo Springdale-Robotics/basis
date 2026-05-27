@@ -20,6 +20,20 @@ export interface TailscaleDetectResult {
     target?: string;
   };
 }
+
+export type CloudflaredIssue =
+  | 'not_installed'
+  | 'spawn_failed'
+  | 'child_exited'
+  | 'unknown_error';
+
+export interface CloudflaredStatus {
+  installed: boolean;
+  version?: string;
+  running: boolean;
+  lastError?: string;
+  issues: CloudflaredIssue[];
+}
 import type { HouseholdSettings, ThemeConfig } from '@/types/models';
 
 export type RemoteAccessMode =
@@ -131,6 +145,26 @@ export const settingsApi = {
   disableTailscaleFunnel: () =>
     apiPost<{ message: string }>(
       '/settings/remote-access/tailscale/funnel/disable'
+    ),
+
+  detectCloudflared: () =>
+    apiGet<CloudflaredStatus>('/settings/remote-access/cloudflare/detect'),
+
+  connectCloudflare: (token: string, publicUrl: string) =>
+    apiPost<{ status: CloudflaredStatus; publicUrl: string }>(
+      '/settings/remote-access/cloudflare/connect',
+      { token, publicUrl }
+    ),
+
+  disconnectCloudflare: () =>
+    apiPost<{ message: string }>(
+      '/settings/remote-access/cloudflare/disconnect'
+    ),
+
+  testRemoteUrl: (url: string) =>
+    apiPost<{ ok: boolean; status?: number; elapsedMs: number; reason?: string }>(
+      '/settings/remote-access/test-url',
+      { url }
     ),
 
   getFeatures: () =>

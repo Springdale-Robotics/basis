@@ -15,6 +15,11 @@ import {
   getServeStatus,
   getTailscaleStatus,
 } from '../../lib/tailscale.js';
+import {
+  getCloudflaredStatus,
+  startTunnel as startCloudflareTunnel,
+  stopTunnel as stopCloudflareTunnel,
+} from '../../lib/cloudflared.js';
 
 const PUBLIC_ICS_PATH = '/api/v1/calendars/public';
 
@@ -314,7 +319,15 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       const settings = household?.settings as any;
       const remoteAccess = settings?.remoteAccess || { mode: 'local_only' };
 
-      return { success: true, data: { remoteAccess } };
+      // Redact the Cloudflare tunnel token before responding — it's
+      // stored plaintext in the JSON blob (same as DDNS credentials) but
+      // there's no reason for the frontend to ever see it after it's saved.
+      const redacted = { ...remoteAccess };
+      if (redacted.cloudflare?.tunnelToken) {
+        redacted.cloudflare = { ...redacted.cloudflare, tunnelToken: '***' };
+      }
+
+      return { success: true, data: { remoteAccess: redacted } };
     }
   );
 
@@ -526,6 +539,139 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         };
       }
       return { success: true, data: { message: 'Funnel disabled' } };
+    }
+  );
+
+  // ─── Cloudflare Tunnel: detect + connect/disconnect ──────────────────────
+
+  const connectCloudflareSchema = z.object({
+    token: z.string().min(20, 'Token looks too short'),
+    publicUrl: remoteAccessUrlSchema,
+  });
+
+  app.get(
+    '/remote-access/cloudflare/detect',
+    { preHandler: [authMiddleware] },
+    async () => {
+      const status = await getCloudflaredStatus();
+      return { success: true, data: status };
+    }
+  );
+
+  app.post(
+    '/remote-access/cloudflare/connect',
+    { preHandler: [authMiddleware, requireAdmin()] },
+    async (request, reply) => {
+      const { token, publicUrl } = connectCloudflareSchema.parse(request.body);
+      const status = await startCloudflareTunnel(token);
+      if (!status.running) {
+        reply.code(409);
+        return {
+          success: false,
+          error: {
+            code: 'CLOUDFLARE_CONNECT_FAILED',
+            message:
+              status.lastError ??
+              (status.issues[0] === 'not_installed'
+                ? 'cloudflared is not installed on this host'
+                : 'cloudflared failed to start'),
+            issues: status.issues,
+          },
+        };
+      }
+
+      // Persist token + publicUrl into household settings so resumeTunnel()
+      // can rehydrate on backend restart.
+      const current = await db.query.households.findFirst({
+        where: eq(households.id, request.user!.householdId),
+        columns: { settings: true },
+      });
+      const existing = (current?.settings as Record<string, unknown>) ?? {};
+      const existingRemote =
+        (existing.remoteAccess as Record<string, unknown> | undefined) ?? {};
+      const newRemote = {
+        ...existingRemote,
+        mode: 'cloudflare',
+        publicUrl,
+        cloudflare: { tunnelToken: token, tunnelId: 'managed' },
+      };
+      await db
+        .update(households)
+        .set({ settings: { ...existing, remoteAccess: newRemote }, updatedAt: new Date() })
+        .where(eq(households.id, request.user!.householdId));
+
+      return { success: true, data: { status, publicUrl } };
+    }
+  );
+
+  app.post(
+    '/remote-access/cloudflare/disconnect',
+    { preHandler: [authMiddleware, requireAdmin()] },
+    async (request) => {
+      stopCloudflareTunnel();
+
+      const current = await db.query.households.findFirst({
+        where: eq(households.id, request.user!.householdId),
+        columns: { settings: true },
+      });
+      const existing = (current?.settings as Record<string, unknown>) ?? {};
+      const existingRemote =
+        (existing.remoteAccess as Record<string, unknown> | undefined) ?? {};
+      const { cloudflare: _drop, publicUrl: _drop2, ...rest } = existingRemote;
+      await db
+        .update(households)
+        .set({ settings: { ...existing, remoteAccess: rest }, updatedAt: new Date() })
+        .where(eq(households.id, request.user!.householdId));
+
+      return { success: true, data: { message: 'Cloudflare tunnel stopped' } };
+    }
+  );
+
+  // ─── Custom Domain: reachability probe ───────────────────────────────────
+
+  const testUrlSchema = z.object({ url: remoteAccessUrlSchema });
+
+  app.post(
+    '/remote-access/test-url',
+    { preHandler: [authMiddleware, requireAdmin()] },
+    async (request) => {
+      const { url } = testUrlSchema.parse(request.body);
+      // HEAD the URL from the server side. We're not trying to validate auth,
+      // just that the URL terminates somewhere that responds. 5s timeout —
+      // longer than that, the user definitely has a routing problem.
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5_000);
+      const start = Date.now();
+      try {
+        const res = await fetch(url, { method: 'HEAD', signal: controller.signal });
+        const elapsedMs = Date.now() - start;
+        return {
+          success: true,
+          data: { ok: true, status: res.status, elapsedMs },
+        };
+      } catch (err) {
+        const elapsedMs = Date.now() - start;
+        const e = err as { name?: string; message?: string; cause?: { code?: string } };
+        return {
+          success: true,
+          data: {
+            ok: false,
+            elapsedMs,
+            reason:
+              e.name === 'AbortError'
+                ? 'Request timed out after 5s'
+                : e.cause?.code === 'ENOTFOUND'
+                ? 'DNS lookup failed — domain does not resolve'
+                : e.cause?.code === 'ECONNREFUSED'
+                ? 'Connection refused — nothing listening at that host:port'
+                : e.cause?.code === 'CERT_HAS_EXPIRED'
+                ? 'TLS certificate has expired'
+                : e.cause?.code ?? e.message ?? 'Unknown error',
+          },
+        };
+      } finally {
+        clearTimeout(timeout);
+      }
     }
   );
 

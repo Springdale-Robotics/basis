@@ -4,6 +4,9 @@ import { initializeWorkers, scheduleRecurringJobs, shutdownWorkers } from './job
 import { redis } from './config/redis.js';
 import { logger } from './lib/logger.js';
 import { config } from './config/index.js';
+import { db } from './config/database.js';
+import { households } from './db/schema/index.js';
+import { resumeTunnel, stopTunnel as stopCloudflareTunnel } from './lib/cloudflared.js';
 
 const signals = ['SIGINT', 'SIGTERM'];
 let isShuttingDown = false;
@@ -32,6 +35,25 @@ async function main(): Promise<void> {
     await app.listen({ port: config.PORT, host: '0.0.0.0' });
     logger.info({ port: config.PORT }, 'Server listening');
 
+    // Resume Cloudflare tunnel if one was previously configured. Looks at the
+    // first household with a stored token — matches Tailscale's single-host
+    // assumption (one backend, one tunnel).
+    void (async () => {
+      try {
+        const all = await db.query.households.findMany({ columns: { settings: true } });
+        for (const h of all) {
+          const remote = (h.settings as any)?.remoteAccess;
+          const token = remote?.cloudflare?.tunnelToken;
+          if (token && remote?.mode === 'cloudflare') {
+            await resumeTunnel(token);
+            break;
+          }
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Failed to resume Cloudflare tunnel');
+      }
+    })();
+
     // Graceful shutdown handler
     const shutdown = async (signal: string): Promise<void> => {
       if (isShuttingDown) {
@@ -50,6 +72,10 @@ async function main(): Promise<void> {
       }, timeoutMs);
 
       try {
+        // Stop the Cloudflare tunnel child before everything else so it gets a
+        // clean SIGTERM rather than being orphaned.
+        stopCloudflareTunnel();
+
         // Stop accepting new connections first
         await Promise.race([
           app.close(),

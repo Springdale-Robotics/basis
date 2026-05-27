@@ -64,19 +64,59 @@ export function SettingsPage() {
             <Route index element={<Navigate to="profile" replace />} />
             <Route path="profile" element={<ProfileSettingsPage />} />
             <Route path="theme" element={<ThemeSettingsPage />} />
-            <Route path="notifications" element={<PlaceholderSettings title="Notifications" />} />
+            <Route
+              path="notifications"
+              element={
+                <PlaceholderSettings
+                  title="Notifications"
+                  description="Choose which household events trigger push notifications, emails, or in-app toasts — per category, per quiet-hours window."
+                />
+              }
+            />
             <Route path="household" element={<HouseholdSettingsPage />} />
             <Route path="members" element={<MembersSettingsPage />} />
             <Route path="groups" element={<GroupsSettingsPage />} />
             <Route path="permissions" element={<FeaturePermissionsPage />} />
             <Route path="storage" element={<StorageSettingsPage />} />
             <Route path="calendars" element={<CalendarSettingsPage />} />
-            <Route path="devices" element={<PlaceholderSettings title="Devices" />} />
+            <Route
+              path="devices"
+              element={
+                <PlaceholderSettings
+                  title="Devices"
+                  description="Manage the iOS, Android, and desktop clients that have been provisioned for this household — view last-seen, revoke access, rename, or push a fresh CalDAV/ICS profile."
+                />
+              }
+            />
             <Route path="remote-access" element={<RemoteAccessSettingsPage />} />
-            <Route path="backup" element={<PlaceholderSettings title="Backup" />} />
-            <Route path="connections" element={<PlaceholderSettings title="Connections" />} />
+            <Route
+              path="backup"
+              element={
+                <PlaceholderSettings
+                  title="Backup"
+                  description="Schedule automatic snapshots of the household database and uploaded files, restore from a prior backup, or export everything as a portable archive."
+                />
+              }
+            />
+            <Route
+              path="connections"
+              element={
+                <PlaceholderSettings
+                  title="Connections"
+                  description="Link external accounts the household pulls from — Google Photos, smart-home hubs, music services, recipe sources — and manage their OAuth tokens."
+                />
+              }
+            />
             <Route path="features" element={<FeatureSettingsPage />} />
-            <Route path="sessions" element={<PlaceholderSettings title="Sessions" />} />
+            <Route
+              path="sessions"
+              element={
+                <PlaceholderSettings
+                  title="Sessions"
+                  description="See where you're currently signed in (browser, OS, last activity) and sign out individual sessions or all other devices at once."
+                />
+              }
+            />
           </Routes>
         </div>
       </div>
@@ -84,14 +124,23 @@ export function SettingsPage() {
   );
 }
 
-function PlaceholderSettings({ title }: { title: string }) {
+function PlaceholderSettings({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
   return (
     <Card>
       <CardContent className="p-6">
-        <h2 className="text-lg font-semibold">{title}</h2>
-        <p className="mt-2 text-muted-foreground">
-          {title} settings will be implemented here.
-        </p>
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+            Coming soon
+          </span>
+        </div>
+        <p className="mt-2 text-sm text-muted-foreground">{description}</p>
       </CardContent>
     </Card>
   );

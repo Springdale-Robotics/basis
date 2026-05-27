@@ -1,18 +1,20 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Globe, Cloud, Network, Laptop } from 'lucide-react';
+import { Loader2, Globe, Cloud, Network, Laptop, Copy, Check as CheckIcon, XCircle, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import {
   settingsApi,
   type RemoteAccessMode,
   type TailscaleDetectResult,
   type TailscaleIssue,
+  type CloudflaredStatus,
 } from '@/api/settings';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
@@ -187,6 +189,11 @@ export function RemoteAccessSettingsPage() {
             <AlertDescription>{selectedMode.guidance}</AlertDescription>
           </Alert>
 
+          <ModeSwitchWarning
+            previousMode={data?.remoteAccess.mode}
+            newMode={mode}
+          />
+
           <div className="space-y-2">
             <Label htmlFor="publicUrl">
               {selectedMode.id === 'local_only' ? 'Server URL' : 'Public URL'}
@@ -208,6 +215,14 @@ export function RemoteAccessSettingsPage() {
           </div>
 
           {selectedMode.id === 'tailscale' && <TailscalePanel publicUrl={publicUrl} setPublicUrl={setPublicUrl} />}
+
+          {selectedMode.id === 'cloudflare' && (
+            <CloudflarePanel publicUrl={publicUrl} setPublicUrl={setPublicUrl} />
+          )}
+
+          {selectedMode.id === 'custom_domain' && (
+            <CustomDomainPanel publicUrl={publicUrl} />
+          )}
 
           {selectedMode.id !== 'local_only' && (
             <div className="space-y-2">
@@ -428,6 +443,445 @@ function TailscalePanel({
           <p className="text-xs text-muted-foreground">
             (Will overwrite your current Server URL setting.)
           </p>
+        )}
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+// ─── Cloudflare Tunnel guided setup ───────────────────────────────────────
+
+function CloudflarePanel({
+  publicUrl,
+  setPublicUrl,
+}: {
+  publicUrl: string;
+  setPublicUrl: (v: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [token, setToken] = useState('');
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['settings', 'remote-access', 'cloudflare'],
+    queryFn: settingsApi.detectCloudflared,
+    refetchInterval: (q) =>
+      // While the tunnel is running, poll occasionally so the UI catches
+      // unexpected exits.
+      (q.state.data as CloudflaredStatus | undefined)?.running ? 15_000 : false,
+  });
+
+  const connectMutation = useMutation({
+    mutationFn: () => settingsApi.connectCloudflare(token, publicUrl),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['settings', 'remote-access'] });
+      queryClient.invalidateQueries({
+        queryKey: ['settings', 'remote-access', 'cloudflare'],
+      });
+      setPublicUrl(res.publicUrl);
+      setToken('');
+      toast({ title: 'Cloudflare tunnel connected' });
+    },
+    onError: (err) => {
+      toast({
+        title: 'Could not connect',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const disconnectMutation = useMutation({
+    mutationFn: settingsApi.disconnectCloudflare,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings', 'remote-access'] });
+      queryClient.invalidateQueries({
+        queryKey: ['settings', 'remote-access', 'cloudflare'],
+      });
+      setPublicUrl('');
+      toast({ title: 'Cloudflare tunnel disconnected' });
+    },
+    onError: (err) =>
+      toast({
+        title: 'Could not disconnect',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      }),
+  });
+
+  if (isLoading) return <Skeleton className="h-32" />;
+  if (!data) return null;
+
+  if (!data.installed) {
+    return (
+      <Alert>
+        <Cloud className="h-4 w-4" />
+        <AlertTitle>cloudflared is not installed</AlertTitle>
+        <AlertDescription className="space-y-2">
+          <p>
+            Install Cloudflare's <code className="rounded bg-muted px-1">cloudflared</code>{' '}
+            binary on this host, then refresh. See{' '}
+            <a
+              href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
+              target="_blank"
+              rel="noreferrer"
+              className="underline inline-flex items-center gap-1"
+            >
+              install instructions <ExternalLink className="h-3 w-3" />
+            </a>
+            .
+          </p>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            Check again
+          </Button>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (data.running) {
+    return (
+      <Alert>
+        <CheckCircle2 className="h-4 w-4 text-green-600" />
+        <AlertTitle>Cloudflare tunnel is connected</AlertTitle>
+        <AlertDescription className="space-y-2">
+          <p>
+            cloudflared {data.version && <>(v{data.version}) </>}is running as a managed
+            child of this server. The tunnel restarts automatically with the server.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => disconnectMutation.mutate()}
+            disabled={disconnectMutation.isPending}
+          >
+            {disconnectMutation.isPending && (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            )}
+            Stop tunnel
+          </Button>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  return (
+    <Alert>
+      <Cloud className="h-4 w-4" />
+      <AlertTitle>cloudflared detected{data.version && ` (v${data.version})`}</AlertTitle>
+      <AlertDescription className="space-y-3">
+        <p>
+          Create a tunnel in the{' '}
+          <a
+            href="https://one.dash.cloudflare.com/"
+            target="_blank"
+            rel="noreferrer"
+            className="underline inline-flex items-center gap-1"
+          >
+            Cloudflare Zero Trust dashboard <ExternalLink className="h-3 w-3" />
+          </a>
+          , then paste the connector token below. We'll run it as a managed child
+          process — no <code className="rounded bg-muted px-1">systemctl</code>{' '}
+          required.
+        </p>
+        <div className="space-y-2">
+          <Label htmlFor="cf-token">Tunnel token</Label>
+          <Input
+            id="cf-token"
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="eyJhIjoi…"
+            autoComplete="off"
+          />
+        </div>
+        {data.lastError && (
+          <p className="text-xs text-destructive">
+            Last attempt: {data.lastError}
+          </p>
+        )}
+        <Button
+          size="sm"
+          onClick={() => connectMutation.mutate()}
+          disabled={
+            connectMutation.isPending ||
+            token.trim().length < 20 ||
+            !publicUrl ||
+            !!validateUrl(publicUrl, false)
+          }
+        >
+          {connectMutation.isPending && (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          )}
+          Connect tunnel
+        </Button>
+        {(!publicUrl || !!validateUrl(publicUrl, false)) && (
+          <p className="text-xs text-muted-foreground">
+            Set the Public URL above first (e.g. https://home.yourdomain.com) — that's
+            the hostname your tunnel routes to.
+          </p>
+        )}
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+// ─── Custom Domain: reachability probe + reverse-proxy snippets ───────────
+
+function CustomDomainPanel({ publicUrl }: { publicUrl: string }) {
+  const [result, setResult] = useState<{
+    ok: boolean;
+    status?: number;
+    elapsedMs: number;
+    reason?: string;
+  } | null>(null);
+
+  const urlError = publicUrl ? validateUrl(publicUrl, false) : 'URL is required';
+
+  const testMutation = useMutation({
+    mutationFn: () => settingsApi.testRemoteUrl(publicUrl),
+    onSuccess: (data) => setResult(data),
+    onError: (err) => {
+      toast({
+        title: 'Test failed',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Derive the hostname for templating into reverse-proxy snippets. Falls back
+  // to "home.yourdomain.com" so the snippets are still copy-pasteable when the
+  // user hasn't filled in a URL yet.
+  const host = (() => {
+    try {
+      return new URL(publicUrl).host;
+    } catch {
+      return 'home.yourdomain.com';
+    }
+  })();
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => testMutation.mutate()}
+          disabled={testMutation.isPending || !!urlError}
+        >
+          {testMutation.isPending && (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          )}
+          Test reachability
+        </Button>
+        {result && (
+          <div className="flex items-center gap-2 text-sm">
+            {result.ok ? (
+              <>
+                <CheckIcon className="h-4 w-4 text-green-600" />
+                <span>
+                  Reached in {result.elapsedMs}ms ({result.status})
+                </span>
+              </>
+            ) : (
+              <>
+                <XCircle className="h-4 w-4 text-destructive" />
+                <span className="text-destructive">{result.reason}</span>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <Label className="text-sm">Reverse-proxy config</Label>
+        <p className="mb-2 text-xs text-muted-foreground">
+          The backend serves plain HTTP — front it with one of these. Copy, drop
+          into your proxy config, reload, done.
+        </p>
+        <Tabs defaultValue="caddy">
+          <TabsList>
+            <TabsTrigger value="caddy">Caddy</TabsTrigger>
+            <TabsTrigger value="nginx">nginx</TabsTrigger>
+          </TabsList>
+          <TabsContent value="caddy">
+            <ConfigSnippet snippet={caddySnippet(host)} />
+          </TabsContent>
+          <TabsContent value="nginx">
+            <ConfigSnippet snippet={nginxSnippet(host)} />
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
+
+function ConfigSnippet({ snippet }: { snippet: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(snippet);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast({ title: 'Copy failed', variant: 'destructive' });
+    }
+  };
+  return (
+    <div className="relative">
+      <pre className="overflow-x-auto rounded-md bg-muted p-3 pr-12 text-xs">
+        {snippet}
+      </pre>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="absolute right-1 top-1"
+        onClick={copy}
+      >
+        {copied ? <CheckIcon className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+      </Button>
+    </div>
+  );
+}
+
+function caddySnippet(host: string): string {
+  return `${host} {
+  reverse_proxy http://localhost:3000
+}`;
+}
+
+function nginxSnippet(host: string): string {
+  return `server {
+  listen 443 ssl http2;
+  server_name ${host};
+
+  ssl_certificate     /etc/letsencrypt/live/${host}/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/${host}/privkey.pem;
+
+  location / {
+    proxy_pass http://localhost:3000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Real-IP $remote_addr;
+
+    # WebSocket
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+  }
+}`;
+}
+
+// ─── Mode-switch cleanup warning ──────────────────────────────────────────
+
+/**
+ * When the user picks a different mode in the picker, the previously-saved
+ * mode's managed infra (Tailscale serve, Cloudflare tunnel) may still be
+ * running. Surface a banner so they can tear it down before saving rather
+ * than discovering the leftover serve weeks later.
+ */
+function ModeSwitchWarning({
+  previousMode,
+  newMode,
+}: {
+  previousMode: RemoteAccessMode | undefined;
+  newMode: RemoteAccessMode;
+}) {
+  const queryClient = useQueryClient();
+
+  const isLeavingTailscale = previousMode === 'tailscale' && newMode !== 'tailscale';
+  const isLeavingCloudflare = previousMode === 'cloudflare' && newMode !== 'cloudflare';
+  const shouldShow = isLeavingTailscale || isLeavingCloudflare;
+
+  // Probe whichever managed setup the user is leaving so we only warn if it's
+  // actually running right now. Skipping the query when not relevant avoids
+  // extra requests on every render.
+  const { data: tailscaleStatus } = useQuery({
+    queryKey: ['settings', 'remote-access', 'tailscale'],
+    queryFn: settingsApi.detectTailscale,
+    enabled: isLeavingTailscale,
+  });
+  const { data: cloudflaredStatus } = useQuery({
+    queryKey: ['settings', 'remote-access', 'cloudflare'],
+    queryFn: settingsApi.detectCloudflared,
+    enabled: isLeavingCloudflare,
+  });
+
+  const tailscaleRunning = isLeavingTailscale && tailscaleStatus?.serve.configured;
+  const cloudflareRunning = isLeavingCloudflare && cloudflaredStatus?.running;
+
+  const stopTailscale = useMutation({
+    mutationFn: settingsApi.disableTailscale,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings', 'remote-access'] });
+      queryClient.invalidateQueries({
+        queryKey: ['settings', 'remote-access', 'tailscale'],
+      });
+      toast({ title: 'Tailscale serve stopped' });
+    },
+    onError: (err) =>
+      toast({
+        title: 'Could not stop',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      }),
+  });
+
+  const stopCloudflare = useMutation({
+    mutationFn: settingsApi.disconnectCloudflare,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings', 'remote-access'] });
+      queryClient.invalidateQueries({
+        queryKey: ['settings', 'remote-access', 'cloudflare'],
+      });
+      toast({ title: 'Cloudflare tunnel stopped' });
+    },
+    onError: (err) =>
+      toast({
+        title: 'Could not stop',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      }),
+  });
+
+  if (!shouldShow || (!tailscaleRunning && !cloudflareRunning)) return null;
+
+  return (
+    <Alert>
+      <AlertTriangle className="h-4 w-4" />
+      <AlertTitle>Previous setup is still running</AlertTitle>
+      <AlertDescription className="space-y-2">
+        <p>
+          You're switching away from <strong>{previousMode}</strong>, but the{' '}
+          {tailscaleRunning ? 'Tailscale serve' : 'Cloudflare tunnel'} on this
+          host is still active. Saving the new mode won't stop it — tear it down
+          here so it doesn't keep serving in the background.
+        </p>
+        {tailscaleRunning && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => stopTailscale.mutate()}
+            disabled={stopTailscale.isPending}
+          >
+            {stopTailscale.isPending && (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            )}
+            Stop Tailscale serve
+          </Button>
+        )}
+        {cloudflareRunning && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => stopCloudflare.mutate()}
+            disabled={stopCloudflare.isPending}
+          >
+            {stopCloudflare.isPending && (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            )}
+            Stop Cloudflare tunnel
+          </Button>
         )}
       </AlertDescription>
     </Alert>
