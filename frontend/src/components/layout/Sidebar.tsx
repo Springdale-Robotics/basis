@@ -7,6 +7,7 @@ import {
   Package,
   ShoppingCart,
   CheckSquare,
+  Trophy,
   ListTodo,
   FolderOpen,
   Image,
@@ -41,6 +42,7 @@ const iconMap = {
   Package,
   ShoppingCart,
   CheckSquare,
+  Trophy,
   ListTodo,
   FolderOpen,
   Image,
@@ -66,6 +68,7 @@ const mainNavItems: NavItem[] = [
   { label: 'Inventory', href: '/inventory', icon: 'Package', feature: 'inventory' },
   { label: 'Shopping List', href: '/shopping-list', icon: 'ShoppingCart', feature: 'inventory' },
   { label: 'Tasks', href: '/tasks', icon: 'CheckSquare', feature: 'tasks' },
+  { label: 'Rewards', href: '/rewards', icon: 'Trophy', feature: 'rewards' },
   { label: 'Lists', href: '/lists', icon: 'ListTodo' },
 ];
 

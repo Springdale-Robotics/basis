@@ -15,6 +15,7 @@ import { CalendarSettingsPage } from './CalendarSettingsPage';
 import { StorageSettingsPage } from './StorageSettingsPage';
 import { GroupsSettingsPage } from './GroupsSettingsPage';
 import { FeaturePermissionsPage } from './FeaturePermissionsPage';
+import { FeatureSettingsPage } from './FeatureSettingsPage';
 import { RemoteAccessSettingsPage } from './RemoteAccessSettingsPage';
 
 export function SettingsPage() {
@@ -74,7 +75,7 @@ export function SettingsPage() {
             <Route path="remote-access" element={<RemoteAccessSettingsPage />} />
             <Route path="backup" element={<PlaceholderSettings title="Backup" />} />
             <Route path="connections" element={<PlaceholderSettings title="Connections" />} />
-            <Route path="features" element={<PlaceholderSettings title="Features" />} />
+            <Route path="features" element={<FeatureSettingsPage />} />
             <Route path="sessions" element={<PlaceholderSettings title="Sessions" />} />
           </Routes>
         </div>

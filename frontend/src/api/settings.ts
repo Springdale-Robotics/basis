@@ -134,10 +134,10 @@ export const settingsApi = {
     ),
 
   getFeatures: () =>
-    apiGet<FeatureSettings>('/settings/features'),
+    apiGet<{ features: FeatureSettings }>('/settings/features'),
 
   updateFeatures: (data: Partial<FeatureSettings>) =>
-    apiPatch<FeatureSettings>('/settings/features', data),
+    apiPatch<{ features: FeatureSettings }>('/settings/features', data),
 
   getStorageSettings: () =>
     apiGet<StorageSettingsResponse>('/settings/storage'),

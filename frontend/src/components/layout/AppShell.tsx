@@ -2,6 +2,7 @@ import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { MobileNav } from './MobileNav';
+import { OfflineIndicator } from './OfflineIndicator';
 import { MusicPlayer } from '@/components/music/MusicPlayer';
 import { useUIStore } from '@/stores/uiStore';
 import { useDevice } from '@/hooks/useDevice';
@@ -41,6 +42,9 @@ export function AppShell() {
 
       {/* Persistent music player */}
       <MusicPlayer />
+
+      {/* Offline / sync status */}
+      <OfflineIndicator />
     </div>
   );
 }

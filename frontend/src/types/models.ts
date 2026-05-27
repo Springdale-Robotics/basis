@@ -406,13 +406,20 @@ export interface UserRewards {
   lifetimePoints: number;
 }
 
+export type ListType = 'checklist' | 'wishlist' | 'notes' | 'reminder';
+
 export interface List {
   id: string;
   householdId: string;
   name: string;
-  type: 'checklist' | 'reminder' | 'notes';
-  icon?: string;
-  color?: string;
+  type: ListType;
+  icon?: string | null;
+  color?: string | null;
+  recipientUserId?: string | null;
+  isTemplate: boolean;
+  isPinned: boolean;
+  archivedAt?: string | null;
+  parentListId?: string | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -422,12 +429,21 @@ export interface ListItem {
   id: string;
   listId: string;
   content: string;
-  text: string;
-  checked: boolean;
-  dueDate?: string;
-  reminderAt?: string;
-  order: number;
+  isChecked: boolean;
+  dueDate?: string | null;
+  sortOrder: number;
+  parentItemId?: string | null;
+  sectionLabel?: string | null;
+  assigneeUserId?: string | null;
+  notes?: string | null;
+  url?: string | null;
+  price?: string | null;
+  claimedByUserId?: string | null;
+  claimedAt?: string | null;
+  rewardPoints: number;
+  createdBy: string;
   createdAt: string;
+  checkedAt?: string | null;
   updatedAt: string;
 }
 

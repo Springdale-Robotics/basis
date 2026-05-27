@@ -111,9 +111,12 @@ export type Feature = z.infer<typeof featureSchema>;
 export const shoppingListSourceSchema = z.enum(['manual', 'meal_plan', 'low_stock']);
 export type ShoppingListSource = z.infer<typeof shoppingListSourceSchema>;
 
-// List type enum
-export const listTypeSchema = z.enum(['checklist', 'reminder', 'notes']);
+// List type enum. `reminder` is retained for legacy data only — new lists may
+// only be created as checklist | wishlist | notes (reminders live in Tasks).
+export const listTypeSchema = z.enum(['checklist', 'reminder', 'notes', 'wishlist']);
+export const createListTypeSchema = z.enum(['checklist', 'notes', 'wishlist']);
 export type ListType = z.infer<typeof listTypeSchema>;
+export type CreateListType = z.infer<typeof createListTypeSchema>;
 
 // Notification type enum
 export const notificationTypeSchema = z.enum([

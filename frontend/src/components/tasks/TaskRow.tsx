@@ -36,6 +36,7 @@ import {
 import { AssigneePicker, type AssigneeValue } from './AssigneePicker';
 import { ChoreDecayMeter } from './ChoreDecayMeter';
 import { cn } from '@/lib/utils';
+import { useFeatureFlags } from '@/hooks/useFeatureFlags';
 import type { Task, User } from '@/types/models';
 import type { Group } from '@/api/groups';
 
@@ -149,6 +150,8 @@ export function TaskRow({
   onTogglePin,
   onAssign,
 }: TaskRowProps) {
+  const features = useFeatureFlags();
+  const rewardsEnabled = features.rewards;
   const sortable = useSortable({
     id: task.id,
     disabled: !manualSort && !bulkMode ? false : false,
@@ -330,7 +333,7 @@ export function TaskRow({
                 {lastDoneLabel(task.lastCompletedAt)}
               </span>
             )}
-            {task.rewardPoints > 0 && (
+            {task.rewardPoints > 0 && rewardsEnabled && (
               <Badge variant="secondary" className="h-5 px-1.5 text-xs gap-0.5">
                 <Star className="h-3 w-3" />
                 {task.rewardPoints}

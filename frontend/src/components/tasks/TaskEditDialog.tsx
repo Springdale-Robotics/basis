@@ -16,6 +16,7 @@ import {
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { AssigneePicker, type AssigneeValue } from './AssigneePicker';
 import { cn } from '@/lib/utils';
+import { useFeatureFlags } from '@/hooks/useFeatureFlags';
 import type { Task, User, RecurrenceMode, TaskKind } from '@/types/models';
 import type { Group } from '@/api/groups';
 import type { CreateTaskRequest, UpdateTaskRequest } from '@/api/tasks';
@@ -127,6 +128,8 @@ export function TaskEditDialog({
   const [cadenceDays, setCadenceDays] = useState<number>(task?.cadenceDays ?? 7);
   const [pinned, setPinned] = useState(task?.pinned ?? false);
   const [rewardPoints, setRewardPoints] = useState(task?.rewardPoints ?? 0);
+  const features = useFeatureFlags();
+  const rewardsEnabled = features.rewards;
 
   // Re-sync local state whenever the dialog opens with a different task.
   useEffect(() => {
@@ -442,17 +445,19 @@ export function TaskEditDialog({
                 onCheckedChange={setPinned}
               />
             </div>
-            <div className="flex items-center justify-between rounded-md border p-3 gap-3">
-              <Label htmlFor="points">Reward points</Label>
-              <Input
-                id="points"
-                type="number"
-                min={0}
-                value={rewardPoints}
-                onChange={(e) => setRewardPoints(Number(e.target.value))}
-                className="h-8 w-20"
-              />
-            </div>
+            {rewardsEnabled && (
+              <div className="flex items-center justify-between rounded-md border p-3 gap-3">
+                <Label htmlFor="points">Reward points</Label>
+                <Input
+                  id="points"
+                  type="number"
+                  min={0}
+                  value={rewardPoints}
+                  onChange={(e) => setRewardPoints(Number(e.target.value))}
+                  className="h-8 w-20"
+                />
+              </div>
+            )}
           </div>
         </div>
 

@@ -3,6 +3,7 @@ import { TodaysEventsCard } from '@/components/dashboard/TodaysEventsCard';
 import { TodaysMealsCard } from '@/components/dashboard/TodaysMealsCard';
 import { UseUpSoonCard } from '@/components/dashboard/UseUpSoonCard';
 import { PendingTasksCard } from '@/components/dashboard/PendingTasksCard';
+import { PendingListsCard } from '@/components/dashboard/PendingListsCard';
 
 export function DashboardPage() {
   return (
@@ -14,6 +15,7 @@ export function DashboardPage() {
         <TodaysMealsCard />
         <UseUpSoonCard />
         <PendingTasksCard />
+        <PendingListsCard />
       </div>
     </div>
   );
