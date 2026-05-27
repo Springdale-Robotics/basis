@@ -14,7 +14,7 @@ jobs:
     name: Build tarball + publish release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # Tag annotation is the release notes — need full history.
           fetch-depth: 0
