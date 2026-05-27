@@ -110,7 +110,7 @@ function renderIosInstallPage(token: string): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>Connect Home Manager Calendar</title>
+  <title>Connect Basis Calendar</title>
   <style>
     :root { font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
     body { margin: 0; padding: 0 20px 40px; background: #f2f2f7; color: #1c1c1e; }
@@ -134,7 +134,7 @@ function renderIosInstallPage(token: string): string {
 </head>
 <body>
   <main>
-    <h1>Connect to Home Manager</h1>
+    <h1>Connect to Basis</h1>
     <p class="lede">After you tap Install, follow these steps on your iPhone.</p>
 
     <div class="card">
@@ -144,7 +144,7 @@ function renderIosInstallPage(token: string): string {
         <li>Safari will prompt: <em>“This website is trying to download a configuration profile.”</em> Tap <strong>Allow</strong>.</li>
         <li>Open the <strong>Settings</strong> app (return here when done).</li>
         <li>Tap <strong>General → VPN &amp; Device Management</strong>.</li>
-        <li>Tap <strong>Home Manager Calendar</strong> under <em>Downloaded Profile</em>.</li>
+        <li>Tap <strong>Basis Calendar</strong> under <em>Downloaded Profile</em>.</li>
         <li>Tap <strong>Install</strong>, enter your passcode, then <strong>Install</strong> again to confirm the unsigned profile.</li>
         <li>Open the <strong>Calendar</strong> app — your calendars will start syncing.</li>
       </ol>

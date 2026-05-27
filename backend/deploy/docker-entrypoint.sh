@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-echo "HomeManager Backend Starting..."
+echo "Basis Backend Starting..."
 
 # Wait for postgres
 echo "Waiting for PostgreSQL..."

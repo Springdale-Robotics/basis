@@ -343,7 +343,7 @@ export function CalendarSettingsPage() {
         <CardHeader>
           <CardTitle>Connect a device to your account</CardTitle>
           <CardDescription>
-            Install Home Manager's calendar on your iPhone, Mac, Android, or any CalDAV client.
+            Install Basis's calendar on your iPhone, Mac, Android, or any CalDAV client.
             One install per device — your phone will see <em>all</em> calendars you have access
             to, not just one. iOS gets a one-tap QR install; other clients copy-paste.
           </CardDescription>
@@ -621,7 +621,7 @@ export function CalendarSettingsPage() {
           <DialogHeader>
             <DialogTitle>Select Google Calendar</DialogTitle>
             <DialogDescription>
-              Choose which Google Calendar to sync with Home Manager.
+              Choose which Google Calendar to sync with Basis.
             </DialogDescription>
           </DialogHeader>
 
@@ -701,7 +701,7 @@ export function CalendarSettingsPage() {
           <DialogHeader>
             <DialogTitle>Select Outlook Calendar</DialogTitle>
             <DialogDescription>
-              Choose which Outlook Calendar to sync with Home Manager.
+              Choose which Outlook Calendar to sync with Basis.
             </DialogDescription>
           </DialogHeader>
 

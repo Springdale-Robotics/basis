@@ -490,7 +490,7 @@ export async function caldavRoutes(app: FastifyInstance): Promise<void> {
         // aggregation lands in a later iteration; this lets clients move on.
         setDavHeaders(reply);
         reply.code(200).type('text/calendar; charset=utf-8').send(
-          `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Home Manager//CalDAV//EN\r\nBEGIN:VFREEBUSY\r\nEND:VFREEBUSY\r\nEND:VCALENDAR\r\n`
+          `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Basis//CalDAV//EN\r\nBEGIN:VFREEBUSY\r\nEND:VFREEBUSY\r\nEND:VCALENDAR\r\n`
         );
         return;
       }
@@ -563,7 +563,7 @@ export async function caldavRoutes(app: FastifyInstance): Promise<void> {
       }
       if (forbiddenProps) {
         propstats.push(
-          `    <d:propstat>\n      <d:prop>\n${forbiddenProps}      </d:prop>\n      <d:status>HTTP/1.1 403 Forbidden</d:status>\n      <d:responsedescription>Calendar names are managed via the Home Manager web UI; CalDAV clients cannot rename them.</d:responsedescription>\n    </d:propstat>`
+          `    <d:propstat>\n      <d:prop>\n${forbiddenProps}      </d:prop>\n      <d:status>HTTP/1.1 403 Forbidden</d:status>\n      <d:responsedescription>Calendar names are managed via the Basis web UI; CalDAV clients cannot rename them.</d:responsedescription>\n    </d:propstat>`
         );
       }
       const xml = multistatus([

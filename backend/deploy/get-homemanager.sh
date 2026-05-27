@@ -1,5 +1,5 @@
 #!/bin/bash
-# HomeManager Quick Install
+# Basis Quick Install
 # Usage: curl -fsSL https://get.homemanager.app/install.sh | bash
 
 set -e
@@ -8,7 +8,7 @@ REPO_URL="${REPO_URL:-https://github.com/your-username/homemanager}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/homemanager}"
 BRANCH="${BRANCH:-main}"
 
-echo "Downloading HomeManager..."
+echo "Downloading Basis..."
 
 # Check git
 command -v git >/dev/null 2>&1 || { echo "Git required: sudo apt install git"; exit 1; }

@@ -11,7 +11,7 @@ NC='\033[0m'
 
 echo -e "${BLUE}"
 echo "╔═══════════════════════════════════════════╗"
-echo "║         HomeManager Installer             ║"
+echo "║         Basis Installer             ║"
 echo "╚═══════════════════════════════════════════╝"
 echo -e "${NC}"
 
@@ -259,7 +259,7 @@ ENCRYPTION_KEY=$(openssl rand -hex 32)
 
 # Create .env file
 cat > "${INSTALL_DIR}/.env" << EOF
-# HomeManager Configuration
+# Basis Configuration
 # Generated on $(date)
 
 # Database

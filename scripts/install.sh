@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Home Manager — one-shot privileged installer.
+# Basis — one-shot privileged installer.
 #
 # Usage:
 #   curl -fsSL homemanager.app/install.sh | sudo bash
 #   # or, from a checkout:
 #   sudo bash scripts/install.sh
 #
-# This is the ONE elevated step for a Home Manager deployment. It bundles
+# This is the ONE elevated step for a Basis deployment. It bundles
 # every operation that needs root into a single sudo session so the rest of
 # the app (including the web-based Remote Access settings) never has to prompt
 # for credentials. Re-running is safe — every operation is idempotent.
@@ -121,7 +121,7 @@ step_systemd_unit() {
   local unit
   unit=$(cat <<EOF
 [Unit]
-Description=Home Manager backend
+Description=Basis backend
 After=network-online.target docker.service
 Wants=network-online.target
 
@@ -155,7 +155,7 @@ EOF
 main() {
   require_root
   ensure_user_exists
-  log "Home Manager installer"
+  log "Basis installer"
   log "Target user:    $INSTALL_USER"
   log "Data directory: $INSTALL_DATA_DIR"
   [[ $ENABLE_SYSTEMD -eq 1 ]] && log "systemd unit:   enabled" || log "systemd unit:   skipped (pass --systemd to opt in)"

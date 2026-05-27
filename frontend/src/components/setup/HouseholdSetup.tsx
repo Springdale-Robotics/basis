@@ -47,7 +47,7 @@ export function HouseholdSetup({ onSubmit, isLoading }: HouseholdSetupProps) {
         </div>
         <h2 className="text-xl font-semibold">Create Your Household</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Set up your household to get started with Home Manager.
+          Set up your household to get started with Basis.
         </p>
       </div>
 

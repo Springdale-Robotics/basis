@@ -48,7 +48,7 @@ export function AppPasswordsCard() {
             Connected devices
           </CardTitle>
           <CardDescription>
-            Phones, tablets, and desktop calendar apps that connect to Home Manager via CalDAV.
+            Phones, tablets, and desktop calendar apps that connect to Basis via CalDAV.
             Each connection has its own credential — disconnect any one of them at any time
             without affecting the others.{' '}
             <Link to="/calendar/connect" className="underline">

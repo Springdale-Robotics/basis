@@ -105,7 +105,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     await app.register(fastifySwagger, {
       openapi: {
         info: {
-          title: 'Home Manager API',
+          title: 'Basis API',
           description: 'Self-hosted household management server',
           version: '1.0.0',
         },

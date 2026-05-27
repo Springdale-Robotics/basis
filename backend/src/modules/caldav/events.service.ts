@@ -107,7 +107,7 @@ export function renderEventResourceIcs(
 ): string {
   const cal = new ICAL.Component(['vcalendar', [], []]);
   cal.updatePropertyWithValue('version', '2.0');
-  cal.updatePropertyWithValue('prodid', '-//Home Manager//CalDAV//EN');
+  cal.updatePropertyWithValue('prodid', '-//Basis//CalDAV//EN');
   cal.updatePropertyWithValue('calscale', 'GREGORIAN');
 
   const uid = `${master.id}@homemanager`;

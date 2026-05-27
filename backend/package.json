@@ -1,7 +1,7 @@
 {
   "name": "homemanager-backend",
   "version": "1.0.0",
-  "description": "Home Manager - Self-hosted household management server",
+  "description": "Basis — Self-hosted household management server",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {

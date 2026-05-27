@@ -1,5 +1,5 @@
 #!/bin/bash
-# HomeManager Development Helper
+# Basis Development Helper
 # Usage: ./dev.sh [command]
 
 set -e
@@ -489,7 +489,7 @@ case "${1:-help}" in
         run_migrations
 
         echo ""
-        echo -e "${GREEN}Starting HomeManager...${NC}"
+        echo -e "${GREEN}Starting Basis...${NC}"
         echo -e "  Backend:  ${BLUE}http://localhost:$BACKEND_PORT${NC}"
         echo -e "  Frontend: ${BLUE}http://localhost:$FRONTEND_PORT${NC}"
         echo ""
@@ -796,7 +796,7 @@ EOF
     ;;
 
   help|*)
-    echo -e "${BLUE}HomeManager Development Helper${NC}"
+    echo -e "${BLUE}Basis Development Helper${NC}"
     echo ""
     echo "Usage: ./dev.sh <command> [target]"
     echo ""

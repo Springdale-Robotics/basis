@@ -280,13 +280,13 @@ export async function importIcsToCalendar(
  */
 export function generateIcsContent(
   events: CalendarEvent[],
-  calendarName: string = 'Home Manager Calendar'
+  calendarName: string = 'Basis Calendar'
 ): string {
   const comp = new ICAL.Component(['vcalendar', [], []]);
 
   // Set calendar properties
   comp.updatePropertyWithValue('version', '2.0');
-  comp.updatePropertyWithValue('prodid', '-//Home Manager//Calendar//EN');
+  comp.updatePropertyWithValue('prodid', '-//Basis//Calendar//EN');
   comp.updatePropertyWithValue('calscale', 'GREGORIAN');
   comp.updatePropertyWithValue('method', 'PUBLISH');
   comp.updatePropertyWithValue('x-wr-calname', calendarName);
@@ -477,7 +477,7 @@ export async function exportAllCalendarsToIcs(
   // Sort by start time
   allEvents.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
 
-  const content = generateIcsContent(allEvents, 'Home Manager - All Calendars');
+  const content = generateIcsContent(allEvents, 'Basis - All Calendars');
   const filename = 'homemanager_all_calendars.ics';
 
   return { content, filename };

@@ -47,7 +47,7 @@ export function RemoteAccessSetup({ onSubmit, onSkip, isLoading }: RemoteAccessS
         </div>
         <h2 className="text-xl font-semibold">Remote Access</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Choose how you want to access Home Manager remotely.
+          Choose how you want to access Basis remotely.
         </p>
       </div>
 

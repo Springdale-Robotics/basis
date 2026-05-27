@@ -10,8 +10,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
       manifest: {
-        name: 'Home Manager',
-        short_name: 'HomeManager',
+        name: 'Basis',
+        short_name: 'Basis',
         description: 'Self-hosted household management',
         theme_color: '#0f172a',
         background_color: '#ffffff',

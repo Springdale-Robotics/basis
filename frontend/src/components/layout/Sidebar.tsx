@@ -147,7 +147,7 @@ export function Sidebar() {
           {sidebarCollapsed ? (
             <Home className="h-6 w-6" />
           ) : (
-            <span className="text-xl font-bold">Home Manager</span>
+            <span className="text-xl font-bold">Basis</span>
           )}
         </div>
 

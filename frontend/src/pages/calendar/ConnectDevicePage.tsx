@@ -225,7 +225,7 @@ function IosPanel() {
             <ol className="list-decimal pl-5 text-sm">
               <li>"This website is trying to download a configuration profile" → tap Allow.</li>
               <li>Open <strong>Settings → General → VPN &amp; Device Management</strong>.</li>
-              <li>Tap the Home Manager Calendar profile → Install → enter passcode.</li>
+              <li>Tap the Basis Calendar profile → Install → enter passcode.</li>
               <li>iOS Calendar will start syncing within a few seconds.</li>
             </ol>
             <p className="mt-1 text-xs text-muted-foreground">

@@ -315,7 +315,7 @@ export function CalendarSyncSettings({ calendars }: CalendarSyncSettingsProps) {
           <DialogHeader>
             <DialogTitle>Select Google Calendar</DialogTitle>
             <DialogDescription>
-              Choose which Google Calendar to sync with Home Manager.
+              Choose which Google Calendar to sync with Basis.
             </DialogDescription>
           </DialogHeader>
 

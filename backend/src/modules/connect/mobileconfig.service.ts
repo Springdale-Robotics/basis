@@ -74,7 +74,7 @@ export async function buildIosCalendarProfile(
 
   const profileUuid = randomUUID();
   const payloadUuid = randomUUID();
-  const orgName = args.organizationName || 'Home Manager';
+  const orgName = args.organizationName || 'Basis';
   const profileDisplayName = `${orgName} Calendar`;
   const profileDescription = `Adds the ${orgName} CalDAV account so your calendar appears in iOS Calendar. To remove it later: Settings → General → VPN & Device Management.`;
 

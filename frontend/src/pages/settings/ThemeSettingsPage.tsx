@@ -128,7 +128,7 @@ export function ThemeSettingsPage() {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-medium">Appearance</CardTitle>
-          <CardDescription>Choose how Home Manager looks to you</CardDescription>
+          <CardDescription>Choose how Basis looks to you</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex gap-4">

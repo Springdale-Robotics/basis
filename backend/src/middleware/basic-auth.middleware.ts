@@ -17,7 +17,7 @@ export function basicAuthMiddleware(scope: AppPasswordScope) {
   return async function (request: FastifyRequest, reply: FastifyReply): Promise<void> {
     const header = request.headers.authorization;
     if (!header || !header.toLowerCase().startsWith('basic ')) {
-      reply.header('WWW-Authenticate', 'Basic realm="Home Manager"').code(401).send();
+      reply.header('WWW-Authenticate', 'Basic realm="Basis"').code(401).send();
       return;
     }
 
@@ -25,13 +25,13 @@ export function basicAuthMiddleware(scope: AppPasswordScope) {
     try {
       decoded = Buffer.from(header.slice(6).trim(), 'base64').toString('utf8');
     } catch {
-      reply.header('WWW-Authenticate', 'Basic realm="Home Manager"').code(401).send();
+      reply.header('WWW-Authenticate', 'Basic realm="Basis"').code(401).send();
       return;
     }
 
     const sep = decoded.indexOf(':');
     if (sep < 0) {
-      reply.header('WWW-Authenticate', 'Basic realm="Home Manager"').code(401).send();
+      reply.header('WWW-Authenticate', 'Basic realm="Basis"').code(401).send();
       return;
     }
     const email = decoded.slice(0, sep);
@@ -39,7 +39,7 @@ export function basicAuthMiddleware(scope: AppPasswordScope) {
 
     const verified = await verifyAppPassword(email, secret, scope);
     if (!verified) {
-      reply.header('WWW-Authenticate', 'Basic realm="Home Manager"').code(401).send();
+      reply.header('WWW-Authenticate', 'Basic realm="Basis"').code(401).send();
       return;
     }
 
@@ -47,7 +47,7 @@ export function basicAuthMiddleware(scope: AppPasswordScope) {
       where: eq(users.id, verified.userId),
     });
     if (!user) {
-      reply.header('WWW-Authenticate', 'Basic realm="Home Manager"').code(401).send();
+      reply.header('WWW-Authenticate', 'Basic realm="Basis"').code(401).send();
       return;
     }
 

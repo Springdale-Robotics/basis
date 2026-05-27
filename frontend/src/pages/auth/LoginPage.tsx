@@ -17,7 +17,7 @@ export function LoginPage() {
         <div className="mx-auto w-full max-w-sm">
           <div className="flex items-center justify-center gap-2 text-2xl font-bold">
             <Home className="h-8 w-8" />
-            <span>Home Manager</span>
+            <span>Basis</span>
           </div>
 
           <h2 className="mt-8 text-2xl font-bold">Welcome back</h2>

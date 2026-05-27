@@ -20,7 +20,7 @@ export function SetupComplete({ onComplete, isLoading }: SetupCompleteProps) {
       </div>
 
       <p className="mb-6 text-muted-foreground">
-        Your Home Manager is ready to use. Click below to start managing your household.
+        Your Basis is ready to use. Click below to start managing your household.
       </p>
 
       <div className="space-y-3">

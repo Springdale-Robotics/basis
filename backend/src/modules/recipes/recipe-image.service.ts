@@ -91,7 +91,7 @@ export async function fetchImageFromUrl(url: string): Promise<Buffer> {
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        'User-Agent': 'HomeManager/1.0 (Recipe Image Fetcher)',
+        'User-Agent': 'Basis/1.0 (Recipe Image Fetcher)',
         'Accept': 'image/*',
       },
     });

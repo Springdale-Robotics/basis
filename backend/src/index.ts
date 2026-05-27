@@ -12,7 +12,7 @@ const signals = ['SIGINT', 'SIGTERM'];
 let isShuttingDown = false;
 
 async function main(): Promise<void> {
-  logger.info({ env: config.NODE_ENV }, 'Starting HomeManager backend...');
+  logger.info({ env: config.NODE_ENV }, 'Starting Basis backend...');
 
   try {
     // Build Fastify app
