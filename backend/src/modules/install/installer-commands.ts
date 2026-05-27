@@ -46,6 +46,14 @@ function cloudflaredAsset(platform: NodeJS.Platform, arch: string): string {
 
 const COMMANDS: InstallerCommand[] = [
   {
+    // Freeform shell for the admin-only Terminal settings page. Runs as the
+    // backend user — same trust boundary as that user's SSH session. Listed
+    // here so it shares the namespace's admin-only auth and PTY plumbing.
+    id: 'shell-bash',
+    description: 'Open a freeform bash login shell as the backend user.',
+    argv: ['bash', '-l'],
+  },
+  {
     id: 'install-tailscale-linux',
     description: 'Install Tailscale via the official one-liner, then sign in.',
     argv: [

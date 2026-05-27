@@ -17,6 +17,7 @@ import { GroupsSettingsPage } from './GroupsSettingsPage';
 import { FeaturePermissionsPage } from './FeaturePermissionsPage';
 import { FeatureSettingsPage } from './FeatureSettingsPage';
 import { RemoteAccessSettingsPage } from './RemoteAccessSettingsPage';
+import { TerminalSettingsPage } from './TerminalSettingsPage';
 
 export function SettingsPage() {
   const { canAdmin } = useFeaturePermissions();
@@ -117,6 +118,7 @@ export function SettingsPage() {
                 />
               }
             />
+            <Route path="terminal" element={<TerminalSettingsPage />} />
           </Routes>
         </div>
       </div>
