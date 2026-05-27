@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Permissions for creating the GitHub Release and uploading assets.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build tarball + publish release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tag annotation is the release notes — need full history.
+          fetch-depth: 0
+
+      - id: version
+        name: Resolve version from tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"           # e.g. v0.1.0-alpha
+          VERSION="${TAG#v}"                  # strip leading 'v'
+          # Pre-release if it has a suffix (alpha, beta, rc, ...).
+          if [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building $TAG"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Stage tarball contents
+        run: |
+          # Layout mirrors what install.sh expects from a checkout: the full
+          # source tree with frontend/dist/ already built. install.sh runs
+          # npm ci on the backend at install time so we don't ship
+          # node_modules — platform-specific native modules like node-pty
+          # need to be built on the target host.
+          STAGE=staging/basis-${{ steps.version.outputs.version }}
+          mkdir -p "$STAGE"
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='node_modules' \
+            --exclude='**/node_modules' \
+            --exclude='backend/dist' \
+            --exclude='backend/storage' \
+            --exclude='backend/bin' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='staging' \
+            --exclude='*.tar.gz' \
+            ./ "$STAGE/"
+          # Bake the version in so the running app knows what it is.
+          echo "${{ steps.version.outputs.version }}" > "$STAGE/VERSION"
+
+      - name: Pack tarball
+        run: |
+          cd staging
+          tar -czf ../basis-${{ steps.version.outputs.version }}.tar.gz basis-${{ steps.version.outputs.version }}
+          cd ..
+          sha256sum basis-${{ steps.version.outputs.version }}.tar.gz \
+            | tee basis-${{ steps.version.outputs.version }}.tar.gz.sha256
+          ls -lh basis-${{ steps.version.outputs.version }}.tar.gz*
+
+      - name: Compose release notes from tag annotation
+        id: notes
+        run: |
+          # Use the annotation message of the tag as the release body. Falls
+          # back to a default if the tag was lightweight (no annotation).
+          NOTES="$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}")"
+          if [ -z "$NOTES" ]; then
+            NOTES="Release ${GITHUB_REF_NAME}"
+          fi
+          {
+            echo 'notes<<__EOF__'
+            echo "$NOTES"
+            echo
+            echo "## Install"
+            echo
+            echo '```bash'
+            echo "curl -fL https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/basis-${{ steps.version.outputs.version }}.tar.gz | tar -xz"
+            echo "sudo bash basis-${{ steps.version.outputs.version }}/backend/deploy/native/install.sh --source basis-${{ steps.version.outputs.version }}"
+            echo '```'
+            echo
+            echo "Docker image publishing is not yet wired up — the existing"
+            echo "Dockerfile is backend-only and needs to learn about the frontend"
+            echo "before the image is useful. Track in repo issues."
+            echo '__EOF__'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: ${{ steps.notes.outputs.notes }}
+          prerelease: ${{ steps.version.outputs.prerelease == 'true' }}
+          files: |
+            basis-*.tar.gz
+            basis-*.tar.gz.sha256
