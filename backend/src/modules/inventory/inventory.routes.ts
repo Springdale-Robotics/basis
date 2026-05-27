@@ -1100,6 +1100,21 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
       if (input.category !== undefined) updates.category = input.category;
       if (input.targetAreaId !== undefined) updates.targetAreaId = input.targetAreaId;
 
+      // If this manual edit changes substance of the row, record 'manual' as
+      // a contributing source so the "Mixed" badge surfaces correctly when a
+      // user tweaks a meal-plan-sourced row by hand.
+      const meaningfulKeys = ['itemId', 'customName', 'quantity', 'unit'] as const;
+      const isMeaningfulEdit = meaningfulKeys.some((k) => input[k] !== undefined);
+      if (isMeaningfulEdit) {
+        const prior =
+          current.sources && current.sources.length > 0
+            ? current.sources
+            : [current.source];
+        if (!prior.includes('manual')) {
+          updates.sources = [...prior, 'manual'];
+        }
+      }
+
       const [updated] = await db
         .update(shoppingList)
         .set(updates)
@@ -1204,12 +1219,21 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
-      // "Did we get enough?" is judged in the requested unit. If a conversion
-      // was possible, normalize the acquired amount before comparing.
-      const acquiredInRequested =
-        unitChanged && conversion?.canConvert && conversion.factor !== null
-          ? acquired * conversion.factor
-          : acquired;
+      // "Did we get enough?" is judged in the requested unit. Three cases:
+      //  - Units unchanged: the acquired number is already in the requested unit.
+      //  - Units changed AND convertible: scale acquired by the factor.
+      //  - Units changed but NOT convertible: we can't say how much of the
+      //    request was fulfilled. Treat as zero so the original ask stays on
+      //    the list, rather than mixing units in arithmetic (which previously
+      //    produced negative remainders).
+      let acquiredInRequested: number;
+      if (!unitChanged) {
+        acquiredInRequested = acquired;
+      } else if (conversion?.canConvert && conversion.factor !== null) {
+        acquiredInRequested = acquired * conversion.factor;
+      } else {
+        acquiredInRequested = 0;
+      }
       let remainderItem = null;
 
       // If we got less than needed and want to keep remainder
