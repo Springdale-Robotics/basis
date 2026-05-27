@@ -1,0 +1,23 @@
+[Unit]
+Description=Basis background worker (BullMQ jobs)
+Documentation=https://github.com/Springdale-Robotics/homemanager
+After=network-online.target postgresql.service redis-server.service basis.service
+Wants=network-online.target
+Requires=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=basis
+Group=basis
+WorkingDirectory=/opt/basis/current/backend
+EnvironmentFile=/opt/basis/.env
+ExecStart=/usr/bin/node dist/worker.js
+Restart=always
+RestartSec=10
+StartLimitInterval=200
+StartLimitBurst=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

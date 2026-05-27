@@ -33,6 +33,12 @@ const envSchema = z.object({
   MAX_UPLOAD_SIZE_MB: z.coerce.number().default(100),
   STORAGE_QUOTA_GB: z.coerce.number().optional(),
 
+  // Frontend (production single-port deployment)
+  // When set, the backend serves the built frontend's dist/ at / and falls
+  // back to index.html for client-side routes. Unset in dev — Vite handles
+  // the frontend at :5173 and proxies /api here.
+  FRONTEND_DIST: z.string().optional(),
+
   // External Integrations
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),

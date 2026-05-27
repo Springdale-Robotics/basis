@@ -1,0 +1,26 @@
+[Unit]
+Description=Basis household app
+Documentation=https://github.com/Springdale-Robotics/homemanager
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+Requires=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=basis
+Group=basis
+WorkingDirectory=/opt/basis/current/backend
+EnvironmentFile=/opt/basis/.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=10
+# Crash-loop protection — if it restarts more than 5 times in 200s, give up.
+StartLimitInterval=200
+StartLimitBurst=5
+StandardOutput=journal
+StandardError=journal
+# We deliberately don't set NoNewPrivileges — the in-UI terminal needs to be
+# able to escalate via sudo for admin maintenance tasks.
+
+[Install]
+WantedBy=multi-user.target

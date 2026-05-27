@@ -7,6 +7,9 @@ import fastifyCompress from '@fastify/compress';
 import fastifyMultipart from '@fastify/multipart';
 import fastifySwagger from '@fastify/swagger';
 import fastifySwaggerUi from '@fastify/swagger-ui';
+import fastifyStatic from '@fastify/static';
+import { resolve as resolvePath } from 'path';
+import { existsSync } from 'fs';
 
 import { config, isDev } from './config/index.js';
 import { logger } from './lib/logger.js';
@@ -202,6 +205,34 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Catch the legacy probe paths iOS Calendar tries before falling back to
   // /.well-known/caldav (PROPFIND only — GET / still serves the SPA).
   await app.register(caldavRootProbeRoutes);
+
+  // ─── Frontend static serving (production single-port deployment) ───────
+  // When FRONTEND_DIST is set (typically by the install script to
+  // /opt/basis/current/frontend/dist), serve it at / with SPA fallback so
+  // client-side routes resolve to index.html. Skipped in dev — Vite owns
+  // :5173 there and proxies /api here.
+  if (config.FRONTEND_DIST) {
+    const dist = resolvePath(config.FRONTEND_DIST);
+    if (existsSync(dist)) {
+      await app.register(fastifyStatic, {
+        root: dist,
+        prefix: '/',
+        wildcard: false,
+      });
+      app.setNotFoundHandler((request, reply) => {
+        // API requests still get JSON 404s. Anything else falls through to
+        // the SPA's index.html — React Router resolves the route client-side.
+        const url = request.url;
+        if (url.startsWith('/api/') || url.startsWith('/dav') || url.startsWith('/socket.io')) {
+          return notFoundHandler(request, reply);
+        }
+        return reply.sendFile('index.html');
+      });
+      logger.info({ dist }, 'Serving frontend from FRONTEND_DIST');
+    } else {
+      logger.warn({ dist }, 'FRONTEND_DIST is set but the directory does not exist');
+    }
+  }
 
   return app;
 }
