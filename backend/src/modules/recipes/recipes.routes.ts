@@ -30,7 +30,7 @@ import {
 } from './recipe-import.service.js';
 import { parseRecipeFromUrl } from './url-parser.service.js';
 import { processRecipeImage, fetchImageFromUrl } from './recipe-image.service.js';
-import { convertWithDensity, normalizeUnit } from '../../lib/unit-conversions.js';
+import { convertWithDensity, normalizeUnit, type QuantityUnitSizes } from '../../lib/unit-conversions.js';
 import { matchSingleIngredient } from './ingredient-matching.service.js';
 import { emitCookingDeduction } from '../../websocket/events.js';
 
@@ -812,17 +812,32 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
             let convertedRemaining = remaining;
             if (ingredient.unit && stock.unit && normalizeUnit(ingredient.unit) !== normalizeUnit(stock.unit)) {
               const density = item.density ? parseFloat(item.density) : null;
-              const quantityUnitWeights = (item.quantityUnitWeights as Record<string, number>) || {};
-              const converted = convertWithDensity(remaining, ingredient.unit, stock.unit, density, quantityUnitWeights);
+              const quantityUnitSizes = (item.quantityUnitSizes as QuantityUnitSizes) || {};
+              const converted = convertWithDensity(remaining, ingredient.unit, stock.unit, density, quantityUnitSizes);
               if (converted !== null) {
                 convertedRemaining = converted;
               }
             }
 
             if (stockQty <= convertedRemaining) {
-              // Delete this stock entry entirely
+              // Stock is fully consumed. Reduce `remaining` (in ingredient
+              // unit) by this stock's contribution, also in ingredient unit.
+              // `stockQty` is in stock.unit, so convert it back to ingredient
+              // unit before subtracting. Falls back to the raw value only
+              // when both units are equivalent (no conversion needed).
               await db.delete(inventoryStock).where(eq(inventoryStock.id, stock.id));
-              remaining -= stockQty;
+              let stockInIngredientUnit = stockQty;
+              if (
+                ingredient.unit &&
+                stock.unit &&
+                normalizeUnit(ingredient.unit) !== normalizeUnit(stock.unit)
+              ) {
+                const density = item.density ? parseFloat(item.density) : null;
+                const quantityUnitSizes = (item.quantityUnitSizes as QuantityUnitSizes) || {};
+                const back = convertWithDensity(stockQty, stock.unit, ingredient.unit, density, quantityUnitSizes);
+                if (back !== null) stockInIngredientUnit = back;
+              }
+              remaining = Math.max(0, remaining - stockInIngredientUnit);
             } else {
               // Reduce the stock quantity
               await db
@@ -1407,6 +1422,8 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           source: shoppingList.source,
           sources: shoppingList.sources,
           inventoryName: inventoryItems.name,
+          inventoryDensity: inventoryItems.density,
+          inventoryQuantityUnitSizes: inventoryItems.quantityUnitSizes,
         })
         .from(shoppingList)
         .leftJoin(inventoryItems, eq(shoppingList.itemId, inventoryItems.id))
@@ -1435,22 +1452,44 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       for (const item of result.items) {
         const itemName = normalize(item.name);
         let existing = null as (typeof openRows)[number] | null;
+        // Quantity of the incoming item expressed in the existing row's unit.
+        // When units match (compatible) this is simply item.quantity; when
+        // they differ we attempt a convert via the item's density/sizes.
+        let contributionInRowUnit = item.quantity;
         for (const row of liveRows.values()) {
-          if (!unitsCompatible(row.unit, item.unit)) continue;
-          if (item.inventoryItemId && row.itemId === item.inventoryItemId) {
+          const nameMatch =
+            (item.inventoryItemId && row.itemId === item.inventoryItemId) ||
+            (() => {
+              const rowName = normalize(row.customName ?? row.inventoryName);
+              return rowName !== '' && rowName === itemName;
+            })();
+          if (!nameMatch) continue;
+
+          if (unitsCompatible(row.unit, item.unit)) {
             existing = row;
+            contributionInRowUnit = item.quantity;
             break;
           }
-          const rowName = normalize(row.customName ?? row.inventoryName);
-          if (rowName && rowName === itemName) {
-            existing = row;
-            break;
+
+          // Different unit on the same item — try to convert the incoming
+          // quantity into the row's unit. Use the row's linked inventory
+          // metadata when present; otherwise the item is unlinked and we
+          // can't bridge, so leave them separate.
+          if (row.unit && item.unit) {
+            const density = row.inventoryDensity ? Number(row.inventoryDensity) : null;
+            const sizes = (row.inventoryQuantityUnitSizes ?? {}) as QuantityUnitSizes;
+            const converted = convertWithDensity(item.quantity, item.unit, row.unit, density, sizes);
+            if (converted !== null) {
+              existing = row;
+              contributionInRowUnit = converted;
+              break;
+            }
           }
         }
 
         if (existing) {
           const existingQty = parseFloat(existing.quantity || '0');
-          const newQty = existingQty + item.quantity;
+          const newQty = existingQty + contributionInRowUnit;
           // Existing rows from before sources[] existed have an empty array;
           // seed from the legacy `source` column in that case.
           const priorSources =
@@ -1494,6 +1533,10 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
 
           addedItems.push(added);
           // Allow subsequent items in the same batch to merge into this row.
+          // We don't have the inventory metadata in scope; later items will
+          // only merge into this row when units match exactly. That's
+          // acceptable — the rare cross-unit merge into a brand-new row in
+          // the same batch can be picked up on the next generate pass.
           liveRows.set(added.id, {
             id: added.id,
             itemId: added.itemId,
@@ -1503,6 +1546,8 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
             source: added.source,
             sources: added.sources,
             inventoryName: null,
+            inventoryDensity: null,
+            inventoryQuantityUnitSizes: null,
           });
         }
       }
@@ -1788,19 +1833,59 @@ async function generateShoppingListFromMealPlans(
   if (checkInventory) {
     for (const [key, item] of aggregated.entries()) {
       if (item.inventoryItemId) {
-        // Get current stock for this item
-        const stockEntries = await db.query.inventoryStock.findMany({
-          where: eq(inventoryStock.itemId, item.inventoryItemId),
-        });
+        // Get current stock + item metadata in one round-trip; we need the
+        // item's density and sizes to convert stock entries to the recipe
+        // unit before any arithmetic.
+        const [stockEntries, invItem] = await Promise.all([
+          db.query.inventoryStock.findMany({
+            where: eq(inventoryStock.itemId, item.inventoryItemId),
+          }),
+          db.query.inventoryItems.findFirst({
+            where: eq(inventoryItems.id, item.inventoryItemId),
+          }),
+        ]);
 
-        const totalStock = stockEntries.reduce(
-          (sum, s) => sum + parseFloat(s.quantity),
-          0
-        );
+        if (stockEntries.length === 0) continue;
 
-        if (totalStock > 0) {
-          const deducted = Math.min(totalStock, item.quantity);
-          item.quantity = Math.max(0, item.quantity - totalStock);
+        const density = invItem?.density ? Number(invItem.density) : null;
+        const sizes = (invItem?.quantityUnitSizes ?? {}) as QuantityUnitSizes;
+
+        // Sum every stock entry, converting to the recipe unit. If *any*
+        // entry can't be bridged we don't trust the partial total — leave
+        // the recipe ask untouched and surface the gap via needs_conversion so
+        // the user can fix the conversion. Skipping is safer than over-
+        // subtracting and under-buying.
+        let totalStockInRecipeUnit = 0;
+        let allConvertible = true;
+        for (const s of stockEntries) {
+          const qty = parseFloat(s.quantity);
+          if (!Number.isFinite(qty) || qty <= 0) continue;
+          if (!s.unit || !item.unit || normalizeUnit(s.unit) === normalizeUnit(item.unit)) {
+            totalStockInRecipeUnit += qty;
+            continue;
+          }
+          const converted = convertWithDensity(qty, s.unit, item.unit, density, sizes);
+          if (converted === null) {
+            allConvertible = false;
+            break;
+          }
+          totalStockInRecipeUnit += converted;
+        }
+
+        if (!allConvertible) {
+          if (invItem && !invItem.needsConversion) {
+            await db
+              .update(inventoryItems)
+              .set({ needsConversion: true, updatedAt: new Date() })
+              .where(eq(inventoryItems.id, invItem.id));
+          }
+          // Leave item.quantity at the full recipe ask.
+          continue;
+        }
+
+        if (totalStockInRecipeUnit > 0) {
+          const deducted = Math.min(totalStockInRecipeUnit, item.quantity);
+          item.quantity = Math.max(0, item.quantity - totalStockInRecipeUnit);
 
           if (deducted > 0) {
             inventoryDeductions.push({

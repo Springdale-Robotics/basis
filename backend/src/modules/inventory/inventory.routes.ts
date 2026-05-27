@@ -8,7 +8,8 @@ import { requireInventoryAccess, requireShoppingListAccess } from '../../middlew
 import { Errors } from '../../lib/errors.js';
 import { randomBytes } from 'crypto';
 import { shoppingListSourceSchema } from '../../lib/validators.js';
-import { convertWithDensity, normalizeUnit, getUnitCategory } from '../../lib/unit-conversions.js';
+import { convertWithDensity, normalizeUnit, getUnitCategory, isNegligible, type QuantityUnitSizes } from '../../lib/unit-conversions.js';
+import { inArray } from 'drizzle-orm';
 import {
   getItemConfidence,
   getInventoryConfidenceMap,
@@ -19,13 +20,13 @@ import {
 
 /**
  * Calculate total stock quantity for an item, converting all stock entries to the target unit.
- * Uses density for weight↔volume and quantityUnitWeights for quantity units.
+ * Uses density for weight↔volume and quantityUnitSizes for custom count units.
  */
 function calculateTotalStockWithConversions(
   stockEntries: Array<{ quantity: string; unit: string | null }>,
   targetUnit: string,
   density: number | null,
-  quantityUnitWeights: Record<string, number> = {}
+  quantityUnitSizes: QuantityUnitSizes = {}
 ): { total: number; allConverted: boolean; unconvertedUnits: string[] } {
   let total = 0;
   let allConverted = true;
@@ -38,7 +39,7 @@ function calculateTotalStockWithConversions(
     if (normalizeUnit(entryUnit) === normalizeUnit(targetUnit)) {
       total += qty;
     } else {
-      const converted = convertWithDensity(qty, entryUnit, targetUnit, density, quantityUnitWeights);
+      const converted = convertWithDensity(qty, entryUnit, targetUnit, density, quantityUnitSizes);
       if (converted !== null) {
         total += converted;
       } else {
@@ -51,6 +52,138 @@ function calculateTotalStockWithConversions(
   }
 
   return { total, allConverted, unconvertedUnits };
+}
+
+/**
+ * Validate that adding/replacing `key → target.unit` in a sizes map doesn't
+ * create a cycle. We walk the chain from the proposed target unit; if it
+ * comes back around to `key`, the entry would loop. Stops at depth 8 to
+ * tolerate pre-existing cycles (which can be cleaned up but shouldn't make
+ * a fresh save fail).
+ */
+function sizesEntryWouldCycle(
+  sizes: QuantityUnitSizes,
+  key: string,
+  target: { quantity: number; unit: string }
+): boolean {
+  const normKey = normalizeUnit(key);
+  let cur = normalizeUnit(target.unit);
+  const seen = new Set<string>();
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (cur === normKey) return true;
+    if (seen.has(cur)) return false; // pre-existing cycle elsewhere, not our concern
+    seen.add(cur);
+    const next = sizes[cur];
+    if (!next) return false;
+    cur = normalizeUnit(next.unit);
+  }
+  return false;
+}
+
+/**
+ * Walk every household item that has stock + linked recipe ingredients, and
+ * flip `needs_conversion` to reflect whether any (stock unit, ingredient unit)
+ * pair is unbridgeable given the item's density and quantity-unit weights.
+ *
+ * Runs as a read-side effect on GET /items so the badge stays accurate even
+ * when the user hasn't triggered a shopping-list pass yet. Cheap in practice:
+ * three batched queries per household and an in-memory loop.
+ */
+async function reconcileNeedsConversionForHousehold(householdId: string): Promise<void> {
+  const items = await db
+    .select()
+    .from(inventoryItems)
+    .where(eq(inventoryItems.householdId, householdId));
+  if (items.length === 0) return;
+  const itemIds = items.map((i) => i.id);
+
+  const stockRows = await db
+    .select({ itemId: inventoryStock.itemId, unit: inventoryStock.unit })
+    .from(inventoryStock)
+    .where(inArray(inventoryStock.itemId, itemIds));
+
+  const ingredientRows = await db
+    .select({
+      inventoryItemId: recipeIngredients.inventoryItemId,
+      unit: recipeIngredients.unit,
+    })
+    .from(recipeIngredients)
+    .where(inArray(recipeIngredients.inventoryItemId, itemIds));
+
+  // Group units by item, dedup, drop nulls/negligibles.
+  const stockUnits = new Map<string, Set<string>>();
+  for (const s of stockRows) {
+    if (!s.itemId || !s.unit) continue;
+    if (isNegligible(s.unit)) continue;
+    if (!stockUnits.has(s.itemId)) stockUnits.set(s.itemId, new Set());
+    stockUnits.get(s.itemId)!.add(s.unit);
+  }
+  const ingredientUnits = new Map<string, Set<string>>();
+  for (const ing of ingredientRows) {
+    if (!ing.inventoryItemId || !ing.unit) continue;
+    if (isNegligible(ing.unit)) continue;
+    if (!ingredientUnits.has(ing.inventoryItemId)) ingredientUnits.set(ing.inventoryItemId, new Set());
+    ingredientUnits.get(ing.inventoryItemId)!.add(ing.unit);
+  }
+
+  const toRaise: string[] = [];
+  const toClear: string[] = [];
+
+  for (const item of items) {
+    const stocks = stockUnits.get(item.id);
+    const ings = ingredientUnits.get(item.id);
+    // Targets to compare stock against: recipe ingredient units (when the
+    // item is used in recipes) PLUS the item's defaultUnit (so unlinked
+    // items still flag gaps between their stock and the unit the user
+    // chose to display them in).
+    const targets = new Set<string>();
+    if (ings) for (const u of ings) targets.add(u);
+    if (item.defaultUnit && !isNegligible(item.defaultUnit)) targets.add(item.defaultUnit);
+
+    if (!stocks || stocks.size === 0 || targets.size === 0) {
+      // Nothing to compare — clear the flag if it was raised by a stale gap.
+      if (item.needsConversion) toClear.push(item.id);
+      continue;
+    }
+    const density = item.density ? Number(item.density) : null;
+    const sizes = (item.quantityUnitSizes ?? undefined) as QuantityUnitSizes | undefined;
+    let hasGap = false;
+    outer: for (const su of stocks) {
+      for (const iu of targets) {
+        if (normalizeUnit(su) === normalizeUnit(iu)) continue;
+        const factor = convertWithDensity(1, su, iu, density, sizes);
+        if (factor === null) {
+          hasGap = true;
+          break outer;
+        }
+      }
+    }
+    if (hasGap && !item.needsConversion) toRaise.push(item.id);
+    if (!hasGap && item.needsConversion) toClear.push(item.id);
+  }
+
+  if (toRaise.length > 0) {
+    await db
+      .update(inventoryItems)
+      .set({ needsConversion: true, updatedAt: new Date() })
+      .where(
+        and(
+          eq(inventoryItems.householdId, householdId),
+          inArray(inventoryItems.id, toRaise)
+        )
+      );
+  }
+  if (toClear.length > 0) {
+    await db
+      .update(inventoryItems)
+      .set({ needsConversion: false, updatedAt: new Date() })
+      .where(
+        and(
+          eq(inventoryItems.householdId, householdId),
+          inArray(inventoryItems.id, toClear)
+        )
+      );
+  }
 }
 
 const createAreaSchema = z.object({
@@ -69,7 +202,12 @@ const createItemSchema = z.object({
   minStockQuantity: z.number().positive().optional(),
   defaultAreaId: z.string().uuid().optional(),
   density: z.number().positive().optional(),
-  quantityUnitWeights: z.record(z.string(), z.number().positive()).optional(),
+  quantityUnitSizes: z
+    .record(
+      z.string(),
+      z.object({ quantity: z.number().positive(), unit: z.string().min(1).max(50) })
+    )
+    .optional(),
 });
 
 const addStockSchema = z.object({
@@ -248,6 +386,15 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     async (request) => {
       const { search, category, areaId } = request.query;
 
+      // Recompute needs_conversion flags so the badge reflects current state of
+      // stock vs. linked recipe units. Wrapped in try/catch so a scan hiccup
+      // never breaks the inventory list — it's an opportunistic side effect.
+      try {
+        await reconcileNeedsConversionForHousehold(request.user!.householdId);
+      } catch (err) {
+        request.log.warn({ err }, 'needs_conversion reconcile failed');
+      }
+
       // Build where conditions
       const conditions = [eq(inventoryItems.householdId, request.user!.householdId)];
 
@@ -295,7 +442,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           minStockQuantity: input.minStockQuantity?.toString(),
           defaultAreaId: input.defaultAreaId,
           density: input.density?.toString(),
-          quantityUnitWeights: input.quantityUnitWeights || {},
+          quantityUnitSizes: input.quantityUnitSizes || {},
         })
         .returning();
 
@@ -337,12 +484,26 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
       if (input.minStockQuantity !== undefined) updateData.minStockQuantity = input.minStockQuantity.toString();
       if (input.defaultAreaId !== undefined) updateData.defaultAreaId = input.defaultAreaId;
       if (input.density !== undefined) updateData.density = input.density.toString();
-      if (input.quantityUnitWeights !== undefined) updateData.quantityUnitWeights = input.quantityUnitWeights;
-      // Clear the "needs density" flag once the user supplies one. If they're
-      // adding a quantityUnitWeight that's a different signal (count units only),
-      // but density covers the cross-dimension case that set the flag.
-      if (input.density !== undefined && input.density != null) {
-        updateData.needsDensity = false;
+      if (input.quantityUnitSizes !== undefined) {
+        // Reject saves that would put the sizes map into a cycle (e.g.
+        // bottle → case while case → bottle).
+        for (const [key, entry] of Object.entries(input.quantityUnitSizes)) {
+          if (sizesEntryWouldCycle(input.quantityUnitSizes, key, entry)) {
+            throw Errors.validation(
+              `Conversion would create a cycle: ${key} → ${entry.unit}.`
+            );
+          }
+        }
+        updateData.quantityUnitSizes = input.quantityUnitSizes;
+      }
+      // Adding a density OR a container size can both resolve the unit
+      // mismatch that raises needs_conversion. Either way, give the scan a fresh
+      // chance to clear (or re-raise) the flag on the next GET /items.
+      if (
+        (input.density !== undefined && input.density != null) ||
+        input.quantityUnitSizes !== undefined
+      ) {
+        updateData.needsConversion = false;
       }
 
       const [updated] = await db
@@ -362,15 +523,30 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
-  // Save a quantity unit weight for an item (e.g., 1 bag = 500g)
+  // Save a container size for a count unit on an item
+  // (e.g., 1 bottle = 16 fl oz, 1 bag = 5 lb).
   app.patch<{ Params: { id: string } }>(
     '/items/:id/quantity-weight',
     { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = z.object({
         unit: z.string().min(1).max(50),
-        grams: z.number().positive(),
+        // Accept the new (quantity, unit) shape; for backwards-compat, also
+        // accept the legacy `grams` number which is treated as { quantity, unit: 'g' }.
+        quantity: z.number().positive().optional(),
+        sizeUnit: z.string().min(1).max(50).optional(),
+        grams: z.number().positive().optional(),
       }).parse(request.body);
+
+      const sizeEntry =
+        input.quantity !== undefined && input.sizeUnit
+          ? { quantity: input.quantity, unit: input.sizeUnit }
+          : input.grams !== undefined
+          ? { quantity: input.grams, unit: 'g' }
+          : null;
+      if (!sizeEntry) {
+        throw Errors.validation('Provide either {quantity, sizeUnit} or {grams}.');
+      }
 
       const item = await db.query.inventoryItems.findFirst({
         where: and(
@@ -381,14 +557,23 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
       if (!item) throw Errors.notFound('Item');
 
-      const currentWeights = (item.quantityUnitWeights as Record<string, number>) || {};
-      const updatedWeights = { ...currentWeights, [input.unit.toLowerCase()]: input.grams };
+      const currentSizes = (item.quantityUnitSizes as QuantityUnitSizes) || {};
+      const newKey = input.unit.toLowerCase();
+      const updatedSizes: QuantityUnitSizes = {
+        ...currentSizes,
+        [newKey]: sizeEntry,
+      };
+      if (sizesEntryWouldCycle(updatedSizes, newKey, sizeEntry)) {
+        throw Errors.validation(
+          `Conversion would create a cycle: ${newKey} → ${sizeEntry.unit}.`
+        );
+      }
 
       const [updated] = await db
         .update(inventoryItems)
         .set({
-          quantityUnitWeights: updatedWeights,
-          needsDensity: false,
+          quantityUnitSizes: updatedSizes,
+          needsConversion: false,
           updatedAt: new Date(),
         })
         .where(eq(inventoryItems.id, request.params.id))
@@ -738,13 +923,13 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
         const targetUnit = item.defaultUnit || 'pieces';
         const density = item.density ? parseFloat(item.density) : null;
-        const quantityUnitWeights = (item.quantityUnitWeights as Record<string, number>) || {};
+        const quantityUnitSizes = (item.quantityUnitSizes as QuantityUnitSizes) || {};
 
         const { total: totalQuantity } = calculateTotalStockWithConversions(
           stock.map((s) => ({ quantity: s.quantity, unit: s.unit })),
           targetUnit,
           density,
-          quantityUnitWeights
+          quantityUnitSizes
         );
 
         const minQuantity = item.minStockQuantity
@@ -786,13 +971,13 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
         const targetUnit = item.defaultUnit || 'pieces';
         const density = item.density ? parseFloat(item.density) : null;
-        const quantityUnitWeights = (item.quantityUnitWeights as Record<string, number>) || {};
+        const quantityUnitSizes = (item.quantityUnitSizes as QuantityUnitSizes) || {};
 
         const { total: totalQuantity } = calculateTotalStockWithConversions(
           stock.map((s) => ({ quantity: s.quantity, unit: s.unit })),
           targetUnit,
           density,
-          quantityUnitWeights
+          quantityUnitSizes
         );
 
         const minQuantity = item.minStockQuantity
@@ -997,7 +1182,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           acquiredUnit,
           requestedUnit,
           density,
-          (inventoryItem?.quantityUnitWeights ?? undefined) as Record<string, number> | undefined
+          (inventoryItem?.quantityUnitSizes ?? undefined) as QuantityUnitSizes | undefined
         );
         const canConvert = factor !== null;
         const missingDensity = !sameDimension && !canConvert && !density;
@@ -1011,10 +1196,10 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         };
 
         // Flag the inventory item if we can't auto-convert and density is missing.
-        if (inventoryItem && missingDensity && !inventoryItem.needsDensity) {
+        if (inventoryItem && missingDensity && !inventoryItem.needsConversion) {
           await db
             .update(inventoryItems)
-            .set({ needsDensity: true, updatedAt: new Date() })
+            .set({ needsConversion: true, updatedAt: new Date() })
             .where(eq(inventoryItems.id, inventoryItem.id));
         }
       }

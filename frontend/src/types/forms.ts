@@ -125,6 +125,15 @@ export const inventoryItemFormSchema = z.object({
   minStockLevel: optionalNumber(z.number().min(0)),
   defaultAreaId: z.string().optional(),
   density: optionalNumber(z.number().positive()),
+  // Per-item conversions: "1 [key] = [quantity] [unit]". Stored on item so
+  // the engine can resolve count units (bottle, bag, can, …) without
+  // dragging density into every comparison.
+  quantityUnitSizes: z
+    .record(
+      z.string(),
+      z.object({ quantity: z.number().positive(), unit: z.string().min(1).max(50) })
+    )
+    .optional(),
   defaultShelfLifeDays: optionalNumber(z.number().int().positive()),
   expiryDate: z.string().optional(),
 });

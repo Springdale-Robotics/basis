@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Loader2 } from 'lucide-react';
 import {
   Dialog,
@@ -11,41 +11,59 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { unitOptions } from '@/lib/inventory-constants';
 
-interface QuantityWeightPromptDialogProps {
+interface ConversionPromptDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   itemName: string;
+  /** The unit we don't know how to convert (e.g. "bottle"). */
   unit: string;
-  onConfirm: (grams: number) => Promise<void>;
+  /** Suggested target unit — usually the item's defaultUnit or the recipe unit. */
+  suggestedTargetUnit?: string;
+  onConfirm: (quantity: number, sizeUnit: string) => Promise<void>;
   onSkip: () => void;
 }
 
-export function QuantityWeightPromptDialog({
+/**
+ * Asks the user "how does this count unit convert to a standard one?"
+ * E.g. "1 bottle of Olive Oil = ___ ___". The user fills in a number + picks
+ * a unit (fl oz, lb, g, etc.). Once saved, every conversion path that needs
+ * to go through this unit just works.
+ */
+export function ConversionPromptDialog({
   open,
   onOpenChange,
   itemName,
   unit,
+  suggestedTargetUnit,
   onConfirm,
   onSkip,
-}: QuantityWeightPromptDialogProps) {
-  const [grams, setGrams] = useState('');
+}: ConversionPromptDialogProps) {
+  const [quantity, setQuantity] = useState('');
+  const [sizeUnit, setSizeUnit] = useState(suggestedTargetUnit ?? 'g');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setGrams('');
+      setQuantity('');
+      setSizeUnit(suggestedTargetUnit ?? 'g');
     }
-  }, [open]);
+  }, [open, suggestedTargetUnit]);
+
+  const unitComboOptions: ComboboxOption[] = useMemo(
+    () => unitOptions.map((u) => ({ value: u, label: u })),
+    []
+  );
 
   const handleConfirm = async () => {
-    const gramsNum = parseFloat(grams);
-    if (isNaN(gramsNum) || gramsNum <= 0) return;
-
+    const qtyNum = parseFloat(quantity);
+    if (isNaN(qtyNum) || qtyNum <= 0 || !sizeUnit) return;
     setIsSubmitting(true);
     try {
-      await onConfirm(gramsNum);
-      setGrams('');
+      await onConfirm(qtyNum, sizeUnit);
+      setQuantity('');
     } finally {
       setIsSubmitting(false);
     }
@@ -53,39 +71,51 @@ export function QuantityWeightPromptDialog({
 
   const handleSkip = () => {
     onSkip();
-    setGrams('');
+    setQuantity('');
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Quantity Weight Needed</DialogTitle>
+          <DialogTitle>Add a conversion</DialogTitle>
           <DialogDescription>
-            To convert between units, we need to know the weight of <strong>{itemName}</strong> per <strong>{unit}</strong>.
+            We don't know how to convert <strong>{unit}</strong> for{' '}
+            <strong>{itemName}</strong> yet. What's 1 {unit} equal to?
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
+        <div className="space-y-4 py-2">
           <div className="space-y-2">
-            <Label htmlFor="grams-per-unit">
-              How many grams does 1 {unit} of {itemName} weigh?
+            <Label htmlFor="conversion-quantity">
+              1 {unit} of {itemName} =
             </Label>
             <div className="flex items-center gap-2">
-              <span className="text-muted-foreground whitespace-nowrap">1 {unit} =</span>
               <Input
-                id="grams-per-unit"
+                id="conversion-quantity"
                 type="number"
                 step="any"
                 min="0"
-                value={grams}
-                onChange={(e) => setGrams(e.target.value)}
-                placeholder="e.g., 500"
-                className="w-24"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                placeholder="e.g., 16"
+                className="w-28"
                 autoFocus
               />
-              <span className="text-muted-foreground">g</span>
+              <Combobox
+                options={unitComboOptions}
+                value={sizeUnit}
+                onValueChange={setSizeUnit}
+                placeholder="unit"
+                searchPlaceholder="Search units..."
+                emptyText="No unit found"
+                className="w-32"
+              />
             </div>
+            <p className="text-xs text-muted-foreground">
+              Anything works — fl oz, lb, g, each. Once saved, recipes and
+              stock will convert through it automatically.
+            </p>
           </div>
         </div>
 
@@ -95,7 +125,7 @@ export function QuantityWeightPromptDialog({
           </Button>
           <Button
             onClick={handleConfirm}
-            disabled={!grams || parseFloat(grams) <= 0 || isSubmitting}
+            disabled={!quantity || parseFloat(quantity) <= 0 || !sizeUnit || isSubmitting}
           >
             {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Save
@@ -105,3 +135,6 @@ export function QuantityWeightPromptDialog({
     </Dialog>
   );
 }
+
+// Back-compat alias for existing imports.
+export { ConversionPromptDialog as QuantityWeightPromptDialog };

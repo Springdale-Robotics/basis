@@ -231,8 +231,8 @@ export function InventoryPage() {
         const item = itemLookup[itemId];
         const targetUnit = item?.defaultUnit || entries[0]?.unit || 'pieces';
         const density = item?.density ?? null;
-        const quantityUnitWeights = item?.quantityUnitWeights || {};
-        const result = calculateTotalStock(entries, targetUnit, density, quantityUnitWeights);
+        const quantityUnitSizes = item?.quantityUnitSizes || {};
+        const result = calculateTotalStock(entries, targetUnit, density, quantityUnitSizes);
         totals[itemId] = { quantity: result.total, unit: targetUnit, allConverted: result.allConverted };
       }
     }
@@ -501,6 +501,8 @@ export function InventoryPage() {
         keepInStock: data.keepInStock,
         minStockQuantity: data.keepInStock ? data.keepInStockThreshold : undefined,
         defaultAreaId: data.defaultAreaId || undefined,
+        density: data.density,
+        quantityUnitSizes: data.quantityUnitSizes,
         defaultShelfLifeDays: data.defaultShelfLifeDays || undefined,
       };
       return inventoryApi.createItem(apiData);
@@ -522,6 +524,7 @@ export function InventoryPage() {
         minStockQuantity: data.keepInStock ? data.keepInStockThreshold : undefined,
         defaultAreaId: data.defaultAreaId || undefined,
         density: data.density,
+        quantityUnitSizes: data.quantityUnitSizes,
         defaultShelfLifeDays: data.defaultShelfLifeDays || undefined,
       };
       return inventoryApi.updateItem(id, apiData);
@@ -839,13 +842,13 @@ export function InventoryPage() {
           <div className="min-w-0">
             <p className="font-medium truncate flex items-center gap-2">
               <span className="truncate">{item.name}</span>
-              {item.needsDensity && (
+              {item.needsConversion && (
                 <Badge
                   variant="outline"
                   className="shrink-0 border-amber-500/40 bg-amber-50 text-amber-900 text-[10px] py-0 px-1.5 dark:bg-amber-950/40 dark:text-amber-200"
-                  title="This item has been bought in a unit that needs a density to convert. Edit the item to add one."
+                  title="This item's stock units can't be converted to the units your recipes use. Edit the item and add a density or a conversion to bridge them."
                 >
-                  Needs density
+                  Needs conversion
                 </Badge>
               )}
             </p>

@@ -12,6 +12,7 @@ import {
   toBaseUnit,
   fromBaseUnit,
   convertSameCategory,
+  type QuantityUnitSizes,
 } from './units.js';
 
 // Re-export the canonical functions under their existing names
@@ -60,29 +61,33 @@ export function hasGlobalConversion(fromUnit: string, toUnit: string): boolean {
 }
 
 /**
- * Convert a quantity between any units using density and quantity-unit weights.
+ * Convert a quantity between any units using density and per-item quantity sizes.
  *
  * Handles:
  * - Same category (weight<->weight, volume<->volume): direct conversion
  * - Cross category (weight<->volume): uses density in g/cup
- * - Quantity units: uses quantityUnitWeights (grams per unit)
+ * - Custom count units: resolved through `quantityUnitSizes` (e.g.
+ *   { bottle: { quantity: 16, unit: 'fl oz' } }) before applying the normal
+ *   conversion; density is then only needed when the resolved unit still
+ *   crosses weight↔volume.
  *
- * @param quantity           Amount to convert
- * @param fromUnit           Source unit
- * @param toUnit             Target unit
- * @param densityGPerCup     Item density in g/cup (nullable). NOTE: the old API used g/mL — callers
- *                           storing g/mL need to multiply by 236.588 first, or update to g/cup.
- * @param quantityUnitWeights Map of unit key -> grams per 1 unit
+ * @param quantity            Amount to convert
+ * @param fromUnit            Source unit
+ * @param toUnit              Target unit
+ * @param densityGPerCup      Item density in g/cup (nullable). NOTE: the old API used g/mL — callers
+ *                            storing g/mL need to multiply by 236.588 first, or update to g/cup.
+ * @param quantityUnitSizes   Map of unit key -> { quantity, unit } in any standard unit
  */
 export function convertWithDensity(
   quantity: number,
   fromUnit: string,
   toUnit: string,
   densityGPerCup: number | null | undefined,
-  quantityUnitWeights?: Record<string, number>
+  quantityUnitSizes?: QuantityUnitSizes
 ): number | null {
-  return convert(quantity, fromUnit, toUnit, densityGPerCup, quantityUnitWeights);
+  return convert(quantity, fromUnit, toUnit, densityGPerCup, quantityUnitSizes);
 }
 
 // Re-export core functions for direct use
 export { resolveUnit, toBaseUnit, fromBaseUnit, convert, isCountUnit, isNegligible };
+export type { QuantityUnitSizes };

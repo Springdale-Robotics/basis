@@ -12,6 +12,7 @@ import {
   toBaseUnit,
   fromBaseUnit,
   convertSameCategory,
+  type QuantityUnitSizes,
 } from './units';
 
 /**
@@ -89,23 +90,25 @@ export function convertWithGlobal(
 }
 
 /**
- * Convert between any units using density and per-item quantity weights.
+ * Convert between any units using density and per-item quantity sizes.
  *
- * @param quantity           Amount to convert
- * @param fromUnit           Source unit
- * @param toUnit             Target unit
- * @param densityGPerCup     Item density in g/cup (nullable)
- * @param quantityUnitWeights Map of unit key -> grams per 1 unit
+ * @param quantity            Amount to convert
+ * @param fromUnit            Source unit
+ * @param toUnit              Target unit
+ * @param densityGPerCup      Item density in g/cup (nullable)
+ * @param quantityUnitSizes   Map of unit key -> { quantity, unit } in any standard unit
  */
 export function convertWithDensity(
   quantity: number,
   fromUnit: string,
   toUnit: string,
   densityGPerCup: number | null | undefined,
-  quantityUnitWeights?: Record<string, number>
+  quantityUnitSizes?: QuantityUnitSizes
 ): number | null {
-  return convert(quantity, fromUnit, toUnit, densityGPerCup, quantityUnitWeights);
+  return convert(quantity, fromUnit, toUnit, densityGPerCup, quantityUnitSizes);
 }
+
+export type { QuantityUnitSizes };
 
 // Re-export core functions for direct use
 export { resolveUnit, toBaseUnit, fromBaseUnit, convert, isCountUnit, isNegligible };

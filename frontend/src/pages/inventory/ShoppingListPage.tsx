@@ -60,8 +60,8 @@ export function ShoppingListPage() {
       const conv = data.conversion;
       if (conv?.missingDensity) {
         toast({
-          title: 'Density needed for this item',
-          description: `Stored as ${conv.acquiredUnit}. Add a density on the inventory item so we can convert to ${conv.requestedUnit}.`,
+          title: 'Conversion needed for this item',
+          description: `Stored as ${conv.acquiredUnit}. Edit the item and add a density or a conversion so we can bridge to ${conv.requestedUnit}.`,
         });
       } else if (conv?.canConvert && conv.factor !== null) {
         toast({

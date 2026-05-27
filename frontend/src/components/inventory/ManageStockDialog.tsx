@@ -75,10 +75,10 @@ export function ManageStockDialog({
   const [editingStock, setEditingStock] = useState<EditingStock | null>(null);
   const [quantityWeightPrompt, setQuantityWeightPrompt] = useState<QuantityWeightPrompt | null>(null);
 
-  // Mutation for saving quantity unit weights
-  const saveQuantityWeightMutation = useMutation({
-    mutationFn: (data: { unit: string; grams: number }) =>
-      inventoryApi.saveQuantityUnitWeight(item!.id, data.unit, data.grams),
+  // Mutation for saving an item conversion (e.g. 1 bottle = 16 fl oz)
+  const saveItemConversionMutation = useMutation({
+    mutationFn: (data: { unit: string; quantity: number; sizeUnit: string }) =>
+      inventoryApi.saveItemConversion(item!.id, data.unit, data.quantity, data.sizeUnit),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
@@ -98,9 +98,9 @@ export function ManageStockDialog({
   const stockTotal = useMemo(() => {
     const targetUnit = item?.defaultUnit || 'pieces';
     const density = item?.density ?? null;
-    const quantityUnitWeights = item?.quantityUnitWeights || {};
-    return calculateTotalStock(itemStock, targetUnit, density, quantityUnitWeights);
-  }, [itemStock, item?.defaultUnit, item?.density, item?.quantityUnitWeights]);
+    const quantityUnitSizes = item?.quantityUnitSizes || {};
+    return calculateTotalStock(itemStock, targetUnit, density, quantityUnitSizes);
+  }, [itemStock, item?.defaultUnit, item?.density, item?.quantityUnitSizes]);
 
   // Area lookup
   const areaLookup = useMemo(() => {
@@ -131,9 +131,9 @@ export function ManageStockDialog({
   const hasConversion = useCallback((fromUnit: string, toUnit: string): boolean => {
     if (fromUnit === toUnit) return true;
     const density = item?.density ?? null;
-    const quantityUnitWeights = item?.quantityUnitWeights || {};
-    return convertQuantity(1, fromUnit, toUnit, density, quantityUnitWeights) !== null;
-  }, [item?.density, item?.quantityUnitWeights]);
+    const quantityUnitSizes = item?.quantityUnitSizes || {};
+    return convertQuantity(1, fromUnit, toUnit, density, quantityUnitSizes) !== null;
+  }, [item?.density, item?.quantityUnitSizes]);
 
   // Actually add the stock (after conversion check passes)
   const doAddStock = useCallback((formData: AddStockForm) => {
@@ -186,13 +186,14 @@ export function ManageStockDialog({
     doAddStock(addForm);
   }, [item, addForm, hasConversion, doAddStock]);
 
-  const handleQuantityWeightConfirm = async (grams: number) => {
+  const handleQuantityWeightConfirm = async (quantity: number, sizeUnit: string) => {
     if (!quantityWeightPrompt || !item) return;
 
-    // Save the quantity unit weight to the server
-    await saveQuantityWeightMutation.mutateAsync({
+    // Save the conversion to the server (e.g. 1 bottle = 16 fl oz)
+    await saveItemConversionMutation.mutateAsync({
       unit: quantityWeightPrompt.unit,
-      grams,
+      quantity,
+      sizeUnit,
     });
 
     // Now add the stock
@@ -529,13 +530,14 @@ export function ManageStockDialog({
       </DialogContent>
     </Dialog>
 
-    {/* Quantity Weight Prompt */}
+    {/* Conversion Prompt */}
     {item && quantityWeightPrompt && (
       <QuantityWeightPromptDialog
         open={!!quantityWeightPrompt}
         onOpenChange={(open) => !open && setQuantityWeightPrompt(null)}
         itemName={item.name}
         unit={quantityWeightPrompt.unit}
+        suggestedTargetUnit={item.defaultUnit}
         onConfirm={handleQuantityWeightConfirm}
         onSkip={handleQuantityWeightSkip}
       />

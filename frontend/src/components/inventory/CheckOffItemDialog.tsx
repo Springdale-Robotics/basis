@@ -75,8 +75,9 @@ export function CheckOffItemDialog({
     return ordered.map((u) => ({ value: u, label: u }));
   }, [originalUnit]);
 
-  // Same-dimension swaps (e.g., fl oz ↔ tbsp) always convert without density.
-  // Cross-dimension hint flags the moment we'd need a density to bridge.
+  // Same-dimension swaps (e.g., fl oz ↔ tbsp) always convert without extra
+  // metadata. Cross-dimension hint flags the moment we'd need either a
+  // density (weight↔volume) or a conversion entry (count→standard) to bridge.
   const crossDimensionHint =
     unitChanged && !sameDimension && originalUnit && dimensionOf(originalUnit) !== 'unknown';
 
@@ -203,9 +204,9 @@ export function CheckOffItemDialog({
             >
               <Info className="h-4 w-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
               <span className="text-xs text-amber-900 dark:text-amber-100">
-                Will store as {quantity} {unit}. Add a density on{' '}
-                <span className="font-medium">{item.name}</span> so we can compare
-                with the {originalUnit} the recipe asked for.
+                Will store as {quantity} {unit}. Add a density or a conversion on{' '}
+                <span className="font-medium">{item.name}</span> so we can bridge
+                {' '}{unit} ↔ {originalUnit}.
               </span>
             </div>
           )}

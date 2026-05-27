@@ -379,6 +379,9 @@ async function applyInventorySubtraction(
   householdId: string,
 ): Promise<ShoppingListPreviewItem[]> {
   const results: ShoppingListPreviewItem[] = [];
+  // Track items we've already flagged this run so we don't issue redundant
+  // UPDATE statements when the same item appears in multiple recipes.
+  const flaggedItemIds = new Set<string>();
 
   for (const item of aggregated) {
     // No inventory item linked — pass through as full amount
@@ -420,7 +423,24 @@ async function applyInventorySubtraction(
       if (converted != null) {
         inventoryQtyInRecipeUnit = converted;
       } else {
-        // Can't convert — treat as unknown inventory
+        // Can't convert — treat as unknown inventory AND flag the item so the
+        // inventory view shows a "Needs density" badge. Bridging count units
+        // (e.g. "bottle") to volume/weight needs a quantityUnitWeight; bridging
+        // weight↔volume needs density. The update routes clear the flag when
+        // either is supplied, so a single flag covers both fixes.
+        if (item.itemId && !flaggedItemIds.has(item.itemId)) {
+          flaggedItemIds.add(item.itemId);
+          await db
+            .update(inventoryItems)
+            .set({ needsConversion: true, updatedAt: new Date() })
+            .where(
+              and(
+                eq(inventoryItems.id, item.itemId),
+                eq(inventoryItems.householdId, householdId),
+                eq(inventoryItems.needsConversion, false)
+              )
+            );
+        }
         results.push({
           ...item,
           shoppingQuantity: item.quantity,

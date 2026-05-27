@@ -116,12 +116,20 @@ export const inventoryItems = pgTable('inventory_items', {
   defaultShelfLifeDays: integer('default_shelf_life_days'),
   // Density in g/cup for weight<->volume conversion
   density: decimal('density', { precision: 8, scale: 4 }),
-  // Per-item count unit -> grams mappings (e.g., { "each": 50, "dozen": 600 })
-  quantityUnitWeights: jsonb('quantity_unit_weights').$type<Record<string, number>>().default({}),
-  // True when this item has been seen in incompatible units (volume vs weight
-  // with no density / no quantityUnitWeight to bridge). Set during check-off,
-  // cleared when the user provides density or a covering weight.
-  needsDensity: boolean('needs_density').notNull().default(false),
+  // Per-item count unit -> sized in any standard unit, e.g.:
+  //   { "bottle": { quantity: 16, unit: "fl oz" }, "bag": { quantity: 5, unit: "lb" } }
+  // The conversion engine resolves count units through these sizes; density
+  // only enters the picture when the resolved unit still needs to cross
+  // weight↔volume.
+  quantityUnitSizes: jsonb('quantity_unit_sizes')
+    .$type<Record<string, { quantity: number; unit: string }>>()
+    .notNull()
+    .default({}),
+  // True when this item's stock or recipe ingredient units can't be bridged
+  // with the metadata currently on the item (density, container sizes). Set
+  // during check-off / shopping-list generation / inventory scan; cleared
+  // when the user supplies the missing piece on the next list reconcile.
+  needsConversion: boolean('needs_conversion').notNull().default(false),
   category: varchar('category', { length: 100 }),
   keepInStock: boolean('keep_in_stock').default(false).notNull(),
   minStockQuantity: decimal('min_stock_quantity', { precision: 10, scale: 3 }),

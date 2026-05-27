@@ -1,7 +1,7 @@
 import { useForm } from 'react-hook-form';
 import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Loader2, Info, Database } from 'lucide-react';
+import { Loader2, Info, Database, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,7 +17,7 @@ import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { inventoryItemSchema, type InventoryItemFormData } from '@/types/forms';
 import type { InventoryItem, StorageArea } from '@/types/models';
-import { unitOptions } from '@/lib/inventory-constants';
+import { unitOptions, getUnitOptionsByCategory } from '@/lib/inventory-constants';
 import { lookupDensityWithSource, type DensityMatch } from '@/lib/ingredient-densities';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
 import { useCategories } from '@/hooks/useCategories';
@@ -63,6 +63,7 @@ export function ItemForm({
         keepInStockThreshold: item.minStockQuantity ?? item.minStockLevel ?? item.keepInStockThreshold ?? 1,
         defaultAreaId: item.defaultAreaId || defaultAreaId || '',
         density: item.density ?? undefined,
+        quantityUnitSizes: item.quantityUnitSizes ?? {},
         defaultShelfLifeDays: item.defaultShelfLifeDays ?? undefined,
         expiryDate: currentExpiryDate ? currentExpiryDate.split('T')[0] : undefined,
       };
@@ -77,6 +78,7 @@ export function ItemForm({
       keepInStockThreshold: 1,
       defaultAreaId: defaultAreaId || areas[0]?.id || '',
       density: undefined,
+      quantityUnitSizes: {},
       defaultShelfLifeDays: undefined,
       expiryDate: undefined,
     };
@@ -106,6 +108,33 @@ export function ItemForm({
   const areaId = watch('defaultAreaId');
   const name = watch('name');
   const density = watch('density');
+  const quantityUnitSizes = watch('quantityUnitSizes') ?? {};
+
+  // Inline "add conversion" row state. Kept local so we don't validate it as
+  // part of the form schema — it's committed to `quantityUnitSizes` on click.
+  const [newConvUnit, setNewConvUnit] = useState('');
+  const [newConvQuantity, setNewConvQuantity] = useState('');
+  const [newConvSizeUnit, setNewConvSizeUnit] = useState('');
+
+  const addConversion = () => {
+    const key = newConvUnit.trim().toLowerCase();
+    const qty = parseFloat(newConvQuantity);
+    if (!key || !newConvSizeUnit || isNaN(qty) || qty <= 0) return;
+    setValue(
+      'quantityUnitSizes',
+      { ...quantityUnitSizes, [key]: { quantity: qty, unit: newConvSizeUnit } },
+      { shouldDirty: true }
+    );
+    setNewConvUnit('');
+    setNewConvQuantity('');
+    setNewConvSizeUnit('');
+  };
+
+  const removeConversion = (key: string) => {
+    const next = { ...quantityUnitSizes };
+    delete next[key];
+    setValue('quantityUnitSizes', next, { shouldDirty: true });
+  };
   const icon = watch('icon');
   const shelfLifeDays = watch('defaultShelfLifeDays');
   const expiryDate = watch('expiryDate');
@@ -338,6 +367,116 @@ export function ItemForm({
                   </button>
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* === Conversions === */}
+          <div className="space-y-2 rounded-lg border p-3">
+            <div className="flex items-center gap-1.5">
+              <Label className="text-sm">Conversions</Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button type="button" className="text-muted-foreground hover:text-foreground transition-colors">
+                    <Info className="h-3.5 w-3.5" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-72 text-sm" side="top">
+                  <p className="font-medium mb-1">What are conversions?</p>
+                  <p className="text-muted-foreground text-xs">
+                    For count units like <span className="font-medium">bottle</span>,{' '}
+                    <span className="font-medium">bag</span>, <span className="font-medium">can</span>,
+                    record how big one is in a standard unit. The engine then
+                    bridges this unit anywhere it shows up.
+                  </p>
+                  <p className="text-muted-foreground text-xs mt-2">
+                    Example: <span className="font-medium">1 bottle = 16 fl oz</span> lets a recipe asking for
+                    "2 tsp olive oil" subtract from your bottle stock without needing a density.
+                  </p>
+                </PopoverContent>
+              </Popover>
+            </div>
+            {Object.keys(quantityUnitSizes).length > 0 && (
+              <div className="space-y-1.5">
+                {Object.entries(quantityUnitSizes).map(([key, size]) => (
+                  <div
+                    key={key}
+                    className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-sm"
+                  >
+                    <span className="font-medium">1 {key}</span>
+                    <span className="text-muted-foreground">=</span>
+                    <span className="font-medium tabular-nums">{size.quantity}</span>
+                    <span>{size.unit}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="ml-auto h-7 w-7 text-muted-foreground hover:text-destructive"
+                      onClick={() => removeConversion(key)}
+                      aria-label={`Remove conversion for ${key}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex items-end gap-1.5">
+              <div className="flex-1 space-y-1">
+                <Label className="text-xs text-muted-foreground">1 of…</Label>
+                <Combobox
+                  options={getUnitOptionsByCategory('count').map((u) => ({ value: u, label: u }))}
+                  value={newConvUnit}
+                  onValueChange={setNewConvUnit}
+                  placeholder="bottle"
+                  searchPlaceholder="Search units..."
+                  emptyText="No unit found"
+                  className="h-9"
+                />
+              </div>
+              <span className="pb-2 text-muted-foreground">=</span>
+              <div className="w-24 space-y-1">
+                <Label htmlFor="new-conv-quantity" className="text-xs text-muted-foreground">
+                  Qty
+                </Label>
+                <Input
+                  id="new-conv-quantity"
+                  type="number"
+                  step="any"
+                  min="0"
+                  value={newConvQuantity}
+                  onChange={(e) => setNewConvQuantity(e.target.value)}
+                  placeholder="16"
+                  className="h-9"
+                />
+              </div>
+              <div className="w-28 space-y-1">
+                <Label className="text-xs text-muted-foreground">Unit</Label>
+                <Combobox
+                  options={unitOptions.map((u) => ({ value: u, label: u }))}
+                  value={newConvSizeUnit}
+                  onValueChange={setNewConvSizeUnit}
+                  placeholder="unit"
+                  searchPlaceholder="Search units..."
+                  emptyText="No unit found"
+                  className="h-9"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-9 w-9"
+                onClick={addConversion}
+                disabled={
+                  !newConvUnit.trim() ||
+                  !newConvSizeUnit ||
+                  !newConvQuantity ||
+                  parseFloat(newConvQuantity) <= 0
+                }
+                aria-label="Add conversion"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
             </div>
           </div>
 

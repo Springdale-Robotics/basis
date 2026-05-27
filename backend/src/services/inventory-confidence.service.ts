@@ -267,7 +267,7 @@ export async function depleteTranches(
   // If tranches have mixed units, we convert each to the target for planning.
   const targetUnit = resolveUnit(unit);
   const densityGPerCup = item.density ? parseFloat(item.density) : null;
-  const qtyWeights = (item.quantityUnitWeights as Record<string, number>) || {};
+  const qtySizes = (item.quantityUnitSizes as Record<string, { quantity: number; unit: string }>) || {};
 
   // Build tranches with converted quantities
   const now = new Date();
@@ -281,7 +281,7 @@ export async function depleteTranches(
     if (stockUnit === targetUnit) {
       convertedQty = stockQty;
     } else {
-      const converted = convert(stockQty, stockUnit, targetUnit, densityGPerCup, qtyWeights);
+      const converted = convert(stockQty, stockUnit, targetUnit, densityGPerCup, qtySizes);
       if (converted == null) continue; // Can't convert — skip this tranche
       convertedQty = converted;
     }
@@ -322,7 +322,7 @@ export async function depleteTranches(
     if (originalUnit === targetUnit) {
       newQtyInOriginalUnit = instruction.newQuantity;
     } else {
-      const converted = convert(instruction.newQuantity, targetUnit, originalUnit, densityGPerCup, qtyWeights);
+      const converted = convert(instruction.newQuantity, targetUnit, originalUnit, densityGPerCup, qtySizes);
       newQtyInOriginalUnit = converted ?? instruction.newQuantity;
     }
 

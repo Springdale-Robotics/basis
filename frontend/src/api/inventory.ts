@@ -28,7 +28,7 @@ export interface CreateItemRequest {
   icon?: string;
   density?: number;
   defaultShelfLifeDays?: number;
-  quantityUnitWeights?: Record<string, number>;
+  quantityUnitSizes?: Record<string, { quantity: number; unit: string }>;
 }
 
 export interface UpdateItemRequest extends Partial<CreateItemRequest> {}
@@ -162,8 +162,12 @@ export const inventoryApi = {
   batchUpdateItems: (data: BatchUpdateItemsRequest) =>
     apiPost<{ items: InventoryItem[] }>('/inventory/items/batch-update', data),
 
-  saveQuantityUnitWeight: (itemId: string, unit: string, grams: number) =>
-    apiPatch<{ item: InventoryItem }>(`/inventory/items/${itemId}/quantity-weight`, { unit, grams }),
+  /**
+   * Save a per-item conversion: "1 [unit] = [quantity] [sizeUnit]".
+   * E.g. saveItemConversion(id, 'bottle', 16, 'fl oz') stores 1 bottle = 16 fl oz.
+   */
+  saveItemConversion: (itemId: string, unit: string, quantity: number, sizeUnit: string) =>
+    apiPatch<{ item: InventoryItem }>(`/inventory/items/${itemId}/quantity-weight`, { unit, quantity, sizeUnit }),
 
   // Stock
   getStock: () =>

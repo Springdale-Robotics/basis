@@ -306,9 +306,9 @@ export interface InventoryItem {
   minStockQuantity?: number;
   defaultAreaId?: string;
   density?: number;
-  needsDensity?: boolean;
+  needsConversion?: boolean;
   defaultShelfLifeDays?: number | null;
-  quantityUnitWeights?: Record<string, number>;
+  quantityUnitSizes?: Record<string, { quantity: number; unit: string }>;
   stockEntries?: StockEntry[];
   createdAt: string;
   updatedAt: string;

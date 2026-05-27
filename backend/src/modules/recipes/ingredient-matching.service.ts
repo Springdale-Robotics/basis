@@ -406,9 +406,9 @@ export async function matchIngredients(
             const toCat = getUnitCategory(normTo);
             // Only flag needsQuantityWeight for quantity units without saved weights
             if (fromCat === 'quantity' || toCat === 'quantity') {
-              const quantityUnitWeights = (item.quantityUnitWeights as Record<string, number>) || {};
+              const quantityUnitSizes = (item.quantityUnitSizes as Record<string, { quantity: number; unit: string }>) || {};
               const qtyUnit = fromCat === 'quantity' ? normFrom : normTo;
-              if (quantityUnitWeights[qtyUnit] == null) {
+              if (quantityUnitSizes[qtyUnit] == null) {
                 suggestion.needsQuantityWeight = {
                   fromUnit: parsed.unit,
                   toUnit: item.defaultUnit,
@@ -507,9 +507,9 @@ export async function matchSingleIngredient(
           const fromCat = getUnitCategory(normFrom);
           const toCat = getUnitCategory(normTo);
           if (fromCat === 'quantity' || toCat === 'quantity') {
-            const quantityUnitWeights = (item.quantityUnitWeights as Record<string, number>) || {};
+            const quantityUnitSizes = (item.quantityUnitSizes as Record<string, { quantity: number; unit: string }>) || {};
             const qtyUnit = fromCat === 'quantity' ? normFrom : normTo;
-            if (quantityUnitWeights[qtyUnit] == null) {
+            if (quantityUnitSizes[qtyUnit] == null) {
               suggestion.needsQuantityWeight = {
                 fromUnit: unit,
                 toUnit: item.defaultUnit,

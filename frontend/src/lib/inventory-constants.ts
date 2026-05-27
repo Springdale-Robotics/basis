@@ -9,6 +9,7 @@ import {
   resolveUnit,
   convert,
   type UnitDefinition,
+  type QuantityUnitSizes,
 } from './units';
 
 export const defaultCategories = [
@@ -121,7 +122,7 @@ export type CategoryOption = (typeof categoryOptions)[number];
 /**
  * Convert a quantity from one unit to another using density-based system.
  * Handles same-category, cross-category (weight<->volume via density in g/cup),
- * and quantity units (via quantityUnitWeights in grams per unit).
+ * and custom count units (via quantityUnitSizes — e.g. { bottle: { 16, 'fl oz' } }).
  * Returns null if no conversion path is found.
  */
 export function convertQuantity(
@@ -129,9 +130,9 @@ export function convertQuantity(
   fromUnit: string,
   toUnit: string,
   densityGPerCup?: number | null,
-  quantityUnitWeights?: Record<string, number>
+  quantityUnitSizes?: QuantityUnitSizes
 ): number | null {
-  return convert(quantity, fromUnit, toUnit, densityGPerCup, quantityUnitWeights);
+  return convert(quantity, fromUnit, toUnit, densityGPerCup, quantityUnitSizes);
 }
 
 /**
@@ -142,7 +143,7 @@ export function calculateTotalStock(
   entries: Array<{ quantity: number | string; unit?: string }>,
   targetUnit: string,
   densityGPerCup?: number | null,
-  quantityUnitWeights?: Record<string, number>
+  quantityUnitSizes?: QuantityUnitSizes
 ): { total: number; allConverted: boolean; unconvertedUnits: string[] } {
   let total = 0;
   let allConverted = true;
@@ -155,7 +156,7 @@ export function calculateTotalStock(
     if (resolveUnit(entryUnit) === resolveUnit(targetUnit)) {
       total += qty;
     } else {
-      const converted = convert(qty, entryUnit, targetUnit, densityGPerCup, quantityUnitWeights);
+      const converted = convert(qty, entryUnit, targetUnit, densityGPerCup, quantityUnitSizes);
       if (converted !== null) {
         total += converted;
       } else {

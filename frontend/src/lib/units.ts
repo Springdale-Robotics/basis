@@ -492,114 +492,78 @@ export function convertSameCategory(quantity: number, fromInput: string, toInput
 }
 
 /**
- * Convert between any units using density and per-item quantity weights.
+ * Per-item container/quantity-unit sizes (mirror of backend definition).
+ */
+export type QuantityUnitSizes = Record<string, { quantity: number; unit: string }>;
+
+function resolveQuantityUnit(
+  qty: number,
+  unitInput: string,
+  sizes: QuantityUnitSizes | undefined,
+): { quantity: number; unitKey: string } {
+  let q = qty;
+  let key = resolveUnit(unitInput);
+  if (!sizes) return { quantity: q, unitKey: key };
+  for (let depth = 0; depth < 5; depth += 1) {
+    const entry = sizes[key];
+    if (!entry || entry.quantity <= 0) return { quantity: q, unitKey: key };
+    q *= entry.quantity;
+    key = resolveUnit(entry.unit);
+  }
+  return { quantity: q, unitKey: key };
+}
+
+/**
+ * Convert between any units using density and per-item quantity sizes.
  *
  * Priority:
- * 1. Same category (weight<->weight, volume<->volume): direct math via base units
- * 2. Per-item count conversion (count<->weight via quantityUnitWeights in grams)
+ * 1. Resolve any custom quantity units through `qtySizes` to standard units
+ * 2. Same category (weight<->weight, volume<->volume): direct math via base units
  * 3. Cross-category (weight<->volume via density in g/cup)
- *
- * @param quantity       Amount to convert
- * @param fromInput      Source unit (key, alias, or display name)
- * @param toInput        Target unit
- * @param densityGPerCup Item density in grams per cup (nullable)
- * @param qtyWeights     Map of count unit key -> grams per 1 unit (e.g., { "each": 50 })
  */
 export function convert(
   quantity: number,
   fromInput: string,
   toInput: string,
   densityGPerCup?: number | null,
-  qtyWeights?: Record<string, number>,
+  qtySizes?: QuantityUnitSizes,
 ): number | null {
-  const fromKey = resolveUnit(fromInput);
-  const toKey = resolveUnit(toInput);
-  if (fromKey === toKey) return quantity;
+  const { quantity: fromQ, unitKey: fromKey } = resolveQuantityUnit(quantity, fromInput, qtySizes);
+  const { quantity: toFactor, unitKey: toKey } = resolveQuantityUnit(1, toInput, qtySizes);
+  if (fromKey === toKey) return fromQ / toFactor;
 
   const fromCat = getUnitCategory(fromKey);
   const toCat = getUnitCategory(toKey);
 
-  // Negligible units: no conversion
   if (fromCat === 'negligible' || toCat === 'negligible') return null;
 
-  // 1. Same category (weight or volume): direct math
-  if (fromCat === toCat && (fromCat === 'weight' || fromCat === 'volume')) {
-    return convertSameCategory(quantity, fromKey, toKey);
+  // After size resolution, count units without a defined size can't bridge.
+  if (fromCat === 'count' || fromCat === 'unknown') return null;
+  if (toCat === 'count' || toCat === 'unknown') return null;
+
+  if (fromCat === toCat) {
+    const converted = convertSameCategory(fromQ, fromKey, toKey);
+    return converted == null ? null : converted / toFactor;
   }
 
-  // 2. Count unit involved: go through grams via qtyWeights
-  if (fromCat === 'count' || fromCat === 'unknown') {
-    const gramsPerUnit = qtyWeights?.[fromKey];
-    if (gramsPerUnit == null) return null;
-    const grams = quantity * gramsPerUnit;
-    return convertGramsTo(grams, toKey, toCat, densityGPerCup);
-  }
-
-  if (toCat === 'count' || toCat === 'unknown') {
-    const gramsPerUnit = qtyWeights?.[toKey];
-    if (gramsPerUnit == null) return null;
-    const grams = convertToGrams(quantity, fromKey, fromCat, densityGPerCup);
-    if (grams == null) return null;
-    return grams / gramsPerUnit;
-  }
-
-  // 3. Cross-category (weight <-> volume): use density
   if (densityGPerCup == null) return null;
 
   if (fromCat === 'weight' && toCat === 'volume') {
-    // grams -> cups: divide by density
-    const fromBase = toBaseUnit(quantity, fromKey);
+    const fromBase = toBaseUnit(fromQ, fromKey);
     if (!fromBase || fromBase.base !== 'g') return null;
     const cups = fromBase.value / densityGPerCup;
-    return fromBaseUnit(cups, 'cup', toKey);
+    const converted = fromBaseUnit(cups, 'cup', toKey);
+    return converted == null ? null : converted / toFactor;
   }
 
   if (fromCat === 'volume' && toCat === 'weight') {
-    // cups -> grams: multiply by density
-    const fromBase = toBaseUnit(quantity, fromKey);
+    const fromBase = toBaseUnit(fromQ, fromKey);
     if (!fromBase || fromBase.base !== 'cup') return null;
     const grams = fromBase.value * densityGPerCup;
-    return fromBaseUnit(grams, 'g', toKey);
+    const converted = fromBaseUnit(grams, 'g', toKey);
+    return converted == null ? null : converted / toFactor;
   }
 
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-function convertToGrams(
-  quantity: number,
-  unitKey: string,
-  category: UnitCategory | 'unknown',
-  densityGPerCup?: number | null,
-): number | null {
-  if (category === 'weight') {
-    const base = toBaseUnit(quantity, unitKey);
-    return base?.value ?? null;
-  }
-  if (category === 'volume' && densityGPerCup != null) {
-    const base = toBaseUnit(quantity, unitKey);
-    if (!base) return null;
-    return base.value * densityGPerCup;
-  }
-  return null;
-}
-
-function convertGramsTo(
-  grams: number,
-  targetKey: string,
-  targetCategory: UnitCategory | 'unknown',
-  densityGPerCup?: number | null,
-): number | null {
-  if (targetCategory === 'weight') {
-    return fromBaseUnit(grams, 'g', targetKey);
-  }
-  if (targetCategory === 'volume' && densityGPerCup != null) {
-    const cups = grams / densityGPerCup;
-    return fromBaseUnit(cups, 'cup', targetKey);
-  }
   return null;
 }
 
