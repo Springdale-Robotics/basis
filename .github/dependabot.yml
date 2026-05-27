@@ -1,0 +1,36 @@
+version: 2
+updates:
+  # Backend npm deps
+  - package-ecosystem: npm
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Bundle minor/patch updates per release to keep noise down. Major bumps
+      # still come as individual PRs.
+      backend-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Frontend npm deps
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      frontend-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # GitHub Actions versions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday

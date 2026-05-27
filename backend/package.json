@@ -4,6 +4,16 @@
   "description": "Basis — Self-hosted household management server",
   "main": "dist/index.js",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Springdale-Robotics/basis.git",
+    "directory": "backend"
+  },
+  "bugs": {
+    "url": "https://github.com/Springdale-Robotics/basis/issues"
+  },
+  "homepage": "https://github.com/Springdale-Robotics/basis",
+  "license": "MIT",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "dev:worker": "tsx watch src/worker.ts",
