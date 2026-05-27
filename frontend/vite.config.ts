@@ -32,6 +32,10 @@ export default defineConfig({
         // Lists is the offline-critical surface (shopping & packing in places
         // with bad signal). Other modules can opt in by adding more handlers.
         navigateFallbackDenylist: [/^\/api/, /^\/socket\.io/],
+        // Main bundle is currently ~2.1 MB (530 kB gzipped) — over workbox's
+        // 2 MiB default. Bumping until we code-split. See chunkSizeWarning in
+        // build output.
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         runtimeCaching: [
           {
             urlPattern: /\/api\/v1\/lists(\?|\/|$).*/,
