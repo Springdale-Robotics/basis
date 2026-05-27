@@ -178,4 +178,12 @@ export const settingsApi = {
 
   updateStorageSettings: (data: UpdateStorageSettingsRequest) =>
     apiPatch<{ storage: StorageSettings }>('/settings/storage', data),
+
+  getHostInfo: () =>
+    apiGet<{
+      platform: string;
+      arch: string;
+      distro?: string;
+      cloudflaredLocalPath: string | null;
+    }>('/install/host-info'),
 };

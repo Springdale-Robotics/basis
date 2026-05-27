@@ -44,6 +44,7 @@ import { imageParseRoutes } from './modules/image-parse/image-parse.routes.js';
 import { appPasswordsRoutes } from './modules/app-passwords/app-passwords.routes.js';
 import { caldavRoutes, caldavWellKnownRoutes, caldavRootProbeRoutes } from './modules/caldav/caldav.routes.js';
 import { connectRoutes, connectDownloadRoutes } from './modules/connect/connect.routes.js';
+import { installRoutes } from './modules/install/install.routes.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -192,6 +193,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     await apiScope.register(appPasswordsRoutes, { prefix: '/api/v1/users/me/app-passwords' });
     await apiScope.register(connectRoutes, { prefix: '/api/v1/users/me/connect' });
     await apiScope.register(connectDownloadRoutes, { prefix: '/api/v1/connect' });
+    await apiScope.register(installRoutes, { prefix: '/api/v1/install' });
   });
 
   // ─── CalDAV (native-client surface, no CORS) ───────────────────────────

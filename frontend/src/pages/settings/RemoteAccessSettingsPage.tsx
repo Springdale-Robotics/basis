@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { GuidedInstallDialog } from '@/components/settings/GuidedInstallDialog';
 import { cn } from '@/lib/utils';
 import {
   settingsApi,
@@ -320,9 +321,14 @@ function TailscalePanel({
   setPublicUrl: (v: string) => void;
 }) {
   const queryClient = useQueryClient();
+  const [installOpen, setInstallOpen] = useState(false);
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['settings', 'remote-access', 'tailscale'],
     queryFn: settingsApi.detectTailscale,
+  });
+  const { data: hostInfo } = useQuery({
+    queryKey: ['install', 'host-info'],
+    queryFn: settingsApi.getHostInfo,
   });
 
   const enableMutation = useMutation({
@@ -366,17 +372,44 @@ function TailscalePanel({
   if (!detect.available) {
     const issue = detect.issues[0] ?? 'unknown_error';
     const guidance = ISSUE_GUIDANCE[issue];
+    const installCommandId =
+      hostInfo?.platform === 'darwin'
+        ? 'install-tailscale-darwin'
+        : hostInfo?.platform === 'linux'
+        ? 'install-tailscale-linux'
+        : null;
     return (
-      <Alert>
-        <NetworkIcon className="h-4 w-4" />
-        <AlertTitle>{guidance.title}</AlertTitle>
-        <AlertDescription className="space-y-2">
-          <p>{guidance.body}</p>
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
-            Check again
-          </Button>
-        </AlertDescription>
-      </Alert>
+      <>
+        <Alert>
+          <NetworkIcon className="h-4 w-4" />
+          <AlertTitle>{guidance.title}</AlertTitle>
+          <AlertDescription className="space-y-2">
+            <p>{guidance.body}</p>
+            <div className="flex gap-2">
+              {issue === 'not_installed' && installCommandId && (
+                <Button size="sm" onClick={() => setInstallOpen(true)}>
+                  Install Tailscale
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={() => refetch()}>
+                Check again
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+        {installCommandId && (
+          <GuidedInstallDialog
+            open={installOpen}
+            onOpenChange={setInstallOpen}
+            commandId={installCommandId}
+            title="Install Tailscale"
+            description="Runs the official Tailscale install script. You'll be prompted for your sudo password — Tailscale installs as a system daemon. After install, you'll see a tailscale.com URL — open it to authorize this machine."
+            onSuccess={() => {
+              refetch();
+            }}
+          />
+        )}
+      </>
     );
   }
 
@@ -460,6 +493,7 @@ function CloudflarePanel({
 }) {
   const queryClient = useQueryClient();
   const [token, setToken] = useState('');
+  const [installOpen, setInstallOpen] = useState(false);
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['settings', 'remote-access', 'cloudflare'],
     queryFn: settingsApi.detectCloudflared,
@@ -512,28 +546,36 @@ function CloudflarePanel({
 
   if (!data.installed) {
     return (
-      <Alert>
-        <Cloud className="h-4 w-4" />
-        <AlertTitle>cloudflared is not installed</AlertTitle>
-        <AlertDescription className="space-y-2">
-          <p>
-            Install Cloudflare's <code className="rounded bg-muted px-1">cloudflared</code>{' '}
-            binary on this host, then refresh. See{' '}
-            <a
-              href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"
-              target="_blank"
-              rel="noreferrer"
-              className="underline inline-flex items-center gap-1"
-            >
-              install instructions <ExternalLink className="h-3 w-3" />
-            </a>
-            .
-          </p>
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
-            Check again
-          </Button>
-        </AlertDescription>
-      </Alert>
+      <>
+        <Alert>
+          <Cloud className="h-4 w-4" />
+          <AlertTitle>cloudflared is not installed</AlertTitle>
+          <AlertDescription className="space-y-2">
+            <p>
+              We can download the official <code className="rounded bg-muted px-1">cloudflared</code>{' '}
+              binary into this app's local bin — no sudo, no system-wide install.
+            </p>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => setInstallOpen(true)}>
+                Install cloudflared
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => refetch()}>
+                Check again
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+        <GuidedInstallDialog
+          open={installOpen}
+          onOpenChange={setInstallOpen}
+          commandId="install-cloudflared"
+          title="Install cloudflared"
+          description="Downloads the platform-correct cloudflared binary from Cloudflare's GitHub releases into this app's bin/. No sudo required."
+          onSuccess={() => {
+            refetch();
+          }}
+        />
+      </>
     );
   }
 

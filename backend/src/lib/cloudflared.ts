@@ -1,8 +1,21 @@
 import { exec as execCallback, spawn, ChildProcess } from 'child_process';
 import { promisify } from 'util';
+import { resolve } from 'path';
+import { existsSync } from 'fs';
 import { logger } from './logger.js';
 
 const execAsync = promisify(execCallback);
+
+const LOCAL_CLOUDFLARED = resolve(process.cwd(), 'bin', 'cloudflared');
+
+/**
+ * Resolve which cloudflared binary to use. The "Install cloudflared" guided
+ * flow downloads into the local bin dir — prefer it over $PATH so a fresh
+ * install picks up immediately without restarting the backend.
+ */
+function cloudflaredBinary(): string {
+  return existsSync(LOCAL_CLOUDFLARED) ? LOCAL_CLOUDFLARED : 'cloudflared';
+}
 
 /**
  * Wraps the `cloudflared` CLI for Cloudflare Tunnel setup.
@@ -50,7 +63,9 @@ function isAlive(): boolean {
 
 async function detectInstalled(): Promise<{ installed: boolean; version?: string }> {
   try {
-    const { stdout } = await _exec('cloudflared --version', { timeout: EXEC_TIMEOUT_MS });
+    const { stdout } = await _exec(`${cloudflaredBinary()} --version`, {
+      timeout: EXEC_TIMEOUT_MS,
+    });
     const m = stdout.match(/cloudflared version ([^\s]+)/);
     return { installed: true, version: m?.[1] };
   } catch (err) {
@@ -90,7 +105,7 @@ export async function startTunnel(token: string): Promise<CloudflaredStatus> {
   return new Promise((resolve) => {
     try {
       const proc = spawn(
-        'cloudflared',
+        cloudflaredBinary(),
         ['tunnel', '--no-autoupdate', 'run', '--token', token],
         { stdio: ['ignore', 'pipe', 'pipe'], detached: false }
       );

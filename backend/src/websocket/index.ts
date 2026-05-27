@@ -6,6 +6,7 @@ import { sessions } from '../db/schema/index.js';
 import { eq, and, gt } from 'drizzle-orm';
 import { logger } from '../lib/logger.js';
 import { config } from '../config/index.js';
+import { registerInstallNamespace } from '../modules/install/install.ws.js';
 
 export interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -168,6 +169,10 @@ export function initializeWebSocket(server: HttpServer): Server {
       log.error({ error }, 'Socket error');
     });
   });
+
+  // Register the guided-install namespace (/install) for PTY-based installer
+  // terminals. Admin-only auth lives inside the namespace setup.
+  registerInstallNamespace(io);
 
   logger.info('WebSocket server initialized');
   return io;
