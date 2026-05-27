@@ -369,15 +369,31 @@ function TailscalePanel({
   if (!data) return null;
   const detect: TailscaleDetectResult = data;
 
+  // Hoist the install dialog out of the conditional branches so it stays
+  // mounted across detect-status transitions. Platform-correct install id is
+  // picked from host-info; falls back to null on unsupported platforms.
+  const installCommandId =
+    hostInfo?.platform === 'darwin'
+      ? 'install-tailscale-darwin'
+      : hostInfo?.platform === 'linux'
+      ? 'install-tailscale-linux'
+      : null;
+  const installDialog = installCommandId ? (
+    <GuidedInstallDialog
+      open={installOpen}
+      onOpenChange={setInstallOpen}
+      commandId={installCommandId}
+      title="Install Tailscale"
+      description="Runs the official Tailscale install script. You'll be prompted for your sudo password — Tailscale installs as a system daemon. After install, you'll see a tailscale.com URL — open it to authorize this machine."
+      onSuccess={() => {
+        refetch();
+      }}
+    />
+  ) : null;
+
   if (!detect.available) {
     const issue = detect.issues[0] ?? 'unknown_error';
     const guidance = ISSUE_GUIDANCE[issue];
-    const installCommandId =
-      hostInfo?.platform === 'darwin'
-        ? 'install-tailscale-darwin'
-        : hostInfo?.platform === 'linux'
-        ? 'install-tailscale-linux'
-        : null;
     return (
       <>
         <Alert>
@@ -397,88 +413,83 @@ function TailscalePanel({
             </div>
           </AlertDescription>
         </Alert>
-        {installCommandId && (
-          <GuidedInstallDialog
-            open={installOpen}
-            onOpenChange={setInstallOpen}
-            commandId={installCommandId}
-            title="Install Tailscale"
-            description="Runs the official Tailscale install script. You'll be prompted for your sudo password — Tailscale installs as a system daemon. After install, you'll see a tailscale.com URL — open it to authorize this machine."
-            onSuccess={() => {
-              refetch();
-            }}
-          />
-        )}
+        {installDialog}
       </>
     );
   }
 
   if (detect.serve.configured) {
     return (
-      <Alert>
-        <CheckCircle2 className="h-4 w-4 text-green-600" />
-        <AlertTitle>Tailscale HTTPS is active</AlertTitle>
-        <AlertDescription className="space-y-2">
-          <p>
-            Your server is reachable on the tailnet at{' '}
-            <code className="rounded bg-muted px-1">https://{detect.hostname}</code>. Tailscale
-            handles cert acquisition and renewal automatically.
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => disableMutation.mutate()}
-              disabled={disableMutation.isPending}
-            >
-              {disableMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Stop tailscale serve
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              asChild
-            >
-              <a
-                href={`https://${detect.hostname}`}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1"
+      <>
+        <Alert>
+          <CheckCircle2 className="h-4 w-4 text-green-600" />
+          <AlertTitle>Tailscale HTTPS is active</AlertTitle>
+          <AlertDescription className="space-y-2">
+            <p>
+              Your server is reachable on the tailnet at{' '}
+              <code className="rounded bg-muted px-1">https://{detect.hostname}</code>. Tailscale
+              handles cert acquisition and renewal automatically.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => disableMutation.mutate()}
+                disabled={disableMutation.isPending}
               >
-                Open <ExternalLink className="h-3 w-3" />
-              </a>
-            </Button>
-          </div>
-        </AlertDescription>
-      </Alert>
+                {disableMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Stop tailscale serve
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                asChild
+              >
+                <a
+                  href={`https://${detect.hostname}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1"
+                >
+                  Open <ExternalLink className="h-3 w-3" />
+                </a>
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+        {installDialog}
+      </>
     );
   }
 
   return (
-    <Alert>
-      <CheckCircle2 className="h-4 w-4 text-green-600" />
-      <AlertTitle>Tailscale detected — hostname: {detect.hostname}</AlertTitle>
-      <AlertDescription className="space-y-2">
-        <p>
-          Click below to expose this server over HTTPS at{' '}
-          <code className="rounded bg-muted px-1">https://{detect.hostname}</code>. Tailscale will
-          obtain and renew a Let’s Encrypt cert automatically — no certificate prompts on iOS.
-        </p>
-        <Button
-          onClick={() => enableMutation.mutate()}
-          disabled={enableMutation.isPending}
-          size="sm"
-        >
-          {enableMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          Enable Tailscale HTTPS
-        </Button>
-        {publicUrl && publicUrl !== `https://${detect.hostname}` && (
-          <p className="text-xs text-muted-foreground">
-            (Will overwrite your current Server URL setting.)
+    <>
+      <Alert>
+        <CheckCircle2 className="h-4 w-4 text-green-600" />
+        <AlertTitle>Tailscale detected — hostname: {detect.hostname}</AlertTitle>
+        <AlertDescription className="space-y-2">
+          <p>
+            Click below to expose this server over HTTPS at{' '}
+            <code className="rounded bg-muted px-1">https://{detect.hostname}</code>. Tailscale will
+            obtain and renew a Let’s Encrypt cert automatically — no certificate prompts on iOS.
           </p>
-        )}
-      </AlertDescription>
-    </Alert>
+          <Button
+            onClick={() => enableMutation.mutate()}
+            disabled={enableMutation.isPending}
+            size="sm"
+          >
+            {enableMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Enable Tailscale HTTPS
+          </Button>
+          {publicUrl && publicUrl !== `https://${detect.hostname}` && (
+            <p className="text-xs text-muted-foreground">
+              (Will overwrite your current Server URL setting.)
+            </p>
+          )}
+        </AlertDescription>
+      </Alert>
+      {installDialog}
+    </>
   );
 }
 
@@ -544,43 +555,46 @@ function CloudflarePanel({
   if (isLoading) return <Skeleton className="h-32" />;
   if (!data) return null;
 
-  if (!data.installed) {
-    return (
-      <>
-        <Alert>
-          <Cloud className="h-4 w-4" />
-          <AlertTitle>cloudflared is not installed</AlertTitle>
-          <AlertDescription className="space-y-2">
-            <p>
-              We can download the official <code className="rounded bg-muted px-1">cloudflared</code>{' '}
-              binary into this app's local bin — no sudo, no system-wide install.
-            </p>
-            <div className="flex gap-2">
-              <Button size="sm" onClick={() => setInstallOpen(true)}>
-                Install cloudflared
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => refetch()}>
-                Check again
-              </Button>
-            </div>
-          </AlertDescription>
-        </Alert>
-        <GuidedInstallDialog
-          open={installOpen}
-          onOpenChange={setInstallOpen}
-          commandId="install-cloudflared"
-          title="Install cloudflared"
-          description="Downloads the platform-correct cloudflared binary from Cloudflare's GitHub releases into this app's bin/. No sudo required."
-          onSuccess={() => {
-            refetch();
-          }}
-        />
-      </>
-    );
-  }
+  // Render the install dialog at the panel level so it stays mounted across
+  // status changes — the post-install refetch flips `data.installed` to true,
+  // which would otherwise unmount the dialog mid-show.
+  const installDialog = (
+    <GuidedInstallDialog
+      open={installOpen}
+      onOpenChange={setInstallOpen}
+      commandId="install-cloudflared"
+      title="Install cloudflared"
+      description="Downloads the platform-correct cloudflared binary from Cloudflare's GitHub releases into this app's bin/. No sudo required."
+      onSuccess={() => {
+        refetch();
+      }}
+    />
+  );
 
-  if (data.running) {
-    return (
+  let body: React.ReactNode;
+  if (!data.installed) {
+    body = (
+      <Alert>
+        <Cloud className="h-4 w-4" />
+        <AlertTitle>cloudflared is not installed</AlertTitle>
+        <AlertDescription className="space-y-2">
+          <p>
+            We can download the official <code className="rounded bg-muted px-1">cloudflared</code>{' '}
+            binary into this app's local bin — no sudo, no system-wide install.
+          </p>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => setInstallOpen(true)}>
+              Install cloudflared
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              Check again
+            </Button>
+          </div>
+        </AlertDescription>
+      </Alert>
+    );
+  } else if (data.running) {
+    body = (
       <Alert>
         <CheckCircle2 className="h-4 w-4 text-green-600" />
         <AlertTitle>Cloudflare tunnel is connected</AlertTitle>
@@ -603,66 +617,73 @@ function CloudflarePanel({
         </AlertDescription>
       </Alert>
     );
+  } else {
+    body = (
+      <Alert>
+        <Cloud className="h-4 w-4" />
+        <AlertTitle>cloudflared detected{data.version && ` (v${data.version})`}</AlertTitle>
+        <AlertDescription className="space-y-3">
+          <p>
+            Create a tunnel in the{' '}
+            <a
+              href="https://one.dash.cloudflare.com/"
+              target="_blank"
+              rel="noreferrer"
+              className="underline inline-flex items-center gap-1"
+            >
+              Cloudflare Zero Trust dashboard <ExternalLink className="h-3 w-3" />
+            </a>
+            , then paste the connector token below. We'll run it as a managed child
+            process — no <code className="rounded bg-muted px-1">systemctl</code>{' '}
+            required.
+          </p>
+          <div className="space-y-2">
+            <Label htmlFor="cf-token">Tunnel token</Label>
+            <Input
+              id="cf-token"
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="eyJhIjoi…"
+              autoComplete="off"
+            />
+          </div>
+          {data.lastError && (
+            <p className="text-xs text-destructive">
+              Last attempt: {data.lastError}
+            </p>
+          )}
+          <Button
+            size="sm"
+            onClick={() => connectMutation.mutate()}
+            disabled={
+              connectMutation.isPending ||
+              token.trim().length < 20 ||
+              !publicUrl ||
+              !!validateUrl(publicUrl, false)
+            }
+          >
+            {connectMutation.isPending && (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            )}
+            Connect tunnel
+          </Button>
+          {(!publicUrl || !!validateUrl(publicUrl, false)) && (
+            <p className="text-xs text-muted-foreground">
+              Set the Public URL above first (e.g. https://home.yourdomain.com) — that's
+              the hostname your tunnel routes to.
+            </p>
+          )}
+        </AlertDescription>
+      </Alert>
+    );
   }
 
   return (
-    <Alert>
-      <Cloud className="h-4 w-4" />
-      <AlertTitle>cloudflared detected{data.version && ` (v${data.version})`}</AlertTitle>
-      <AlertDescription className="space-y-3">
-        <p>
-          Create a tunnel in the{' '}
-          <a
-            href="https://one.dash.cloudflare.com/"
-            target="_blank"
-            rel="noreferrer"
-            className="underline inline-flex items-center gap-1"
-          >
-            Cloudflare Zero Trust dashboard <ExternalLink className="h-3 w-3" />
-          </a>
-          , then paste the connector token below. We'll run it as a managed child
-          process — no <code className="rounded bg-muted px-1">systemctl</code>{' '}
-          required.
-        </p>
-        <div className="space-y-2">
-          <Label htmlFor="cf-token">Tunnel token</Label>
-          <Input
-            id="cf-token"
-            type="password"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="eyJhIjoi…"
-            autoComplete="off"
-          />
-        </div>
-        {data.lastError && (
-          <p className="text-xs text-destructive">
-            Last attempt: {data.lastError}
-          </p>
-        )}
-        <Button
-          size="sm"
-          onClick={() => connectMutation.mutate()}
-          disabled={
-            connectMutation.isPending ||
-            token.trim().length < 20 ||
-            !publicUrl ||
-            !!validateUrl(publicUrl, false)
-          }
-        >
-          {connectMutation.isPending && (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          )}
-          Connect tunnel
-        </Button>
-        {(!publicUrl || !!validateUrl(publicUrl, false)) && (
-          <p className="text-xs text-muted-foreground">
-            Set the Public URL above first (e.g. https://home.yourdomain.com) — that's
-            the hostname your tunnel routes to.
-          </p>
-        )}
-      </AlertDescription>
-    </Alert>
+    <>
+      {body}
+      {installDialog}
+    </>
   );
 }
 

@@ -47,6 +47,12 @@ export function GuidedInstallDialog({
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  // Stash the callback in a ref so changing parent props doesn't tear down
+  // and re-spawn the PTY on every re-render.
+  const onSuccessRef = useRef(onSuccess);
+  useEffect(() => {
+    onSuccessRef.current = onSuccess;
+  }, [onSuccess]);
 
   const [phase, setPhase] = useState<
     'idle' | 'connecting' | 'running' | 'done' | 'error'
@@ -108,7 +114,7 @@ export function GuidedInstallDialog({
         const ok =
           info.code === 0 && (info.postCheckOk === undefined || info.postCheckOk);
         setPhase(ok ? 'done' : 'error');
-        if (ok) onSuccess?.();
+        if (ok) onSuccessRef.current?.();
       });
 
       socket.on('error', (err: { message: string }) => {
@@ -154,7 +160,7 @@ export function GuidedInstallDialog({
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [open, commandId, onSuccess]);
+  }, [open, commandId]);
 
   const isRunning = phase === 'running' || phase === 'connecting';
 
