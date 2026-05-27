@@ -311,15 +311,15 @@ export function generateIcsContent(
       vevent.updatePropertyWithValue('location', event.location);
     }
 
-    // Start time
-    const startTime = ICAL.Time.fromJSDate(new Date(event.startTime), event.allDay);
+    // DB stores UTC timestamps. Pass useUTC=true so ical.js emits Z-suffixed
+    // UTC instead of converting to server-local and writing a floating time.
+    const startTime = ICAL.Time.fromJSDate(new Date(event.startTime), true);
     if (event.allDay) {
       startTime.isDate = true;
     }
     vevent.updatePropertyWithValue('dtstart', startTime);
 
-    // End time
-    const endTime = ICAL.Time.fromJSDate(new Date(event.endTime), event.allDay);
+    const endTime = ICAL.Time.fromJSDate(new Date(event.endTime), true);
     if (event.allDay) {
       endTime.isDate = true;
     }
@@ -340,7 +340,7 @@ export function generateIcsContent(
       try {
         const exDates = JSON.parse(event.recurrenceExDates);
         for (const exDateStr of exDates) {
-          const exDate = ICAL.Time.fromJSDate(new Date(exDateStr), event.allDay);
+          const exDate = ICAL.Time.fromJSDate(new Date(exDateStr), true);
           if (event.allDay) {
             exDate.isDate = true;
           }
@@ -356,7 +356,7 @@ export function generateIcsContent(
       try {
         const rDates = JSON.parse(event.recurrenceRDates);
         for (const rDateStr of rDates) {
-          const rDate = ICAL.Time.fromJSDate(new Date(rDateStr), event.allDay);
+          const rDate = ICAL.Time.fromJSDate(new Date(rDateStr), true);
           if (event.allDay) {
             rDate.isDate = true;
           }
@@ -369,7 +369,7 @@ export function generateIcsContent(
 
     // Exception instances have RECURRENCE-ID
     if (event.originalStartTime && event.recurringEventId) {
-      const recurrenceId = ICAL.Time.fromJSDate(new Date(event.originalStartTime), event.allDay);
+      const recurrenceId = ICAL.Time.fromJSDate(new Date(event.originalStartTime), true);
       if (event.allDay) {
         recurrenceId.isDate = true;
       }
@@ -381,14 +381,13 @@ export function generateIcsContent(
       }
     }
 
-    // Timestamps
-    const dtstamp = ICAL.Time.fromJSDate(new Date(), false);
+    const dtstamp = ICAL.Time.fromJSDate(new Date(), true);
     vevent.updatePropertyWithValue('dtstamp', dtstamp);
 
-    const created = ICAL.Time.fromJSDate(new Date(event.createdAt), false);
+    const created = ICAL.Time.fromJSDate(new Date(event.createdAt), true);
     vevent.updatePropertyWithValue('created', created);
 
-    const lastModified = ICAL.Time.fromJSDate(new Date(event.updatedAt), false);
+    const lastModified = ICAL.Time.fromJSDate(new Date(event.updatedAt), true);
     vevent.updatePropertyWithValue('last-modified', lastModified);
 
     comp.addSubcomponent(vevent);

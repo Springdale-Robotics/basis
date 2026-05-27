@@ -134,11 +134,14 @@ function appendVevent(
   if (event.description) vevent.updatePropertyWithValue('description', event.description);
   if (event.location) vevent.updatePropertyWithValue('location', event.location);
 
-  const dtstart = ICAL.Time.fromJSDate(new Date(event.startTime), event.allDay);
+  // DB stores UTC timestamps. Pass useUTC=true so ical.js doesn't translate to
+  // server-local components and emit floating times (no Z, no TZID) — iOS
+  // interprets those as bare local wall-clock and events land at the wrong hour.
+  const dtstart = ICAL.Time.fromJSDate(new Date(event.startTime), true);
   if (event.allDay) dtstart.isDate = true;
   vevent.updatePropertyWithValue('dtstart', dtstart);
 
-  const dtend = ICAL.Time.fromJSDate(new Date(event.endTime), event.allDay);
+  const dtend = ICAL.Time.fromJSDate(new Date(event.endTime), true);
   if (event.allDay) dtend.isDate = true;
   vevent.updatePropertyWithValue('dtend', dtend);
 
@@ -152,7 +155,7 @@ function appendVevent(
   if (event.recurrenceExDates && !isException) {
     try {
       for (const d of JSON.parse(event.recurrenceExDates) as string[]) {
-        const t = ICAL.Time.fromJSDate(new Date(d), event.allDay);
+        const t = ICAL.Time.fromJSDate(new Date(d), true);
         if (event.allDay) t.isDate = true;
         vevent.addPropertyWithValue('exdate', t);
       }
@@ -161,7 +164,7 @@ function appendVevent(
     }
   }
   if (isException && event.originalStartTime) {
-    const recurrenceId = ICAL.Time.fromJSDate(new Date(event.originalStartTime), event.allDay);
+    const recurrenceId = ICAL.Time.fromJSDate(new Date(event.originalStartTime), true);
     if (event.allDay) recurrenceId.isDate = true;
     vevent.updatePropertyWithValue('recurrence-id', recurrenceId);
     if (event.recurrenceStatus === 'cancelled') {
@@ -207,11 +210,11 @@ function appendVevent(
     vevent.addSubcomponent(alarm);
   }
 
-  vevent.updatePropertyWithValue('dtstamp', ICAL.Time.fromJSDate(new Date(), false));
-  vevent.updatePropertyWithValue('created', ICAL.Time.fromJSDate(new Date(event.createdAt), false));
+  vevent.updatePropertyWithValue('dtstamp', ICAL.Time.fromJSDate(new Date(), true));
+  vevent.updatePropertyWithValue('created', ICAL.Time.fromJSDate(new Date(event.createdAt), true));
   vevent.updatePropertyWithValue(
     'last-modified',
-    ICAL.Time.fromJSDate(new Date(event.updatedAt), false)
+    ICAL.Time.fromJSDate(new Date(event.updatedAt), true)
   );
   cal.addSubcomponent(vevent);
 }
