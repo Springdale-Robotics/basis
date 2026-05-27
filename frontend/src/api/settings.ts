@@ -204,4 +204,26 @@ export const settingsApi = {
       updateAvailable: boolean;
       checkError?: string;
     }>(`/install/version?prerelease=${includePrerelease}`),
+
+  getSystemStatus: () =>
+    apiGet<{
+      version: string;
+      backendUptimeSec: number;
+      hostUptimeSec?: number;
+      services: Array<{
+        name: string;
+        state: 'active' | 'inactive' | 'failed' | 'unknown' | 'not-installed';
+        uptimeSec?: number;
+      }>;
+      storage: {
+        path: string;
+        totalBytes?: number;
+        freeBytes?: number;
+        usedBytes?: number;
+        error?: string;
+      };
+      database: { bytes?: number; error?: string };
+      lastBackup: { filename?: string; mtime?: string; bytes?: number };
+      timestamp: string;
+    }>('/system/status'),
 };
