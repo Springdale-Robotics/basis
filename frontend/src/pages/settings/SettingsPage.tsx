@@ -20,6 +20,7 @@ import { RemoteAccessSettingsPage } from './RemoteAccessSettingsPage';
 import { TerminalSettingsPage } from './TerminalSettingsPage';
 import { UpdatesSettingsPage } from './UpdatesSettingsPage';
 import { SystemSettingsPage } from './SystemSettingsPage';
+import { BackupSettingsPage } from './BackupSettingsPage';
 
 export function SettingsPage() {
   const { canAdmin } = useFeaturePermissions();
@@ -92,15 +93,7 @@ export function SettingsPage() {
               }
             />
             <Route path="remote-access" element={<RemoteAccessSettingsPage />} />
-            <Route
-              path="backup"
-              element={
-                <PlaceholderSettings
-                  title="Backup"
-                  description="Schedule automatic snapshots of the household database and uploaded files, restore from a prior backup, or export everything as a portable archive."
-                />
-              }
-            />
+            <Route path="backup" element={<BackupSettingsPage />} />
             <Route
               path="connections"
               element={

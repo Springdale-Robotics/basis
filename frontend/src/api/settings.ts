@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiPost } from './client';
+import { apiGet, apiPatch, apiPost, apiDelete } from './client';
 
 export type TailscaleIssue =
   | 'not_installed'
@@ -204,6 +204,20 @@ export const settingsApi = {
       updateAvailable: boolean;
       checkError?: string;
     }>(`/install/version?prerelease=${includePrerelease}`),
+
+  listSystemBackups: () =>
+    apiGet<{
+      backups: Array<{ filename: string; bytes: number; mtime: string }>;
+      backupDir: string;
+      pgDumpAvailable: boolean;
+      pgDumpVersion?: string;
+    }>('/system/backups'),
+
+  createSystemBackup: () =>
+    apiPost<{ filename: string; bytes: number; elapsedMs: number }>('/system/backups'),
+
+  deleteSystemBackup: (filename: string) =>
+    apiDelete<{ message: string }>(`/system/backups/${encodeURIComponent(filename)}`),
 
   getSystemStatus: () =>
     apiGet<{
