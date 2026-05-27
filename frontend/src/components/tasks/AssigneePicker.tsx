@@ -124,19 +124,9 @@ export function AssigneePicker({
                 )}
               </CommandItem>
             </CommandGroup>
-            <CommandGroup heading="Groups">
-              {groups.length === 0 ? (
-                <div className="px-2 py-3 text-center text-xs text-muted-foreground">
-                  No groups yet.{' '}
-                  <Link
-                    to="/settings/groups"
-                    className="font-medium text-primary hover:underline"
-                  >
-                    Create one
-                  </Link>
-                </div>
-              ) : (
-                groups.map((g) => (
+            {groups.length > 0 ? (
+              <CommandGroup heading="Groups">
+                {groups.map((g) => (
                   <CommandItem
                     key={g.id}
                     value={`group-${g.name}`}
@@ -151,9 +141,24 @@ export function AssigneePicker({
                       <Check className="ml-auto h-4 w-4" />
                     )}
                   </CommandItem>
-                ))
-              )}
-            </CommandGroup>
+                ))}
+              </CommandGroup>
+            ) : (
+              // Rendered outside CommandGroup so cmdk doesn't try to treat the
+              // CTA as a selectable option (which would block clicks on the
+              // People options below).
+              <div className="border-t border-b px-3 py-2 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">Groups: </span>
+                None yet —{' '}
+                <Link
+                  to="/settings/groups"
+                  className="font-medium text-primary hover:underline"
+                  onClick={() => setOpen(false)}
+                >
+                  create one
+                </Link>
+              </div>
+            )}
             {users.length > 0 && (
               <CommandGroup heading="People">
                 {users.map((u) => (

@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
-import { Calendar, Repeat, Plus, X } from 'lucide-react';
+import { Calendar, Repeat, Plus, X, User as UserIcon, Users } from 'lucide-react';
 import { format, isToday, isTomorrow } from 'date-fns';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -9,15 +9,21 @@ import {
   flipRecurrenceMode,
   type DateSuggestion,
   type RecurrenceSuggestion,
+  type AssigneeSuggestion,
+  type AssigneeCandidate,
 } from '@/lib/taskParser';
+import { AssigneePicker, type AssigneeValue } from './AssigneePicker';
 import type { CreateTaskRequest } from '@/api/tasks';
-import type { TaskKind } from '@/types/models';
+import type { TaskKind, User } from '@/types/models';
+import type { Group } from '@/api/groups';
 
 interface QuickAddInputProps {
   kind: TaskKind;
+  users: User[];
+  groups: Group[];
+  currentUserId?: string;
   onSubmit: (data: CreateTaskRequest) => void;
   isSubmitting?: boolean;
-  /** Optional autofocus on mount (e.g. when user presses N keyboard shortcut). */
   autoFocus?: boolean;
 }
 
@@ -29,29 +35,58 @@ function formatDateChip(d: Date, hasTime: boolean): string {
 
 export function QuickAddInput({
   kind,
+  users,
+  groups,
+  currentUserId,
   onSubmit,
   isSubmitting,
   autoFocus,
 }: QuickAddInputProps) {
   const [title, setTitle] = useState('');
-  // `null` means "use whatever the parser detected." A non-null value is a
-  // user-edited override (e.g. flipped recurrence mode). `dismissed` means the
-  // user clicked X to suppress the parser's suggestion entirely.
   const [recurrenceOverride, setRecurrenceOverride] =
     useState<RecurrenceSuggestion | null>(null);
   const [dateDismissed, setDateDismissed] = useState(false);
   const [recurrenceDismissed, setRecurrenceDismissed] = useState(false);
+  // Sensible default: tasks go to the current user; chores stay unassigned
+  // (anyone in the house can pick them up).
+  const defaultAssignee: AssigneeValue =
+    kind === 'task' && currentUserId
+      ? { userId: currentUserId, groupId: null }
+      : { userId: null, groupId: null };
+  const [assigneeOverride, setAssigneeOverride] =
+    useState<AssigneeValue | null>(null);
+  const [assigneeDismissed, setAssigneeDismissed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (autoFocus) inputRef.current?.focus();
   }, [autoFocus]);
 
-  // Detect suggestions on every keystroke.
-  const parsed = useMemo(() => parseTaskInput(title), [title]);
+  // Reset assignee override when kind changes (default flips between
+  // current-user and unassigned).
+  useEffect(() => {
+    setAssigneeOverride(null);
+  }, [kind]);
 
-  // Effective values used at submit and shown in the chip row. The parser's
-  // output applies by default; the user opts out via the X button.
+  // Candidates for assignee detection. Groups first so an "@kids" wins
+  // over a user named "Kid…".
+  const candidates: AssigneeCandidate[] = useMemo(
+    () => [
+      ...groups.map((g) => ({ kind: 'group' as const, id: g.id, name: g.name })),
+      ...users.map((u) => ({
+        kind: 'user' as const,
+        id: u.id,
+        name: u.displayName ?? '',
+      })),
+    ],
+    [users, groups],
+  );
+
+  const parsed = useMemo(
+    () => parseTaskInput(title, undefined, candidates),
+    [title, candidates],
+  );
+
   const effectiveDate: DateSuggestion | null = dateDismissed
     ? null
     : parsed.date ?? null;
@@ -59,11 +94,28 @@ export function QuickAddInput({
     recurrenceOverride ??
     (recurrenceDismissed ? null : parsed.recurrence ?? null);
 
+  // Effective assignee priority:
+  //   1. explicit override from the inline picker
+  //   2. parser-detected assignee (unless user dismissed)
+  //   3. sensible default (current user for tasks)
+  const parsedAssignee: AssigneeValue | null = parsed.assignee
+    ? parsed.assignee.kind === 'user'
+      ? { userId: parsed.assignee.id, groupId: null }
+      : { userId: null, groupId: parsed.assignee.id }
+    : null;
+  const effectiveAssignee: AssigneeValue =
+    assigneeOverride ??
+    (parsedAssignee && !assigneeDismissed ? parsedAssignee : defaultAssignee);
+
+  const assigneeFromParser = !assigneeOverride && !assigneeDismissed && !!parsedAssignee;
+
   const reset = () => {
     setTitle('');
     setRecurrenceOverride(null);
     setDateDismissed(false);
     setRecurrenceDismissed(false);
+    setAssigneeOverride(null);
+    setAssigneeDismissed(false);
   };
 
   const submit = () => {
@@ -73,6 +125,8 @@ export function QuickAddInput({
     const payload: CreateTaskRequest = {
       kind,
       title: trimmed,
+      assigneeUserId: effectiveAssignee.userId ?? null,
+      assigneeGroupId: effectiveAssignee.groupId ?? null,
     };
     if (effectiveDate) payload.dueDate = effectiveDate.dueDate.toISOString();
     if (effectiveRecurrence) {
@@ -97,6 +151,14 @@ export function QuickAddInput({
     }
   };
 
+  // Resolve names for chip display.
+  const assigneeUser = effectiveAssignee.userId
+    ? users.find((u) => u.id === effectiveAssignee.userId)
+    : null;
+  const assigneeGroup = effectiveAssignee.groupId
+    ? groups.find((g) => g.id === effectiveAssignee.groupId)
+    : null;
+
   return (
     <div className="rounded-lg border bg-card p-2">
       <div className="flex items-center gap-2">
@@ -109,10 +171,20 @@ export function QuickAddInput({
           placeholder={
             kind === 'chore'
               ? 'Add a chore… (try "Take out trash every Tuesday")'
-              : 'Add a task… (try "Renew passport by Mar 12")'
+              : 'Add a task… (try "Renew passport by Mar 12 @kids")'
           }
           className="min-w-0 flex-1 border-0 shadow-none focus-visible:ring-0 px-1"
           disabled={isSubmitting}
+        />
+        <AssigneePicker
+          users={users}
+          groups={groups}
+          value={effectiveAssignee}
+          onChange={(v) => {
+            setAssigneeOverride(v);
+            setAssigneeDismissed(false);
+          }}
+          compact
         />
         <Button
           size="sm"
@@ -123,7 +195,7 @@ export function QuickAddInput({
         </Button>
       </div>
 
-      {(effectiveDate || effectiveRecurrence) && (
+      {(effectiveDate || effectiveRecurrence || assigneeFromParser) && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-6">
           {effectiveDate && (
             <Badge
@@ -170,6 +242,30 @@ export function QuickAddInput({
                 }}
                 className="ml-0.5 rounded-sm hover:bg-foreground/20 p-0.5"
                 aria-label="Don't repeat"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </Badge>
+          )}
+          {assigneeFromParser && (assigneeUser || assigneeGroup) && (
+            <Badge
+              variant="default"
+              className="gap-1 pl-2 pr-1 py-0.5 cursor-default"
+            >
+              {assigneeUser ? (
+                <UserIcon className="h-3 w-3" />
+              ) : (
+                <Users className="h-3 w-3" />
+              )}
+              {assigneeUser?.displayName ?? assigneeGroup?.name}
+              <button
+                type="button"
+                onClick={() => {
+                  setAssigneeDismissed(true);
+                  setAssigneeOverride(null);
+                }}
+                className="ml-0.5 rounded-sm hover:bg-foreground/20 p-0.5"
+                aria-label="Don't auto-assign"
               >
                 <X className="h-3 w-3" />
               </button>

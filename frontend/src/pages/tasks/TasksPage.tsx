@@ -531,6 +531,9 @@ export function TasksPage() {
           <EditGate feature="tasks">
             <QuickAddInput
               kind={kind}
+              users={users}
+              groups={groups}
+              currentUserId={user?.id}
               onSubmit={handleQuickAdd}
               isSubmitting={createMutation.isPending}
             />

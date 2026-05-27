@@ -28,9 +28,21 @@ export interface RecurrenceSuggestion {
   label: string;
 }
 
+export interface AssigneeCandidate {
+  kind: 'user' | 'group';
+  id: string;
+  name: string;
+}
+
+export interface AssigneeSuggestion extends AssigneeCandidate {
+  /** The substring of the input that matched, for display. */
+  matchedText: string;
+}
+
 export interface ParseResult {
   date?: DateSuggestion;
   recurrence?: RecurrenceSuggestion;
+  assignee?: AssigneeSuggestion;
 }
 
 const WEEKDAYS = [
@@ -556,10 +568,49 @@ function detectRecurrence(input: string): RecurrenceSuggestion | null {
   return null;
 }
 
-export function parseTaskInput(input: string, now: Date = new Date()): ParseResult {
+function detectAssignee(
+  input: string,
+  candidates: AssigneeCandidate[],
+): AssigneeSuggestion | null {
+  if (!candidates.length) return null;
+
+  // `@name` (no space before required besides word-boundary) and `for <name>`
+  // are the two patterns we accept. Names can be one or two words.
+  const patterns: RegExp[] = [
+    /@([\w][\w'-]*(?:\s+[\w][\w'-]*)?)/gi,
+    /\bfor\s+([\w][\w'-]*(?:\s+[\w][\w'-]*)?)\b/gi,
+  ];
+
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(input)) !== null) {
+      const query = m[1].trim().toLowerCase();
+      if (!query) continue;
+      // Exact case-insensitive match wins.
+      const exact = candidates.find((c) => c.name.toLowerCase() === query);
+      if (exact) return { ...exact, matchedText: m[0] };
+      // Otherwise unique prefix match.
+      const matches = candidates.filter((c) =>
+        c.name.toLowerCase().startsWith(query),
+      );
+      if (matches.length === 1) {
+        return { ...matches[0], matchedText: m[0] };
+      }
+    }
+  }
+  return null;
+}
+
+export function parseTaskInput(
+  input: string,
+  now: Date = new Date(),
+  candidates: AssigneeCandidate[] = [],
+): ParseResult {
   return {
     date: detectDate(input, now) ?? undefined,
     recurrence: detectRecurrence(input) ?? undefined,
+    assignee: detectAssignee(input, candidates) ?? undefined,
   };
 }
 
