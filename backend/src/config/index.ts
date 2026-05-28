@@ -28,6 +28,17 @@ const envSchema = z.object({
   // Session
   SESSION_MAX_AGE_MS: z.coerce.number().default(604800000), // 7 days
 
+  // Background jobs. When true (default), the API process runs the BullMQ
+  // workers in-process — correct for single-process deployments (dev, Docker).
+  // The native systemd install sets this false on the API service and runs a
+  // dedicated worker process (dist/worker.js) instead, so jobs aren't run twice.
+  // NB: parsed explicitly rather than z.coerce.boolean(), which maps the string
+  // "false" to true (Boolean("false") === true).
+  WORKERS_IN_PROCESS: z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined ? true : !/^(false|0|no|off)$/i.test(v.trim()))),
+
   // File Storage
   STORAGE_PATH: z.string().default('./storage'),
   MAX_UPLOAD_SIZE_MB: z.coerce.number().default(100),
