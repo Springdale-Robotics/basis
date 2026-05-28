@@ -156,9 +156,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     done();
   });
 
-  // Error handling
+  // Error handling. The not-found handler is registered later — Fastify allows
+  // only one per context, and when we serve the SPA (FRONTEND_DIST) the
+  // fallback handler is it; otherwise we install the plain JSON 404 handler.
   app.setErrorHandler(errorHandler);
-  app.setNotFoundHandler(notFoundHandler);
 
   // ─── API surface (browser-facing, CORS-enabled) ────────────────────────
   // All /api/* routes live inside a Fastify scope so the CORS plugin is
@@ -222,6 +223,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   // /opt/basis/current/frontend/dist), serve it at / with SPA fallback so
   // client-side routes resolve to index.html. Skipped in dev — Vite owns
   // :5173 there and proxies /api here.
+  let spaFallbackInstalled = false;
   if (config.FRONTEND_DIST) {
     const dist = resolvePath(config.FRONTEND_DIST);
     if (existsSync(dist)) {
@@ -239,10 +241,16 @@ export async function buildApp(): Promise<FastifyInstance> {
         }
         return reply.sendFile('index.html');
       });
+      spaFallbackInstalled = true;
       logger.info({ dist }, 'Serving frontend from FRONTEND_DIST');
     } else {
       logger.warn({ dist }, 'FRONTEND_DIST is set but the directory does not exist');
     }
+  }
+
+  // No SPA to fall back to (dev, or FRONTEND_DIST missing): plain JSON 404s.
+  if (!spaFallbackInstalled) {
+    app.setNotFoundHandler(notFoundHandler);
   }
 
   return app;
