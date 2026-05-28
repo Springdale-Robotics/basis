@@ -19,6 +19,21 @@ const inviteMemberSchema = z.object({
   method: z.enum(['email', 'code']).default('code'),
 });
 
+// Shape a stored invite row into the API response the frontend expects,
+// computing the relative invite link from the code.
+function toInviteResponse(invite: typeof memberInvites.$inferSelect) {
+  return {
+    id: invite.id,
+    inviteCode: invite.inviteCode,
+    inviteLink: `/join/${invite.inviteCode}`,
+    email: invite.email,
+    role: invite.role,
+    status: invite.status,
+    expiresAt: invite.expiresAt,
+    createdAt: invite.createdAt,
+  };
+}
+
 export async function householdsRoutes(app: FastifyInstance): Promise<void> {
   // Get current household
   app.get(
@@ -101,16 +116,7 @@ export async function householdsRoutes(app: FastifyInstance): Promise<void> {
 
       return {
         success: true,
-        data: {
-          invite: {
-            id: invite.id,
-            inviteCode: invite.inviteCode,
-            inviteLink: `/join/${invite.inviteCode}`,
-            email: invite.email,
-            role: invite.role,
-            expiresAt: invite.expiresAt,
-          },
-        },
+        data: { invite: toInviteResponse(invite) },
       };
     }
   );
@@ -127,7 +133,7 @@ export async function householdsRoutes(app: FastifyInstance): Promise<void> {
         ),
       });
 
-      return { success: true, data: { invites } };
+      return { success: true, data: { invites: invites.map(toInviteResponse) } };
     }
   );
 
