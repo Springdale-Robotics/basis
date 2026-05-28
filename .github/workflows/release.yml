@@ -98,9 +98,9 @@ jobs:
             echo "sudo bash basis-${{ steps.version.outputs.version }}/backend/deploy/native/install.sh --source basis-${{ steps.version.outputs.version }}"
             echo '```'
             echo
-            echo "Docker image publishing is not yet wired up — the existing"
-            echo "Dockerfile is backend-only and needs to learn about the frontend"
-            echo "before the image is useful. Track in repo issues."
+            echo "Basis installs natively (Node/Postgres/Redis + systemd); there"
+            echo "is no Docker image. Local development still uses Docker for"
+            echo "Postgres/Redis/Ollama via backend/docker-compose.dev.yml."
             echo '__EOF__'
           } >> "$GITHUB_OUTPUT"
 

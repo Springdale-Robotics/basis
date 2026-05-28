@@ -20,7 +20,7 @@ else
   git clone --depth 1 -b "$BRANCH" "$REPO_URL" "$INSTALL_DIR" --quiet
 fi
 
-# Run installer
-cd "$INSTALL_DIR/backend"
-chmod +x install.sh
-exec ./install.sh
+# Run the native installer (Node/Postgres/Redis + systemd, no Docker).
+# Needs root and the checkout path as --source.
+cd "$INSTALL_DIR"
+exec sudo bash backend/deploy/native/install.sh --source "$INSTALL_DIR"

@@ -8,25 +8,18 @@ All paths relative to project root (`homemanager/`).
 - `drizzle.config.ts` - Drizzle ORM config pointing to schema
 - `.env.example` - Environment variable template
 - `.gitignore` - Git ignores (node_modules, dist, .env, logs)
-- `.dockerignore` - Docker build ignores
-- `Dockerfile` - Multi-stage build (node:20-alpine), uses entrypoint script
-- `docker-compose.yml` - Production stack (backend, postgres, redis), auto-migrate on start
-- `docker-compose.dev.yml` - Dev stack with pgAdmin and Redis Commander
-- `DEPLOY.md` - Full deployment guide (Docker, nginx, Caddy, commands, backups)
+- `docker-compose.dev.yml` - Dev infra (postgres, redis, ollama, vlm-llm) + pgAdmin and Redis Commander
+- `DEPLOY.md` - Deployment guide (native systemd install; dev setup)
 
 ## backend/deploy/
-- `docker-entrypoint.sh` - Waits for postgres/redis, runs migrations if AUTO_MIGRATE=true, starts server
-- `nginx.conf` - Nginx reverse proxy config with SSL, WebSocket support
-- `Caddyfile` - Caddy config with automatic HTTPS
-- `get-basis.sh` - One-liner download script: `curl -fsSL .../install.sh | bash`
-
-## backend/install.sh
-Zero-prompt installer:
-1. Checks Docker is installed
-2. Auto-generates DB_PASSWORD, SESSION_SECRET, ENCRYPTION_KEY
-3. Creates .env file
-4. Runs docker-compose up
-5. Prints local IP:port for web-based setup wizard
+Production is a native (no-Docker) systemd install — see `deploy/native/`.
+- `native/install.sh` - Native installer: Node 20 + Postgres + Redis, builds the app under /opt/basis, installs systemd units. Run `sudo bash ... --source <checkout>`.
+- `native/basis.service` - API unit (serves the built SPA)
+- `native/basis-worker.service` - BullMQ background worker unit
+- `native/basis-ingredient-parser.service` - Python CRF ingredient-parser sidecar (localhost:8010)
+- `nginx.conf` - Optional Nginx reverse proxy config with SSL, WebSocket support
+- `Caddyfile` - Optional Caddy config with automatic HTTPS
+- `get-basis.sh` - One-liner bootstrap: clones the repo and runs `deploy/native/install.sh`
 
 User completes setup in browser via GET /api/v1/setup/status and POST /api/v1/setup
 
@@ -175,7 +168,6 @@ This starts DB/Redis in Docker, plus backend AND frontend locally with hot reloa
 | `./dev.sh start` | Full stack: DB, Redis, backend, frontend (hot reload) |
 | `./dev.sh start backend` | Backend only: DB/Redis in Docker, backend locally |
 | `./dev.sh start frontend` | Frontend only (backend must be running) |
-| `./dev.sh start docker` | Everything in Docker containers |
 | `./dev.sh stop` | Stop all services |
 | `./dev.sh restart` | Restart all services |
 | `./dev.sh rebuild` | Rebuild backend container (keeps data) |

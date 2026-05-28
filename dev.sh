@@ -570,29 +570,9 @@ case "${1:-help}" in
         (cd "$FRONTEND_DIR" && VITE_PORT=$FRONTEND_PORT VITE_BACKEND_URL="http://localhost:$BACKEND_PORT" npm run dev)
         ;;
 
-      docker)
-        # Everything in Docker
-        echo -e "${BLUE}Starting all services in Docker...${NC}"
-
-        if [ ! -f "$BACKEND_DIR/.env" ]; then
-          cat > "$BACKEND_DIR/.env" << EOF
-DB_PASSWORD=devpassword
-SESSION_SECRET=dev-session-secret-at-least-32-characters-long
-ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-PORT=3000
-CORS_ORIGINS=http://localhost:5173
-AUTO_MIGRATE=true
-EOF
-        fi
-
-        (cd "$BACKEND_DIR" && $COMPOSE up -d)
-        echo ""
-        echo -e "${GREEN}Running at http://localhost:3000${NC}"
-        ;;
-
       *)
         echo -e "${RED}Unknown target: $2${NC}"
-        echo "Use: start, start backend, start frontend, or start docker"
+        echo "Use: start, start backend, or start frontend"
         exit 1
         ;;
     esac
@@ -808,7 +788,6 @@ EOF
     echo -e "  ${GREEN}start${NC}                Start everything (backend + frontend)"
     echo -e "  ${GREEN}start backend${NC}        Start backend only"
     echo -e "  ${GREEN}start frontend${NC}       Start frontend only (backend must be running)"
-    echo -e "  ${GREEN}start docker${NC}         Start all services in Docker"
     echo -e "  ${GREEN}stop${NC}                 Stop all services"
     echo -e "  ${GREEN}restart${NC}              Restart all services"
     echo -e "  ${GREEN}rebuild${NC}              Rebuild backend Docker image (keeps data)"
