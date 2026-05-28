@@ -92,6 +92,12 @@ const envSchema = z.object({
   IMAGE_PARSE_MAX_SIZE_MB: z.coerce.number().default(10),
   IMAGE_PARSE_SESSION_TTL_HOURS: z.coerce.number().default(24),
   IMAGE_PARSE_REQUIRE_AI: z.coerce.boolean().default(false),
+
+  // Bug reports — POSTed to a Cloudflare Worker relay (see
+  // worker/bug-report-relay/) which holds the GitHub PAT and creates the
+  // issue. When unset, reports are stored locally but not pushed.
+  BUG_REPORT_WEBHOOK_URL: z.string().url().optional(),
+  BUG_REPORT_WEBHOOK_SECRET: z.string().optional(),
 });
 
 export type Config = z.infer<typeof envSchema>;

@@ -54,6 +54,7 @@ export const SETTINGS_NAV = [
   { label: 'Sessions', href: '/settings/sessions' },
   { label: 'Updates', href: '/settings/updates' },
   { label: 'System', href: '/settings/system' },
+  { label: 'Bug Reports', href: '/settings/bug-reports' },
   { label: 'Terminal', href: '/settings/terminal' },
 ] as const;
 
@@ -107,5 +108,6 @@ export const ADMIN_ONLY_SETTINGS = [
   '/settings/features',
   '/settings/updates',
   '/settings/system',
+  '/settings/bug-reports',
   '/settings/terminal',
 ];

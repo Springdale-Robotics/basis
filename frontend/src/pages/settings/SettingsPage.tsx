@@ -21,6 +21,7 @@ import { TerminalSettingsPage } from './TerminalSettingsPage';
 import { UpdatesSettingsPage } from './UpdatesSettingsPage';
 import { SystemSettingsPage } from './SystemSettingsPage';
 import { BackupSettingsPage } from './BackupSettingsPage';
+import { BugReportsSettingsPage } from './BugReportsSettingsPage';
 
 export function SettingsPage() {
   const { canAdmin } = useFeaturePermissions();
@@ -115,6 +116,7 @@ export function SettingsPage() {
             />
             <Route path="updates" element={<UpdatesSettingsPage />} />
             <Route path="system" element={<SystemSettingsPage />} />
+            <Route path="bug-reports" element={<BugReportsSettingsPage />} />
             <Route path="terminal" element={<TerminalSettingsPage />} />
           </Routes>
         </div>

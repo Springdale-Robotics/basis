@@ -67,6 +67,10 @@ OLLAMA_VLM_MODEL=minicpm-v
 OLLAMA_LLM_MODEL=qwen2.5:7b
 # HandwritingOCR API (handwritingocr.com) — set key to enable for handwritten recipes
 # HANDWRITING_OCR_API_KEY=
+# Bug reports — set webhook to relay reports through the Cloudflare Worker
+# (see worker/bug-report-relay/). Without these, reports are stored locally only.
+# BUG_REPORT_WEBHOOK_URL=https://homemanager-bug-relay.<account>.workers.dev
+# BUG_REPORT_WEBHOOK_SECRET=
 EOF
 }
 

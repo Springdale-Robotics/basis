@@ -4,6 +4,7 @@ import { Header } from './Header';
 import { MobileNav } from './MobileNav';
 import { OfflineIndicator } from './OfflineIndicator';
 import { MusicPlayer } from '@/components/music/MusicPlayer';
+import { BugReportButton } from '@/components/shared/BugReportButton';
 import { useUIStore } from '@/stores/uiStore';
 import { useDevice } from '@/hooks/useDevice';
 import { usePlayerStore } from '@/stores/playerStore';
@@ -45,6 +46,9 @@ export function AppShell() {
 
       {/* Offline / sync status */}
       <OfflineIndicator />
+
+      {/* Floating bug-report button */}
+      <BugReportButton />
     </div>
   );
 }

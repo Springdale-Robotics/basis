@@ -50,6 +50,7 @@ import { connectRoutes, connectDownloadRoutes } from './modules/connect/connect.
 import { installRoutes } from './modules/install/install.routes.js';
 import { systemRoutes } from './modules/system/system.routes.js';
 import { systemBackupRoutes } from './modules/system/system-backup.routes.js';
+import { bugReportsRoutes } from './modules/bug-reports/bug-reports.routes.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -201,6 +202,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     await apiScope.register(installRoutes, { prefix: '/api/v1/install' });
     await apiScope.register(systemRoutes, { prefix: '/api/v1/system' });
     await apiScope.register(systemBackupRoutes, { prefix: '/api/v1/system/backups' });
+    await apiScope.register(bugReportsRoutes, { prefix: '/api/v1/bug-reports' });
   });
 
   // ─── CalDAV (native-client surface, no CORS) ───────────────────────────

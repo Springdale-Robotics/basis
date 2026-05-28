@@ -117,6 +117,21 @@ export const imageParseQueue = new Queue('image-parse', {
   },
 });
 
+export const bugReportQueue = new Queue('bug-reports', {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 50,
+    removeOnFail: 200,
+    // Long backoff — most failures are GitHub outages or missing credentials;
+    // hammering doesn't help and we want to give admins time to fix the token.
+    attempts: 5,
+    backoff: {
+      type: 'exponential',
+      delay: 30_000,
+    },
+  },
+});
+
 // Job type definitions
 export interface NotificationJobData {
   type: 'low_stock' | 'expiring_soon' | 'leftover_expiring' | 'task_due' | 'sync_error' | 'custom';
@@ -173,6 +188,10 @@ export interface MediaJobData {
 export interface ImageParseJobData {
   sessionId: string;
   householdId: string;
+}
+
+export interface BugReportJobData {
+  reportId: string;
 }
 
 // Initialize workers
@@ -341,7 +360,25 @@ export async function initializeWorkers(): Promise<void> {
     logger.error({ jobId: job?.id, sessionId: job?.data.sessionId, error }, 'Image parse job failed');
   });
 
-  workers = [notificationWorker, syncWorker, backupWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, mediaWorker, imageParseWorker];
+  // Bug report worker — posts user-submitted reports to GitHub Issues
+  const bugReportWorker = new Worker(
+    'bug-reports',
+    async (job: Job<BugReportJobData>) => {
+      const { processBugReportJob } = await import('./bug-report.worker.js');
+      return processBugReportJob(job);
+    },
+    { connection: redis, concurrency: 1 }
+  );
+
+  bugReportWorker.on('completed', (job) => {
+    logger.info({ jobId: job.id, reportId: job.data.reportId }, 'Bug report delivered');
+  });
+
+  bugReportWorker.on('failed', (job, error) => {
+    logger.error({ jobId: job?.id, reportId: job?.data.reportId, error }, 'Bug report delivery failed');
+  });
+
+  workers = [notificationWorker, syncWorker, backupWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, mediaWorker, imageParseWorker, bugReportWorker];
   logger.info('Background workers initialized');
 }
 
@@ -433,6 +470,7 @@ export async function shutdownWorkers(): Promise<void> {
   await calendarSyncQueue.close();
   await mediaQueue.close();
   await imageParseQueue.close();
+  await bugReportQueue.close();
 
   logger.info('All workers shut down');
 }
@@ -485,6 +523,14 @@ export async function queueMediaJob(data: MediaJobData): Promise<void> {
 export async function queueImageParse(data: ImageParseJobData): Promise<void> {
   await imageParseQueue.add('parse', data, {
     jobId: `image-parse-${data.sessionId}`,
+  });
+}
+
+// Helper to queue a bug report delivery to GitHub
+export async function queueBugReportDelivery(reportId: string): Promise<void> {
+  await bugReportQueue.add('deliver', { reportId }, {
+    // jobId scoped so a re-submit of the same row replaces the previous attempt
+    jobId: `bug-report:${reportId}`,
   });
 }
 

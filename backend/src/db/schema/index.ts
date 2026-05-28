@@ -33,3 +33,6 @@ export * from './media';
 
 // Image parsing
 export * from './image-parse';
+
+// Bug reports
+export * from './bug-reports';
