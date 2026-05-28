@@ -30,7 +30,13 @@ echo "Redis is ready"
 # Run migrations if AUTO_MIGRATE is set
 if [ "$AUTO_MIGRATE" = "true" ]; then
   echo "Running database migrations..."
-  node dist/scripts/migrate.js || echo "Migration failed or already up to date"
+  # Migrations are idempotent (already-applied ones are no-ops), so a non-zero
+  # exit means a genuine failure. Refuse to start rather than serve against an
+  # inconsistent schema.
+  if ! node dist/scripts/migrate.js; then
+    echo "Database migration failed — refusing to start. Check the logs above." >&2
+    exit 1
+  fi
 fi
 
 # Start the application

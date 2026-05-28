@@ -102,7 +102,7 @@ export async function setupRoutes(app: FastifyInstance): Promise<void> {
     // Set session cookie
     reply.setCookie('session', session.token, {
       httpOnly: true,
-      secure: config.NODE_ENV === 'production',
+      secure: request.protocol === 'https',
       sameSite: 'lax',
       path: '/',
       maxAge: config.SESSION_MAX_AGE_MS / 1000,
@@ -256,7 +256,7 @@ export async function setupRoutes(app: FastifyInstance): Promise<void> {
     // Set session cookie
     reply.setCookie('session', session.id, {
       httpOnly: true,
-      secure: config.NODE_ENV === 'production',
+      secure: request.protocol === 'https',
       sameSite: 'lax',
       path: '/',
       maxAge: config.SESSION_MAX_AGE_MS / 1000,

@@ -271,7 +271,10 @@ ENCRYPTION_KEY=${ENCRYPTION_KEY}
 
 # Server
 PORT=${PORT}
-CORS_ORIGINS=*
+# Empty = same-origin only (the backend serves the SPA itself). Only set a
+# comma-separated origin list here if another origin must call this API —
+# never "*", which combined with credentialed cookies is a CSRF/credential risk.
+CORS_ORIGINS=
 
 # Auto-run migrations on startup
 AUTO_MIGRATE=true

@@ -165,7 +165,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   // limited to them. CalDAV at /dav/ and /.well-known/caldav stay outside.
   await app.register(async (apiScope) => {
     await apiScope.register(fastifyCors, {
-      origin: corsOrigins.length > 0 ? corsOrigins : true,
+      // Default (no CORS_ORIGINS configured): same-origin only. The backend
+      // serves the SPA itself and dev uses Vite's /api proxy, so cross-origin
+      // access isn't needed by default. `origin: true` would instead reflect
+      // ANY origin and, with credentials enabled, let other websites make
+      // credentialed calls to this API — set an explicit allowlist instead.
+      origin: corsOrigins.length > 0 ? corsOrigins : false,
       credentials: true,
     });
     await apiScope.register(fastifyCompress);

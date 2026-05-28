@@ -141,6 +141,7 @@ log "Creating directory layout"
 install -d -o basis -g basis /opt/basis/versions
 install -d -o basis -g basis /opt/basis/data
 install -d -o basis -g basis /opt/basis/data/storage
+install -d -o basis -g basis /opt/basis/data/backups
 install -d -o basis -g basis /opt/basis/bin
 
 # Each install lives at versions/YYYYMMDD-HHMMSS. /opt/basis/current is a
@@ -185,6 +186,10 @@ if [ ! -f /opt/basis/.env ]; then
 DO \$\$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_user WHERE usename = 'basis') THEN
     CREATE USER basis WITH PASSWORD '$DB_PASSWORD';
+  ELSE
+    -- Role already exists (e.g. .env was deleted but the DB user wasn't).
+    -- Sync its password to the freshly generated one so the new .env matches.
+    ALTER USER basis WITH PASSWORD '$DB_PASSWORD';
   END IF;
 END \$\$;
 SELECT 'CREATE DATABASE basis OWNER basis' WHERE NOT EXISTS (
@@ -202,6 +207,9 @@ ENCRYPTION_KEY=$ENCRYPTION_KEY
 NODE_ENV=production
 PORT=$PORT
 HOST=0.0.0.0
+# This install runs a dedicated worker process (basis-worker.service), so the
+# API process must not also run the BullMQ workers — otherwise jobs run twice.
+WORKERS_IN_PROCESS=false
 STORAGE_PATH=/opt/basis/data/storage
 FRONTEND_DIST=/opt/basis/current/frontend/dist
 # CORS_ORIGINS is empty by default — the backend serves the SPA itself, so
@@ -228,12 +236,29 @@ if [ "$OS_ID" != macos ]; then
   systemctl daemon-reload
   systemctl enable basis.service basis-worker.service >/dev/null
 
+  # Let the service account restart its own units without a password, so the
+  # in-UI "Update" flow can hand off to the new version unattended (its restart
+  # is detached with stdin from /dev/null, so an interactive sudo prompt would
+  # hang forever and the new code would never start). Deliberately narrow — only
+  # these exact systemctl invocations, nothing else; apt/tailscale/etc. still
+  # require the password.
+  SYSTEMCTL="$(command -v systemctl)"
+  cat > /etc/sudoers.d/basis <<SUDOERS
+basis ALL=(root) NOPASSWD: $SYSTEMCTL restart basis basis-worker, $SYSTEMCTL restart basis, $SYSTEMCTL restart basis-worker
+SUDOERS
+  chmod 440 /etc/sudoers.d/basis
+  visudo -cf /etc/sudoers.d/basis >/dev/null 2>&1 \
+    || { rm -f /etc/sudoers.d/basis; err "Generated sudoers file failed validation"; }
+  ok "Installed /etc/sudoers.d/basis (passwordless restart of basis units only)"
+
   log "Starting Basis"
   systemctl restart basis.service
   systemctl restart basis-worker.service
   sleep 3
   systemctl is-active --quiet basis.service \
     || err "basis.service failed to start. Check: journalctl -u basis -n 50"
+  systemctl is-active --quiet basis-worker.service \
+    || err "basis-worker.service failed to start. Check: journalctl -u basis-worker -n 50"
 
   # Firewall — best-effort; only ufw is well-known on Debian/Ubuntu.
   if command -v ufw >/dev/null && ufw status | head -1 | grep -q active; then
