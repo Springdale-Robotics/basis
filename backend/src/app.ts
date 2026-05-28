@@ -74,9 +74,22 @@ export async function buildApp(): Promise<FastifyInstance> {
     (_req, body, done) => done(null, body)
   );
 
-  // Security headers
+  // Security headers. Keep Helmet's CSP defaults in production but drop
+  // `upgrade-insecure-requests`: Basis is served over plain HTTP on the LAN by
+  // default (TLS, when used, is terminated upstream by Tailscale / Cloudflare /
+  // a reverse proxy). That directive would force the browser to fetch
+  // same-origin assets over https://<host>:3000 — which has no TLS — producing
+  // "SSL error" failures for the JS/CSS/manifest. Disabled entirely in dev,
+  // where Vite serves the frontend.
   await app.register(fastifyHelmet, {
-    contentSecurityPolicy: isDev ? false : undefined,
+    contentSecurityPolicy: isDev
+      ? false
+      : {
+          useDefaults: true,
+          directives: {
+            'upgrade-insecure-requests': null,
+          },
+        },
   });
 
   // CORS for API routes. strictPreflight: false lets non-browser OPTIONS
