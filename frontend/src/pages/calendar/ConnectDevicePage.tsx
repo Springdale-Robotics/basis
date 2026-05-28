@@ -28,15 +28,15 @@ import { appPasswordsApi } from '@/api/app-passwords';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
+import { copyToClipboard } from '@/lib/clipboard';
 
 function CopyButton({ value, label }: { value: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(value);
+    if (await copyToClipboard(value)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
+    } else {
       toast({ title: 'Could not copy', variant: 'destructive' });
     }
   };

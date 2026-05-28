@@ -49,6 +49,7 @@ import { toast } from '@/hooks/useToast';
 import { useTheme } from '@/hooks/useTheme';
 import { useCalendarColor } from '@/hooks/useCalendarColor';
 import { COLOR_PALETTES, getColorForIndex } from '@/lib/theme-presets';
+import { copyToClipboard as copyText } from '@/lib/clipboard';
 
 export type CalendarAccessPreset =
   | 'everyone'      // No rules: every household member gets edit
@@ -231,12 +232,11 @@ export function CalendarForm({
   };
 
   const copyToClipboard = async (text: string, field: 'feed' | 'webcal') => {
-    try {
-      await navigator.clipboard.writeText(text);
+    if (await copyText(text)) {
       setCopiedField(field);
       setTimeout(() => setCopiedField(null), 2000);
       toast({ title: 'Copied!', description: 'Link copied to clipboard.' });
-    } catch {
+    } else {
       toast({ title: 'Copy Failed', description: 'Could not copy to clipboard.', variant: 'destructive' });
     }
   };

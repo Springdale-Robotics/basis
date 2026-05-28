@@ -19,6 +19,7 @@ import {
 } from '@/api/settings';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
+import { copyToClipboard } from '@/lib/clipboard';
 import { CheckCircle2, ExternalLink, Network as NetworkIcon } from 'lucide-react';
 
 interface ModeOption {
@@ -781,11 +782,10 @@ function CustomDomainPanel({ publicUrl }: { publicUrl: string }) {
 function ConfigSnippet({ snippet }: { snippet: string }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(snippet);
+    if (await copyToClipboard(snippet)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
+    } else {
       toast({ title: 'Copy failed', variant: 'destructive' });
     }
   };

@@ -37,6 +37,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import type { Calendar } from '@/types/models';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
+import { copyToClipboard as copyText } from '@/lib/clipboard';
 
 interface CalendarPublicLinkCardProps {
   calendar: Calendar;
@@ -93,15 +94,14 @@ export function CalendarPublicLinkCard({ calendar }: CalendarPublicLinkCardProps
   });
 
   const copyToClipboard = async (text: string, field: 'feed' | 'webcal') => {
-    try {
-      await navigator.clipboard.writeText(text);
+    if (await copyText(text)) {
       setCopiedField(field);
       setTimeout(() => setCopiedField(null), 2000);
       toast({
         title: 'Copied!',
         description: 'Link copied to clipboard.',
       });
-    } catch {
+    } else {
       toast({
         title: 'Copy Failed',
         description: 'Could not copy to clipboard.',

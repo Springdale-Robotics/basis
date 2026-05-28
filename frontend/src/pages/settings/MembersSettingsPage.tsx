@@ -52,6 +52,7 @@ import { Label } from '@/components/ui/label';
 import { householdsApi, type MemberInvite } from '@/api/households';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
+import { copyToClipboard } from '@/lib/clipboard';
 import { useAuth } from '@/hooks/useAuth';
 import type { User, UserRole } from '@/types/models';
 
@@ -124,14 +125,15 @@ export function MembersSettingsPage() {
   // Create invite mutation
   const createInviteMutation = useMutation({
     mutationFn: householdsApi.inviteMember,
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       queryClient.invalidateQueries({ queryKey: ['household', 'invites'] });
       toast({ title: 'Invite created' });
       setInviteDialogOpen(false);
       // Auto-copy the invite link
       const fullLink = `${window.location.origin}${data.invite.inviteLink}`;
-      navigator.clipboard.writeText(fullLink);
-      toast({ title: 'Invite link copied to clipboard' });
+      if (await copyToClipboard(fullLink)) {
+        toast({ title: 'Invite link copied to clipboard' });
+      }
     },
     onError: (err) => {
       toast({ title: 'Error', description: getErrorMessage(err), variant: 'destructive' });
@@ -183,10 +185,13 @@ export function MembersSettingsPage() {
 
   const handleCopyInviteLink = async (invite: MemberInvite) => {
     const fullLink = `${window.location.origin}${invite.inviteLink}`;
-    await navigator.clipboard.writeText(fullLink);
-    setCopiedInviteId(invite.id);
-    toast({ title: 'Invite link copied to clipboard' });
-    setTimeout(() => setCopiedInviteId(null), 2000);
+    if (await copyToClipboard(fullLink)) {
+      setCopiedInviteId(invite.id);
+      toast({ title: 'Invite link copied to clipboard' });
+      setTimeout(() => setCopiedInviteId(null), 2000);
+    } else {
+      toast({ title: 'Could not copy invite link', variant: 'destructive' });
+    }
   };
 
   const handleOpenChangeRole = (member: User) => {
