@@ -8,6 +8,7 @@ import { config } from '../../config/index.js';
 import { db } from '../../config/database.js';
 import { sql } from 'drizzle-orm';
 import { logger } from '../../lib/logger.js';
+import { getAppVersion } from '../../lib/app-version.js';
 
 const exec = promisify(execCallback);
 const EXEC_TIMEOUT_MS = 3_000;
@@ -152,15 +153,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
       }
 
       // ─── current version ────────────────────────────────────────────
-      let version = 'dev';
-      if (config.FRONTEND_DIST) {
-        try {
-          const versionFile = resolvePath(config.FRONTEND_DIST, '../VERSION');
-          version = (await fs.readFile(versionFile, 'utf8')).trim();
-        } catch {
-          version = 'unknown';
-        }
-      }
+      const version = await getAppVersion();
 
       return {
         success: true,

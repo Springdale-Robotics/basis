@@ -2,23 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import { authMiddleware, requireAdmin } from '../../middleware/auth.middleware.js';
 import { listAvailableInstallers, CLOUDFLARED_LOCAL_PATH } from './installer-commands.js';
 import { promises as fs } from 'fs';
-import { resolve as resolvePath } from 'path';
 import { config } from '../../config/index.js';
 import { logger } from '../../lib/logger.js';
-
-/** Where the install script writes the version tag (e.g. "0.1.2-alpha"). */
-const VERSION_FILE = config.FRONTEND_DIST
-  ? resolvePath(config.FRONTEND_DIST, '../VERSION')
-  : null;
-
-async function getCurrentVersion(): Promise<string> {
-  if (!VERSION_FILE) return 'dev';
-  try {
-    return (await fs.readFile(VERSION_FILE, 'utf8')).trim();
-  } catch {
-    return 'unknown';
-  }
-}
+import { getAppVersion } from '../../lib/app-version.js';
 
 interface GitHubRelease {
   tag_name: string;
@@ -102,7 +88,7 @@ export async function installRoutes(app: FastifyInstance): Promise<void> {
     '/version',
     { preHandler: [authMiddleware, requireAdmin()] },
     async (request) => {
-      const current = await getCurrentVersion();
+      const current = await getAppVersion();
       const productionInstall = !!config.FRONTEND_DIST && current !== 'dev';
 
       const includePrerelease = (request.query as any)?.prerelease !== 'false';

@@ -8,7 +8,7 @@ import fastifyMultipart from '@fastify/multipart';
 import fastifySwagger from '@fastify/swagger';
 import fastifySwaggerUi from '@fastify/swagger-ui';
 import fastifyStatic from '@fastify/static';
-import { resolve as resolvePath } from 'path';
+import { resolve as resolvePath, sep } from 'path';
 import { existsSync } from 'fs';
 
 import { config, isDev } from './config/index.js';
@@ -88,6 +88,13 @@ export async function buildApp(): Promise<FastifyInstance> {
           useDefaults: true,
           directives: {
             'upgrade-insecure-requests': null,
+            // Cloudflare proxies inject the Web Analytics beacon (beacon.min.js
+            // from static.cloudflareinsights.com, posting to cloudflareinsights.com)
+            // into proxied HTML. Allow it so it doesn't trip CSP; harmless when
+            // the deployment isn't fronted by Cloudflare. Disable Web Analytics
+            // in the Cloudflare dashboard instead if you'd rather not run it.
+            'script-src': ["'self'", 'https://static.cloudflareinsights.com'],
+            'connect-src': ["'self'", 'https://cloudflareinsights.com'],
           },
         },
   });
@@ -244,6 +251,16 @@ export async function buildApp(): Promise<FastifyInstance> {
         root: dist,
         prefix: '/',
         wildcard: false,
+        setHeaders(res, filePath) {
+          // The shell must always be revalidated so a deploy that swaps asset
+          // hashes is picked up; hashed assets are content-addressed and safe
+          // to cache forever.
+          if (filePath.endsWith('index.html')) {
+            res.setHeader('Cache-Control', 'no-cache');
+          } else if (filePath.includes(`${sep}assets${sep}`)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          }
+        },
       });
       app.setNotFoundHandler((request, reply) => {
         // API requests still get JSON 404s. Anything else falls through to
@@ -252,7 +269,17 @@ export async function buildApp(): Promise<FastifyInstance> {
         if (url.startsWith('/api/') || url.startsWith('/dav') || url.startsWith('/socket.io')) {
           return notFoundHandler(request, reply);
         }
-        return reply.sendFile('index.html');
+        // A request for a file with an extension (e.g. /assets/index-abc.js)
+        // that reached here doesn't exist on disk. Return a real 404 rather
+        // than the SPA shell — serving index.html (text/html) for a missing
+        // .js/.css makes the browser throw "'text/html' is not a valid
+        // JavaScript MIME type" after a deploy rotates asset hashes and a
+        // stale client (or service worker) still references the old ones.
+        const pathname = url.split('?')[0];
+        if (/\.[^/]+$/.test(pathname)) {
+          return notFoundHandler(request, reply);
+        }
+        return reply.header('Cache-Control', 'no-cache').sendFile('index.html');
       });
       spaFallbackInstalled = true;
       logger.info({ dist }, 'Serving frontend from FRONTEND_DIST');

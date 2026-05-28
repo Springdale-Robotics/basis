@@ -107,6 +107,14 @@ mkdir -p "/opt/basis/versions"
 rm -rf "$DEST"
 mv "$EXTRACTED" "$DEST"
 
+# Runtime-downloaded binaries (cloudflared) live in the persistent
+# /opt/basis/bin, not the version dir — otherwise this update orphans the
+# guided "Install cloudflared" download and the tunnel silently fails to start
+# (Cloudflare 1033). Point backend/bin at the shared dir.
+mkdir -p /opt/basis/bin
+rm -rf "$DEST/backend/bin"
+ln -sfn /opt/basis/bin "$DEST/backend/bin"
+
 echo "Loading environment..."
 set -a; . /opt/basis/.env; set +a
 
@@ -140,10 +148,12 @@ echo "  (Connection to this terminal will drop when the service restarts.)"
 # Runs unattended thanks to the narrow NOPASSWD rule the installer drops at
 # /etc/sudoers.d/basis — without it this sudo can't read a password (stdin is
 # /dev/null) and the new code would never start.
-# Restart the parser sidecar best-effort first (|| true: older installs whose
-# sudoers predates this unit can't restart it passwordless — not fatal, it keeps
-# serving the old code), then the critical units last in their always-allowed form.
-nohup bash -c 'sleep 3 && { sudo systemctl restart basis-ingredient-parser || true; } && sudo systemctl restart basis basis-worker' </dev/null >/dev/null 2>&1 &
+# reset-failed first (best-effort) so a latched start-limit from an earlier
+# aborted attempt doesn't make the restart fail with "start request repeated too
+# quickly"; || true covers older installs whose sudoers predates that rule.
+# Then the parser sidecar best-effort (same older-sudoers caveat), then the
+# critical units last in their always-allowed form.
+nohup bash -c 'sleep 3 && { sudo systemctl reset-failed basis basis-worker || true; } && { sudo systemctl restart basis-ingredient-parser || true; } && sudo systemctl restart basis basis-worker' </dev/null >/dev/null 2>&1 &
 disown
 echo "Update complete — now at $NEW_VERSION"
 echo "Roll back if needed: point /opt/basis/current at the previous version,"

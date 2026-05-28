@@ -166,6 +166,25 @@ rsync -a \
   --chown=basis:basis \
   "$SOURCE_DIR/" "$INSTALL_PATH/"
 
+# Record the deployed version at the version root (.../current/VERSION) so the
+# running app can display it. Release tarballs ship a VERSION file; a git
+# checkout doesn't, so derive one from git, falling back to the install tag.
+if [ ! -f "$INSTALL_PATH/VERSION" ]; then
+  SRC_VERSION="$(git -C "$SOURCE_DIR" describe --tags --always --dirty 2>/dev/null || true)"
+  echo "${SRC_VERSION:-$VERSION_TAG}" > "$INSTALL_PATH/VERSION"
+  chown basis:basis "$INSTALL_PATH/VERSION"
+fi
+
+# Runtime-downloaded binaries (cloudflared, from the guided "Install
+# cloudflared" flow) must live OUTSIDE the version dir, or every update orphans
+# them and the Cloudflare tunnel silently fails to start (error 1033). The app
+# looks for them in backend/bin, so point that at the persistent /opt/basis/bin.
+# rsync excludes backend/bin, so it's absent here.
+install -d -o basis -g basis /opt/basis/bin
+rm -rf "$INSTALL_PATH/backend/bin"
+ln -sfn /opt/basis/bin "$INSTALL_PATH/backend/bin"
+chown -h basis:basis "$INSTALL_PATH/backend/bin"
+
 # ─── build ────────────────────────────────────────────────────────────────
 log "Building backend (npm ci + tsc) — first run takes ~5min"
 sudo -u basis -H bash -c "cd '$INSTALL_PATH/backend' && npm ci --no-audit --no-fund && npm run build"
@@ -275,7 +294,7 @@ if [ "$OS_ID" != macos ]; then
   # require the password.
   SYSTEMCTL="$(command -v systemctl)"
   cat > /etc/sudoers.d/basis <<SUDOERS
-basis ALL=(root) NOPASSWD: $SYSTEMCTL restart basis basis-worker basis-ingredient-parser, $SYSTEMCTL restart basis basis-worker, $SYSTEMCTL restart basis, $SYSTEMCTL restart basis-worker, $SYSTEMCTL restart basis-ingredient-parser
+basis ALL=(root) NOPASSWD: $SYSTEMCTL restart basis basis-worker basis-ingredient-parser, $SYSTEMCTL restart basis basis-worker, $SYSTEMCTL restart basis, $SYSTEMCTL restart basis-worker, $SYSTEMCTL restart basis-ingredient-parser, $SYSTEMCTL reset-failed basis basis-worker basis-ingredient-parser, $SYSTEMCTL reset-failed basis basis-worker
 SUDOERS
   chmod 440 /etc/sudoers.d/basis
   visudo -cf /etc/sudoers.d/basis >/dev/null 2>&1 \
@@ -283,6 +302,10 @@ SUDOERS
   ok "Installed /etc/sudoers.d/basis (passwordless restart of basis units only)"
 
   log "Starting Basis"
+  # Clear any latched start-limit/failed state from a prior aborted attempt —
+  # otherwise systemd refuses to start the unit ("start request repeated too
+  # quickly") and reports a failure even though the code is fine.
+  systemctl reset-failed basis.service basis-worker.service 2>/dev/null || true
   systemctl restart basis.service
   systemctl restart basis-worker.service
   # `|| true` so a parser startup hiccup can't abort the install (set -e) —
