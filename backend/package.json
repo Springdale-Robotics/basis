@@ -99,7 +99,7 @@
     "fast-xml-parser": "^5.8.0",
     "tsdav": "^2.2.2",
     "tsx": "^4.7.1",
-    "typescript": "^5.4.3",
+    "typescript": "^6.0.3",
     "vitest": "^1.4.0"
   },
   "engines": {
