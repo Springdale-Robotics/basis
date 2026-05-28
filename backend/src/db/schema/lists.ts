@@ -9,8 +9,8 @@ import {
   decimal,
   pgEnum,
 } from 'drizzle-orm/pg-core';
-import { households } from './households';
-import { users } from './users';
+import { households } from './households.js';
+import { users } from './users.js';
 
 // `reminder` is retained for backwards compatibility but no longer exposed in
 // the UI — reminders live in Tasks. New lists pick checklist | wishlist | notes.

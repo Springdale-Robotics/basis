@@ -8,8 +8,8 @@ import {
   jsonb,
   pgEnum,
 } from 'drizzle-orm/pg-core';
-import { users } from './users';
-import { households } from './households';
+import { users } from './users.js';
+import { households } from './households.js';
 
 export const bugReportStatusEnum = pgEnum('bug_report_status', ['pending', 'sent', 'failed']);
 

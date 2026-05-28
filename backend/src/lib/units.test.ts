@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { convert, resolveUnit, type QuantityUnitSizes } from './units';
+import { convert, resolveUnit, type QuantityUnitSizes } from './units.js';
 
 const closeTo = (n: number | null, expected: number, eps = 1e-4) => {
   expect(n).not.toBeNull();

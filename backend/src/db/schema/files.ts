@@ -10,8 +10,8 @@ import {
   pgEnum,
   boolean,
 } from 'drizzle-orm/pg-core';
-import { households } from './households';
-import { users } from './users';
+import { households } from './households.js';
+import { users } from './users.js';
 
 export const fileTypeEnum = pgEnum('file_type', ['photo', 'video', 'music', 'document']);
 export const folderTypeEnum = pgEnum('folder_type', [

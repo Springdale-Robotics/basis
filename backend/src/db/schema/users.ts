@@ -6,7 +6,7 @@ import {
   timestamp,
   pgEnum,
 } from 'drizzle-orm/pg-core';
-import { households } from './households';
+import { households } from './households.js';
 
 export const userRoleEnum = pgEnum('user_role', ['admin', 'member', 'kid', 'visitor']);
 

@@ -9,7 +9,7 @@ import {
   DEFAULT_THRESHOLDS,
   type Tranche,
   type AreaInfo,
-} from './confidence';
+} from './confidence.js';
 
 // ---------------------------------------------------------------------------
 // Helpers

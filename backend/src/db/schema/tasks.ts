@@ -10,9 +10,9 @@ import {
   check,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import { households } from './households';
-import { users } from './users';
-import { groups } from './groups';
+import { households } from './households.js';
+import { users } from './users.js';
+import { groups } from './groups.js';
 
 export const taskKindEnum = pgEnum('task_kind', ['task', 'chore']);
 export const taskStatusEnum = pgEnum('task_status', ['pending', 'completed']);

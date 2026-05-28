@@ -5,8 +5,8 @@ import {
   timestamp,
   pgEnum,
 } from 'drizzle-orm/pg-core';
-import { households } from './households';
-import { users, userRoleEnum } from './users';
+import { households } from './households.js';
+import { users, userRoleEnum } from './users.js';
 
 export const memberInviteStatusEnum = pgEnum('member_invite_status', [
   'pending',

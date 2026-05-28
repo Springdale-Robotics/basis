@@ -1,38 +1,38 @@
 // Core tables
-export * from './households';
-export * from './users';
-export * from './devices';
-export * from './sessions';
-export * from './permissions';
-export * from './groups';
-export * from './app-passwords';
+export * from './households.js';
+export * from './users.js';
+export * from './devices.js';
+export * from './sessions.js';
+export * from './permissions.js';
+export * from './groups.js';
+export * from './app-passwords.js';
 
 // Feature tables
-export * from './calendars';
-export * from './recipes';
-export * from './inventory';
-export * from './tasks';
-export * from './files';
-export * from './lists';
-export * from './notifications';
+export * from './calendars.js';
+export * from './recipes.js';
+export * from './inventory.js';
+export * from './tasks.js';
+export * from './files.js';
+export * from './lists.js';
+export * from './notifications.js';
 
 // Settings and configuration
-export * from './settings';
+export * from './settings.js';
 
 // Connected households and sync
-export * from './connections';
+export * from './connections.js';
 
 // Audit and security
-export * from './audit';
+export * from './audit.js';
 
 // Member invites
-export * from './member-invites';
+export * from './member-invites.js';
 
 // Media
-export * from './media';
+export * from './media.js';
 
 // Image parsing
-export * from './image-parse';
+export * from './image-parse.js';
 
 // Bug reports
-export * from './bug-reports';
+export * from './bug-reports.js';
