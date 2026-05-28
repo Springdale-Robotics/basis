@@ -30,8 +30,8 @@ Thumbs.db
 coverage/
 .nyc_output/
 
-# Drizzle migrations
-drizzle/
+# Drizzle migrations are committed — the installer runs `db:migrate` against
+# them, so they must ship in the repo and the release tarball.
 
 # Storage (local dev)
 storage/
