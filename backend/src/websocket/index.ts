@@ -1,12 +1,23 @@
 import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import { redis } from '../config/redis.js';
-import { db } from '../config/database.js';
-import { sessions } from '../db/schema/index.js';
-import { eq, and, gt } from 'drizzle-orm';
 import { logger } from '../lib/logger.js';
 import { config } from '../config/index.js';
+import { resolveSession } from '../middleware/auth.middleware.js';
 import { registerInstallNamespace } from '../modules/install/install.ws.js';
+
+/** Extract a single cookie value from a Cookie header. */
+function parseCookie(header: string | undefined, name: string): string | undefined {
+  if (!header) return undefined;
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === name) {
+      return decodeURIComponent(part.slice(idx + 1).trim());
+    }
+  }
+  return undefined;
+}
 
 export interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -52,55 +63,30 @@ export function initializeWebSocket(server: HttpServer): Server {
     pingInterval: 25000,
   });
 
-  // Authentication middleware
+  // Authentication middleware — same cookie-based session as the HTTP API. The
+  // browser sends the `session` cookie in the handshake (the client connects
+  // with withCredentials), so read it from the handshake headers. `auth.token`
+  // is accepted as a fallback for non-browser clients that pass the session id
+  // explicitly. householdId comes from the user, not the session.
   io.use(async (socket: AuthenticatedSocket, next) => {
     try {
-      const sessionToken = socket.handshake.auth.token || socket.handshake.headers.authorization?.replace('Bearer ', '');
+      const sessionId =
+        parseCookie(socket.handshake.headers.cookie, 'session') ||
+        socket.handshake.auth?.token;
 
-      if (!sessionToken) {
+      if (!sessionId) {
         return next(new Error('Authentication required'));
       }
 
-      // Look up session in Redis first (for speed)
-      const cachedSession = await redis.get(`session:${sessionToken}`);
-
-      if (cachedSession) {
-        const session = JSON.parse(cachedSession);
-        socket.userId = session.userId;
-        socket.householdId = session.householdId;
-        socket.deviceId = session.deviceId;
-        socket.sessionId = session.id;
-        return next();
-      }
-
-      // Fall back to database
-      const session = await db.query.sessions.findFirst({
-        where: and(
-          eq(sessions.token, sessionToken),
-          gt(sessions.expiresAt, new Date())
-        ),
-      });
-
-      if (!session) {
+      const result = await resolveSession(sessionId);
+      if (!result) {
         return next(new Error('Invalid or expired session'));
       }
 
-      // Cache session
-      await redis.setex(
-        `session:${sessionToken}`,
-        3600,
-        JSON.stringify({
-          id: session.id,
-          userId: session.userId,
-          householdId: session.householdId,
-          deviceId: session.deviceId,
-        })
-      );
-
-      socket.userId = session.userId;
-      socket.householdId = session.householdId;
-      socket.deviceId = session.deviceId || undefined;
-      socket.sessionId = session.id;
+      socket.userId = result.user.id;
+      socket.householdId = result.user.householdId;
+      socket.deviceId = result.session.deviceId ?? undefined;
+      socket.sessionId = result.session.id;
 
       next();
     } catch (error) {

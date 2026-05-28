@@ -21,16 +21,14 @@ declare module 'fastify' {
   }
 }
 
-export async function authMiddleware(
-  request: FastifyRequest,
-  reply: FastifyReply
-): Promise<void> {
-  const sessionId = request.cookies?.['session'];
-
-  if (!sessionId) {
-    throw Errors.unauthorized();
-  }
-
+/**
+ * Validate a session id (the value of the `session` cookie) and return the
+ * joined session + user, or null if it's unknown/expired. Bumps last-active.
+ *
+ * Shared by the HTTP auth middleware and the WebSocket auth handshake so the
+ * two can't drift — note householdId lives on the *user*, not the session.
+ */
+export async function resolveSession(sessionId: string) {
   const now = new Date();
 
   const result = await db
@@ -49,16 +47,35 @@ export async function authMiddleware(
     .limit(1);
 
   if (result.length === 0) {
-    throw Errors.sessionExpired();
+    return null;
   }
-
-  const { session, user } = result[0];
 
   // Update last active time
   await db
     .update(sessions)
     .set({ lastActiveAt: now })
     .where(eq(sessions.id, sessionId));
+
+  return result[0];
+}
+
+export async function authMiddleware(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
+  const sessionId = request.cookies?.['session'];
+
+  if (!sessionId) {
+    throw Errors.unauthorized();
+  }
+
+  const result = await resolveSession(sessionId);
+
+  if (!result) {
+    throw Errors.sessionExpired();
+  }
+
+  const { session, user } = result;
 
   request.user = {
     id: user.id,
