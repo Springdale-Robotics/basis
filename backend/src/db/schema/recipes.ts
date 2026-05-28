@@ -11,14 +11,14 @@ import {
   pgEnum,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
-import { households } from './households';
-import { users } from './users';
-import { devices } from './devices';
+import { households } from './households.js';
+import { users } from './users.js';
+import { devices } from './devices.js';
 // Circular at the module level but only used inside lazy `references(() => …)`
 // callbacks, which drizzle-orm evaluates after all schema modules have
 // finished loading — the existing inventory.ts ↔ recipes.ts pair already
 // uses this pattern (inventory references recipes for leftovers etc.).
-import { inventoryItems } from './inventory';
+import { inventoryItems } from './inventory.js';
 
 export const recipes = pgTable('recipes', {
   id: uuid('id').primaryKey().defaultRandom(),

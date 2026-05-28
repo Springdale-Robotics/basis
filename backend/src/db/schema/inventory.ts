@@ -13,9 +13,9 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
-import { households } from './households';
-import { users } from './users';
-import { recipes, mealPlans } from './recipes';
+import { households } from './households.js';
+import { users } from './users.js';
+import { recipes, mealPlans } from './recipes.js';
 
 // ---------------------------------------------------------------------------
 // Enums

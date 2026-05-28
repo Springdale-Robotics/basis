@@ -9,8 +9,8 @@ import {
   jsonb,
   pgEnum,
 } from 'drizzle-orm/pg-core';
-import { households } from './households';
-import { users } from './users';
+import { households } from './households.js';
+import { users } from './users.js';
 
 export const connectionStatusEnum = pgEnum('connection_status', [
   'pending',

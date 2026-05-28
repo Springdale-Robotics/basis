@@ -12,9 +12,9 @@ import {
   date,
   smallint,
 } from 'drizzle-orm/pg-core';
-import { households } from './households';
-import { users } from './users';
-import { files } from './files';
+import { households } from './households.js';
+import { users } from './users.js';
+import { files } from './files.js';
 
 // ==================== Enums ====================
 

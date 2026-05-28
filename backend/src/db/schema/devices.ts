@@ -9,8 +9,8 @@ import {
   pgEnum,
   integer,
 } from 'drizzle-orm/pg-core';
-import { households } from './households';
-import { users } from './users';
+import { households } from './households.js';
+import { users } from './users.js';
 
 export const deviceTypeEnum = pgEnum('device_type', ['mobile', 'tablet', 'tv', 'desktop']);
 
