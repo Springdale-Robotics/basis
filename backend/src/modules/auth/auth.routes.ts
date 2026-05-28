@@ -33,10 +33,14 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         request.headers['user-agent']
       );
 
-      // Set session cookie
+      // Set session cookie. `secure` is keyed off the actual request scheme
+      // (request.protocol honors X-Forwarded-Proto via trustProxy), NOT
+      // NODE_ENV: a production install reached over plain HTTP on the LAN — the
+      // documented default before remote access is set up — must not set the
+      // Secure flag, or the browser silently drops the cookie and login fails.
       reply.setCookie('session', result.session.id, {
         httpOnly: true,
-        secure: config.NODE_ENV === 'production',
+        secure: request.protocol === 'https',
         sameSite: 'lax',
         path: '/',
         maxAge: config.SESSION_MAX_AGE_MS / 1000,
@@ -65,7 +69,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       // Set session cookie
       reply.setCookie('session', result.session.id, {
         httpOnly: true,
-        secure: config.NODE_ENV === 'production',
+        secure: request.protocol === 'https',
         sameSite: 'lax',
         path: '/',
         maxAge: config.SESSION_MAX_AGE_MS / 1000,
@@ -137,7 +141,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       // Set session cookie
       reply.setCookie('session', result.session.id, {
         httpOnly: true,
-        secure: config.NODE_ENV === 'production',
+        secure: request.protocol === 'https',
         sameSite: 'lax',
         path: '/',
         maxAge: config.SESSION_MAX_AGE_MS / 1000,
@@ -192,7 +196,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
       reply.setCookie('session', session.id, {
         httpOnly: true,
-        secure: config.NODE_ENV === 'production',
+        secure: request.protocol === 'https',
         sameSite: 'lax',
         path: '/',
         maxAge: config.SESSION_MAX_AGE_MS / 1000,

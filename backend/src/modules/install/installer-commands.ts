@@ -85,6 +85,18 @@ TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 echo "Downloading..."
 curl -fL "$LATEST" -o "$TMPDIR/release.tar.gz"
+echo "Verifying checksum against the published .sha256..."
+EXPECTED=$(curl -fsSL "$LATEST.sha256" 2>/dev/null | awk '{print $1}') || true
+if [ -z "$EXPECTED" ]; then
+  echo "No published checksum for this release — refusing to install unverified code."
+  exit 1
+fi
+ACTUAL=$(sha256sum "$TMPDIR/release.tar.gz" | awk '{print $1}')
+if [ "$EXPECTED" != "$ACTUAL" ]; then
+  echo "Checksum mismatch (expected $EXPECTED, got $ACTUAL). Aborting."
+  exit 1
+fi
+echo "Checksum OK."
 echo "Extracting..."
 tar -xzf "$TMPDIR/release.tar.gz" -C "$TMPDIR"
 EXTRACTED=$(ls -d "$TMPDIR"/basis-* | head -1)
@@ -95,6 +107,19 @@ mkdir -p "/opt/basis/versions"
 rm -rf "$DEST"
 mv "$EXTRACTED" "$DEST"
 
+echo "Loading environment..."
+set -a; . /opt/basis/.env; set +a
+
+echo "Taking a pre-update database snapshot (migrations are forward-only, so this is your rollback point)..."
+mkdir -p /opt/basis/data/backups
+SNAPSHOT="/opt/basis/data/backups/pre-update-$NEW_VERSION-$(date +%Y%m%d-%H%M%S).sql.gz"
+if ! pg_dump "$DATABASE_URL" | gzip > "$SNAPSHOT"; then
+  echo "Pre-update snapshot failed — aborting before any migration runs."
+  rm -f "$SNAPSHOT"
+  exit 1
+fi
+echo "Snapshot saved: $SNAPSHOT"
+
 echo "Installing backend dependencies..."
 cd "$DEST/backend"
 npm ci --no-audit --no-fund --omit=optional
@@ -102,7 +127,6 @@ echo "Building backend..."
 npm run build
 
 echo "Running database migrations..."
-set -a; . /opt/basis/.env; set +a
 npm run db:migrate
 
 echo "Swapping current symlink atomically..."
@@ -113,9 +137,14 @@ echo ""
 echo "✓ Update staged. Restarting basis.service in 3 seconds..."
 echo "  (Connection to this terminal will drop when the service restarts.)"
 # Detach the restart so it survives this PTY being killed by the service exit.
+# Runs unattended thanks to the narrow NOPASSWD rule the installer drops at
+# /etc/sudoers.d/basis — without it this sudo can't read a password (stdin is
+# /dev/null) and the new code would never start.
 nohup bash -c 'sleep 3 && sudo systemctl restart basis basis-worker' </dev/null >/dev/null 2>&1 &
 disown
 echo "Update complete — now at $NEW_VERSION"
+echo "Roll back if needed: point /opt/basis/current at the previous version,"
+echo "restore $SNAPSHOT, then 'sudo systemctl restart basis basis-worker'."
 `,
     ],
   },
