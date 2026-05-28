@@ -33,11 +33,21 @@ export function getIO(): Server {
 }
 
 export function initializeWebSocket(server: HttpServer): Server {
+  // Mirror the HTTP CORS logic in app.ts. When CORS_ORIGINS is unset/empty
+  // (the default — the backend serves the SPA itself, so requests are
+  // same-origin) we must NOT configure a cors allowlist: the previous
+  // `config.CORS_ORIGINS.split(',')` produced `['']` on an empty value, which
+  // rejected the WebSocket upgrade's Origin header (the polling handshake has
+  // no Origin and slips through, then the ws upgrade 400s). Omitting cors lets
+  // socket.io accept same-origin connections; the auth middleware below still
+  // gates access. Only restrict by origin when origins are explicitly set.
+  const corsOrigins = config.CORS_ORIGINS
+    ? config.CORS_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+    : [];
   io = new Server(server, {
-    cors: {
-      origin: config.CORS_ORIGINS.split(','),
-      credentials: true,
-    },
+    ...(corsOrigins.length > 0
+      ? { cors: { origin: corsOrigins, credentials: true } }
+      : {}),
     pingTimeout: 60000,
     pingInterval: 25000,
   });
