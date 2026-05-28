@@ -619,6 +619,19 @@ function CloudflarePanel({
       </Alert>
     );
   } else {
+    // What to enter in the Cloudflare dashboard's Public Hostname → Service box.
+    // Token-based tunnels configure ingress in the dashboard, not here, so the
+    // backend tells us the exact local origin (http://localhost:<port>).
+    const svc = data.localServiceUrl ?? 'http://localhost:3000';
+    let svcType = 'HTTP';
+    let svcUrl = svc;
+    try {
+      const u = new URL(svc);
+      svcType = u.protocol === 'https:' ? 'HTTPS' : 'HTTP';
+      svcUrl = u.host;
+    } catch {
+      /* keep defaults */
+    }
     body = (
       <Alert>
         <Cloud className="h-4 w-4" />
@@ -634,7 +647,25 @@ function CloudflarePanel({
             >
               Cloudflare Zero Trust dashboard <ExternalLink className="h-3 w-3" />
             </a>
-            , then paste the connector token below. We'll run it as a managed child
+            . When you add a <strong>Public Hostname</strong> to the tunnel, set its{' '}
+            <strong>Service</strong> to:
+          </p>
+          <div className="rounded-md border bg-muted/50 p-3 text-sm space-y-1">
+            <div>
+              <span className="text-muted-foreground">Type:</span>{' '}
+              <code className="rounded bg-muted px-1">{svcType}</code>
+            </div>
+            <div>
+              <span className="text-muted-foreground">URL:</span>{' '}
+              <code className="rounded bg-muted px-1">{svcUrl}</code>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Use <strong>HTTP</strong> (not HTTPS) even though your public URL is https —
+            Cloudflare terminates TLS and forwards to this app over plain HTTP locally.
+          </p>
+          <p>
+            Then paste the tunnel's connector token below. We'll run it as a managed child
             process — no <code className="rounded bg-muted px-1">systemctl</code>{' '}
             required.
           </p>

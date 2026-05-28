@@ -3,10 +3,14 @@ import { promisify } from 'util';
 import { resolve } from 'path';
 import { existsSync } from 'fs';
 import { logger } from './logger.js';
+import { config } from '../config/index.js';
 
 const execAsync = promisify(execCallback);
 
 const LOCAL_CLOUDFLARED = resolve(process.cwd(), 'bin', 'cloudflared');
+
+/** Local origin a tunnel forwards to — the dashboard Service value. */
+const localServiceUrl = `http://localhost:${config.PORT}`;
 
 /**
  * Resolve which cloudflared binary to use. The "Install cloudflared" guided
@@ -42,6 +46,13 @@ export interface CloudflaredStatus {
   /** Set if the most recent spawn failed or the child exited unexpectedly. */
   lastError?: string;
   issues: CloudflaredIssue[];
+  /**
+   * The local origin a Cloudflare tunnel should forward to — i.e. what goes in
+   * the dashboard's Public Hostname → Service box (Type HTTP, this host:port).
+   * Token-based tunnels configure ingress in the Cloudflare dashboard, not
+   * here, so we surface this so the UI can tell the user the exact value.
+   */
+  localServiceUrl: string;
 }
 
 const EXEC_TIMEOUT_MS = 5_000;
@@ -77,7 +88,7 @@ async function detectInstalled(): Promise<{ installed: boolean; version?: string
 export async function getCloudflaredStatus(): Promise<CloudflaredStatus> {
   const { installed, version } = await detectInstalled();
   if (!installed) {
-    return { installed: false, running: false, issues: ['not_installed'] };
+    return { installed: false, running: false, issues: ['not_installed'], localServiceUrl };
   }
   const running = isAlive();
   return {
@@ -86,6 +97,7 @@ export async function getCloudflaredStatus(): Promise<CloudflaredStatus> {
     running,
     lastError,
     issues: lastError && !running ? ['child_exited'] : [],
+    localServiceUrl,
   };
 }
 
@@ -99,7 +111,7 @@ export async function startTunnel(token: string): Promise<CloudflaredStatus> {
   }
   const { installed } = await detectInstalled();
   if (!installed) {
-    return { installed: false, running: false, issues: ['not_installed'] };
+    return { installed: false, running: false, issues: ['not_installed'], localServiceUrl };
   }
 
   return new Promise((resolve) => {
@@ -129,6 +141,7 @@ export async function startTunnel(token: string): Promise<CloudflaredStatus> {
           running: false,
           lastError: err.message,
           issues: ['spawn_failed'],
+          localServiceUrl,
         });
       });
 
@@ -156,6 +169,7 @@ export async function startTunnel(token: string): Promise<CloudflaredStatus> {
           running: isAlive(),
           lastError,
           issues: isAlive() ? [] : ['child_exited'],
+          localServiceUrl,
         });
       }, 750);
     } catch (err) {
@@ -165,6 +179,7 @@ export async function startTunnel(token: string): Promise<CloudflaredStatus> {
         running: false,
         lastError: (err as Error).message,
         issues: ['spawn_failed'],
+        localServiceUrl,
       });
     }
   });

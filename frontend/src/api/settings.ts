@@ -33,6 +33,8 @@ export interface CloudflaredStatus {
   running: boolean;
   lastError?: string;
   issues: CloudflaredIssue[];
+  /** Local origin the tunnel should forward to (dashboard Service value). */
+  localServiceUrl?: string;
 }
 import type { HouseholdSettings, ThemeConfig } from '@/types/models';
 
