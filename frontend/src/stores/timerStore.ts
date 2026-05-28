@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { generateId } from '@/lib/utils';
 
 export interface CookingTimer {
   id: string;
@@ -31,7 +32,7 @@ export const useTimerStore = create<TimerState>()(
       timers: [],
 
       addTimer: (name, durationSeconds) => {
-        const id = crypto.randomUUID();
+        const id = generateId();
         const timer: CookingTimer = {
           id,
           name,

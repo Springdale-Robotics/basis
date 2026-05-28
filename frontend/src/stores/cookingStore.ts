@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Recipe, RecipeTimer } from '@/types/models';
+import { generateId } from '@/lib/utils';
 
 interface TimerState {
   id: string;
@@ -44,7 +45,7 @@ export const useCookingStore = create<CookingState>((set, get) => ({
   sessions: [],
 
   startSession: (recipe) => {
-    const sessionId = crypto.randomUUID();
+    const sessionId = generateId();
     const timers: TimerState[] = recipe.timers.map((t) => ({
       id: t.id,
       name: t.name,

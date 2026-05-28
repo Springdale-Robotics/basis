@@ -64,7 +64,25 @@ export function debounce<T extends (...args: unknown[]) => unknown>(
 }
 
 export function generateId(): string {
-  return crypto.randomUUID();
+  // crypto.randomUUID() only exists in secure contexts (HTTPS or localhost);
+  // over plain HTTP on a LAN it's undefined. crypto.getRandomValues() works in
+  // insecure contexts, so build an RFC-4122 v4 UUID from it as a fallback.
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40; // version 4
+    b[8] = (b[8] & 0x3f) | 0x80; // variant 10xx
+    const h = Array.from(b, (x) => x.toString(16).padStart(2, '0'));
+    return `${h.slice(0, 4).join('')}-${h.slice(4, 6).join('')}-${h.slice(6, 8).join('')}-${h.slice(8, 10).join('')}-${h.slice(10, 16).join('')}`;
+  }
+  // Last resort (no Web Crypto at all) — not cryptographically strong, but
+  // unique enough for client-side ids.
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
 }
 
 export function truncate(str: string, maxLength: number): string {

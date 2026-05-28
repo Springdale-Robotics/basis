@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { imageParseApi } from '@/api/image-parse';
 import { formatOcrForEditing } from '@/lib/recipe-utils';
+import { generateId } from '@/lib/utils';
 
 export interface BatchItem {
   id: string;
@@ -68,7 +69,7 @@ export function useBatchImageProcessing(
     const newItems: BatchItem[] = arr.map((f) => ({
       // crypto.randomUUID() instead of Date.now() so React StrictMode's
       // double-invoke of effects doesn't produce colliding keys.
-      id: `img-${crypto.randomUUID()}`,
+      id: `img-${generateId()}`,
       label: f.name,
       status: 'pending',
       file: f,
@@ -96,7 +97,7 @@ export function useBatchImageProcessing(
               // serialised payload so the second invocation doesn't duplicate.
               if (prev.some(p => p.label === file.name && p.ocrText === payload)) return prev;
               return [...prev, {
-                id: `file-${crypto.randomUUID()}`,
+                id: `file-${generateId()}`,
                 label: file.name,
                 status: 'ready',
                 ocrText: payload,
