@@ -25,11 +25,15 @@ async function main(): Promise<void> {
     initializeWebSocket(app.server);
     logger.info('WebSocket server attached');
 
-    // Initialize background workers
-    await initializeWorkers();
-
-    // Schedule recurring jobs
-    await scheduleRecurringJobs();
+    // Initialize background workers in-process, unless a dedicated worker
+    // process owns them (WORKERS_IN_PROCESS=false, set by the native systemd
+    // install where basis-worker.service runs dist/worker.js).
+    if (config.WORKERS_IN_PROCESS) {
+      await initializeWorkers();
+      await scheduleRecurringJobs();
+    } else {
+      logger.info('WORKERS_IN_PROCESS=false — background jobs run in the dedicated worker process');
+    }
 
     // Start server
     await app.listen({ port: config.PORT, host: '0.0.0.0' });
