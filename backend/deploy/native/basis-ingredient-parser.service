@@ -1,0 +1,24 @@
+[Unit]
+Description=Basis ingredient parser (CRF quantity/unit extraction)
+Documentation=https://github.com/Springdale-Robotics/basis
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=basis
+Group=basis
+WorkingDirectory=/opt/basis/current/services/ingredient-parser
+# Bound to localhost only — the backend reaches it over loopback at the default
+# VLM_LLM_SERVICE_URL (http://localhost:8010). No reason to expose it on the LAN.
+ExecStart=/opt/basis/ingredient-parser-venv/bin/uvicorn app:app --host 127.0.0.1 --port 8010
+Restart=always
+RestartSec=10
+# Crash-loop protection — give up if it restarts >5 times in 200s.
+StartLimitInterval=200
+StartLimitBurst=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

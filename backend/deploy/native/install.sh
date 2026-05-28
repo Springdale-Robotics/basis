@@ -83,7 +83,8 @@ if [ "$SKIP_DEPS" -eq 0 ] && [ "$PKG" = apt ]; then
   log "Updating apt and installing base packages"
   apt-get update -qq
   apt-get install -y -qq \
-    curl ca-certificates gnupg build-essential git ffmpeg rsync ufw openssl
+    curl ca-certificates gnupg build-essential git ffmpeg rsync ufw openssl \
+    python3 python3-venv
 
   if ! command -v node >/dev/null || [ "$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1)" -lt 20 ]; then
     log "Installing Node 20 from NodeSource"
@@ -212,6 +213,9 @@ HOST=0.0.0.0
 WORKERS_IN_PROCESS=false
 STORAGE_PATH=/opt/basis/data/storage
 FRONTEND_DIST=/opt/basis/current/frontend/dist
+# Ingredient parser sidecar (basis-ingredient-parser.service) — CRF-based
+# quantity/unit extraction for recipe import, served locally on 8010.
+VLM_LLM_SERVICE_URL=http://localhost:8010
 # CORS_ORIGINS is empty by default — the backend serves the SPA itself, so
 # same-origin requests don't need CORS. Add origins here if you want to allow
 # the dev frontend or another origin to hit this API.
@@ -228,13 +232,40 @@ fi
 log "Running database migrations"
 sudo -u basis -H bash -c "cd '$INSTALL_PATH/backend' && set -a && . /opt/basis/.env && set +a && npm run db:migrate"
 
+# ─── ingredient parser sidecar (Python) ────────────────────────────────────
+# Tiny FastAPI service for CRF-based quantity/unit extraction during recipe
+# import. Kept in its own venv (at a stable path outside the version dir, so it
+# survives updates) and run as basis-ingredient-parser.service. The only heavy
+# dependency is ingredient-parser-nlp; no Ollama/opencv involved.
+PARSER_DIR="$INSTALL_PATH/services/ingredient-parser"
+PARSER_VENV=/opt/basis/ingredient-parser-venv
+PARSER_OK=0
+if [ -d "$PARSER_DIR" ] && command -v python3 >/dev/null; then
+  log "Setting up ingredient parser venv at $PARSER_VENV (first run downloads the CRF model)"
+  # Whole setup runs inside the `if` condition so a failure (e.g. venv creation
+  # or a missing ARM wheel) only warns rather than aborting the install — the
+  # core app works fine without the parser, recipe imports just stay degraded.
+  if { [ -d "$PARSER_VENV" ] || sudo -u basis -H python3 -m venv "$PARSER_VENV"; } \
+     && sudo -u basis -H "$PARSER_VENV/bin/pip" install --quiet --upgrade pip \
+     && sudo -u basis -H "$PARSER_VENV/bin/pip" install --quiet -r "$PARSER_DIR/requirements.txt"; then
+    PARSER_OK=1
+    ok "Ingredient parser dependencies installed"
+  else
+    warn "Ingredient parser setup failed — recipe quantity parsing will be degraded."
+  fi
+else
+  warn "services/ingredient-parser or python3 missing — skipping parser sidecar."
+fi
+
 # ─── systemd ──────────────────────────────────────────────────────────────
 if [ "$OS_ID" != macos ]; then
   log "Installing systemd units"
   cp "$INSTALL_PATH/backend/deploy/native/basis.service"        /etc/systemd/system/
   cp "$INSTALL_PATH/backend/deploy/native/basis-worker.service" /etc/systemd/system/
+  [ "$PARSER_OK" -eq 1 ] && cp "$INSTALL_PATH/backend/deploy/native/basis-ingredient-parser.service" /etc/systemd/system/
   systemctl daemon-reload
   systemctl enable basis.service basis-worker.service >/dev/null
+  [ "$PARSER_OK" -eq 1 ] && systemctl enable basis-ingredient-parser.service >/dev/null
 
   # Let the service account restart its own units without a password, so the
   # in-UI "Update" flow can hand off to the new version unattended (its restart
@@ -244,7 +275,7 @@ if [ "$OS_ID" != macos ]; then
   # require the password.
   SYSTEMCTL="$(command -v systemctl)"
   cat > /etc/sudoers.d/basis <<SUDOERS
-basis ALL=(root) NOPASSWD: $SYSTEMCTL restart basis basis-worker, $SYSTEMCTL restart basis, $SYSTEMCTL restart basis-worker
+basis ALL=(root) NOPASSWD: $SYSTEMCTL restart basis basis-worker basis-ingredient-parser, $SYSTEMCTL restart basis basis-worker, $SYSTEMCTL restart basis, $SYSTEMCTL restart basis-worker, $SYSTEMCTL restart basis-ingredient-parser
 SUDOERS
   chmod 440 /etc/sudoers.d/basis
   visudo -cf /etc/sudoers.d/basis >/dev/null 2>&1 \
@@ -254,11 +285,19 @@ SUDOERS
   log "Starting Basis"
   systemctl restart basis.service
   systemctl restart basis-worker.service
+  # `|| true` so a parser startup hiccup can't abort the install (set -e) —
+  # the is-active check below downgrades it to a warning instead.
+  if [ "$PARSER_OK" -eq 1 ]; then systemctl restart basis-ingredient-parser.service || true; fi
   sleep 3
   systemctl is-active --quiet basis.service \
     || err "basis.service failed to start. Check: journalctl -u basis -n 50"
   systemctl is-active --quiet basis-worker.service \
     || err "basis-worker.service failed to start. Check: journalctl -u basis-worker -n 50"
+  # Non-fatal: the core app still works without the parser, recipe imports just
+  # fall back to unparsed ingredient lines.
+  if [ "$PARSER_OK" -eq 1 ] && ! systemctl is-active --quiet basis-ingredient-parser.service; then
+    warn "basis-ingredient-parser.service not active — recipe quantity/unit parsing will be degraded. Check: journalctl -u basis-ingredient-parser -n 50"
+  fi
 
   # Firewall — best-effort; only ufw is well-known on Debian/Ubuntu.
   if command -v ufw >/dev/null && ufw status | head -1 | grep -q active; then

@@ -1,0 +1,9 @@
+# Basis ingredient parser sidecar — minimal CRF quantity/unit extraction.
+# Deliberately excludes the opencv/Ollama deps that services/vlm-llm carries:
+# the CRF endpoint only needs ingredient-parser-nlp.
+fastapi>=0.109.0,<1.0.0
+uvicorn[standard]==0.32.0
+pydantic>=2.5.0
+
+# CRF-based NLP model (trained on 80K+ labelled ingredient sentences).
+ingredient-parser-nlp>=2.0.0

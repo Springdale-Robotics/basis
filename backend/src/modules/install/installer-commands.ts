@@ -140,7 +140,10 @@ echo "  (Connection to this terminal will drop when the service restarts.)"
 # Runs unattended thanks to the narrow NOPASSWD rule the installer drops at
 # /etc/sudoers.d/basis — without it this sudo can't read a password (stdin is
 # /dev/null) and the new code would never start.
-nohup bash -c 'sleep 3 && sudo systemctl restart basis basis-worker' </dev/null >/dev/null 2>&1 &
+# Restart the parser sidecar best-effort first (|| true: older installs whose
+# sudoers predates this unit can't restart it passwordless — not fatal, it keeps
+# serving the old code), then the critical units last in their always-allowed form.
+nohup bash -c 'sleep 3 && { sudo systemctl restart basis-ingredient-parser || true; } && sudo systemctl restart basis basis-worker' </dev/null >/dev/null 2>&1 &
 disown
 echo "Update complete — now at $NEW_VERSION"
 echo "Roll back if needed: point /opt/basis/current at the previous version,"
