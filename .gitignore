@@ -51,8 +51,8 @@ coverage/
 .parcel-cache/
 *.tsbuildinfo
 
-# Drizzle migrations (local dev)
-drizzle/
+# Drizzle migrations are committed (backend/drizzle) — the installer runs
+# `db:migrate` against them.
 
 # Storage (local dev data)
 backend/storage/
