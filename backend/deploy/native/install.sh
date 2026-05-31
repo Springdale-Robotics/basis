@@ -186,8 +186,20 @@ ln -sfn /opt/basis/bin "$INSTALL_PATH/backend/bin"
 chown -h basis:basis "$INSTALL_PATH/backend/bin"
 
 # ─── build ────────────────────────────────────────────────────────────────
+# NOTE: never add --omit=optional to the npm ci below. sharp ships its native
+# binary in optional platform packages (@img/sharp-linux-*); omitting them
+# leaves node_modules/@img empty and the backend crashes on boot (sharp.js
+# throws), which also drops the Cloudflare tunnel (1033). The self-update flow
+# in installer-commands.ts must follow the same rule.
 log "Building backend (npm ci + tsc) — first run takes ~5min"
 sudo -u basis -H bash -c "cd '$INSTALL_PATH/backend' && npm ci --no-audit --no-fund && npm run build"
+
+# Verify the native image library actually loads before we make this version
+# live — catches a stripped/incompatible sharp binary now, with a clear message,
+# instead of as a boot crash-loop after the systemd units start.
+log "Verifying sharp native module loads"
+sudo -u basis -H bash -c "cd '$INSTALL_PATH/backend' && node -e \"require('sharp')\"" \
+  || err "The sharp image library failed to load after install (node_modules/@img missing or incompatible). Re-run 'npm ci' WITHOUT --omit=optional in $INSTALL_PATH/backend."
 
 log "Building frontend (npm ci + vite build)"
 sudo -u basis -H bash -c "cd '$INSTALL_PATH/frontend' && npm ci --no-audit --no-fund && npm run build"
@@ -278,6 +290,17 @@ fi
 
 # ─── systemd ──────────────────────────────────────────────────────────────
 if [ "$OS_ID" != macos ]; then
+  # Guarantee the datastores come back on every boot. basis.service Requires=
+  # them, so if they're not enabled (e.g. --skip-deps, or a pre-existing
+  # install that was never enabled) the app can't start unattended after a
+  # power outage. Idempotent and best-effort. network-online wait too, so the
+  # tunnel's first dial-out at boot has a network (it self-heals regardless).
+  log "Ensuring datastores start on boot"
+  systemctl enable postgresql.service    >/dev/null 2>&1 || warn "Couldn't enable postgresql on boot — check 'systemctl is-enabled postgresql'."
+  systemctl enable redis-server.service  >/dev/null 2>&1 || systemctl enable redis.service >/dev/null 2>&1 || warn "Couldn't enable redis on boot — check 'systemctl is-enabled redis-server'."
+  systemctl enable systemd-networkd-wait-online.service >/dev/null 2>&1 \
+    || systemctl enable NetworkManager-wait-online.service >/dev/null 2>&1 || true
+
   log "Installing systemd units"
   cp "$INSTALL_PATH/backend/deploy/native/basis.service"        /etc/systemd/system/
   cp "$INSTALL_PATH/backend/deploy/native/basis-worker.service" /etc/systemd/system/
