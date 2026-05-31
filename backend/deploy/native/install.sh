@@ -128,6 +128,20 @@ if ! id basis >/dev/null 2>&1; then
   ok "Created 'basis' user"
 fi
 
+# Give the human who installed Basis read access to /opt/basis (logs, configs,
+# build artifacts) without sudo — they're the de-facto admin on a single-user
+# appliance, and this is what makes unattended remote diagnosis possible. The
+# app home is mode 0750 owned basis:basis, so group membership grants
+# read+traverse; secrets are unaffected (.env stays 0600, owner-only). Uses
+# $SUDO_USER — the account that ran this installer (typically the one created
+# at first boot). Idempotent; re-login required for the new group to apply.
+ADMIN_USER="${SUDO_USER:-}"
+if [ -n "$ADMIN_USER" ] && [ "$ADMIN_USER" != root ] && [ "$ADMIN_USER" != basis ] \
+   && id "$ADMIN_USER" >/dev/null 2>&1; then
+  usermod -aG basis "$ADMIN_USER"
+  ok "Added '$ADMIN_USER' to the 'basis' group — read access to /opt/basis (re-login to take effect)"
+fi
+
 # Prompt for password if unset
 if ! passwd -S basis 2>/dev/null | awk '{print $2}' | grep -qE '^P'; then
   warn "The 'basis' user has no password yet."
