@@ -1,4 +1,4 @@
-import sharp from 'sharp';
+import { loadSharp } from '../lib/sharp.js';
 import { db } from '../config/database.js';
 import { photoMetadata } from '../db/schema/index.js';
 import { eq } from 'drizzle-orm';
@@ -24,6 +24,7 @@ export interface ExifData {
 export class ExifService {
   async extractExif(filePath: string): Promise<ExifData> {
     try {
+      const sharp = await loadSharp();
       const image = sharp(filePath);
       const metadata = await image.metadata();
       const exif = metadata.exif ? this.parseExifBuffer(metadata.exif) : {};

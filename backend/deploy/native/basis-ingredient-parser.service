@@ -3,6 +3,11 @@ Description=Basis ingredient parser (CRF quantity/unit extraction)
 Documentation=https://github.com/Springdale-Robotics/basis
 After=network-online.target
 Wants=network-online.target
+# Optional sidecar — recipe parsing degrades gracefully without it, so unlike
+# the core units this one keeps its crash-loop give-up (a genuinely broken
+# parser shouldn't loop forever). StartLimit* only take effect under [Unit].
+StartLimitIntervalSec=200
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -14,9 +19,6 @@ WorkingDirectory=/opt/basis/current/services/ingredient-parser
 ExecStart=/opt/basis/ingredient-parser-venv/bin/uvicorn app:app --host 127.0.0.1 --port 8010
 Restart=always
 RestartSec=10
-# Crash-loop protection — give up if it restarts >5 times in 200s.
-StartLimitInterval=200
-StartLimitBurst=5
 StandardOutput=journal
 StandardError=journal
 

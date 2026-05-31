@@ -1,4 +1,4 @@
-import sharp from 'sharp';
+import { loadSharp } from '../lib/sharp.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { config } from '../config/index.js';
@@ -52,6 +52,7 @@ export class ThumbnailService {
     householdId: string,
     sourcePath: string
   ): Promise<ThumbnailResult[]> {
+    const sharp = await loadSharp();
     const sizes = getThumbnailSizes();
     const thumbnailDir = this.getThumbnailDir(householdId, fileId);
 
@@ -211,6 +212,7 @@ export class ThumbnailService {
   }
 
   private async generateBlurPlaceholder(sourcePath: string): Promise<string> {
+    const sharp = await loadSharp();
     // Generate a tiny blurred version as a base64 data URL
     const tiny = await sharp(sourcePath)
       .resize(16, 16, { fit: 'inside' })

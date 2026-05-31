@@ -7,6 +7,7 @@ import { config } from './config/index.js';
 import { db } from './config/database.js';
 import { households } from './db/schema/index.js';
 import { resumeTunnel, stopTunnel as stopCloudflareTunnel } from './lib/cloudflared.js';
+import { probeSharp } from './lib/sharp.js';
 
 const signals = ['SIGINT', 'SIGTERM'];
 let isShuttingDown = false;
@@ -38,6 +39,11 @@ async function main(): Promise<void> {
     // Start server
     await app.listen({ port: config.PORT, host: '0.0.0.0' });
     logger.info({ port: config.PORT }, 'Server listening');
+
+    // Probe the optional native image library (sharp) without blocking or
+    // crashing startup — surfaces a missing/broken binary in the journal up
+    // front instead of only when a user first uploads an image.
+    void probeSharp();
 
     // Resume Cloudflare tunnel if one was previously configured. Looks at the
     // first household with a stored token — matches Tailscale's single-host

@@ -4,6 +4,15 @@ Documentation=https://github.com/Springdale-Robotics/basis
 After=network-online.target postgresql.service redis-server.service
 Wants=network-online.target
 Requires=postgresql.service redis-server.service
+# Never permanently give up restarting. This box is an unattended appliance
+# that must recover from power loss with no console access — a transient
+# boot-time failure (DB still replaying WAL, network not yet up) must not latch
+# the unit into a failed state requiring a manual `systemctl reset-failed`.
+# StartLimit* belong in [Unit] (systemd ignores them under [Service]);
+# IntervalSec=0 disables the rate limiter so Restart=always retries forever.
+# A genuinely broken build can't reach here: updates are smoke-tested before the
+# current symlink is swapped (see installer-commands.ts).
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -14,9 +23,6 @@ EnvironmentFile=/opt/basis/.env
 ExecStart=/usr/bin/node dist/index.js
 Restart=always
 RestartSec=10
-# Crash-loop protection — if it restarts more than 5 times in 200s, give up.
-StartLimitInterval=200
-StartLimitBurst=5
 StandardOutput=journal
 StandardError=journal
 # We deliberately don't set NoNewPrivileges — the in-UI terminal needs to be

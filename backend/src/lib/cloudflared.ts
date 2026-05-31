@@ -68,8 +68,51 @@ export function __setExecForTests(fn: typeof execAsync | null): void {
 let child: ChildProcess | null = null;
 let lastError: string | undefined;
 
+// Self-healing supervision. cloudflared is a long-lived connector that dials
+// out to Cloudflare's edge; if it exits (e.g. the network wasn't up yet at
+// boot, or a transient edge disconnect it couldn't recover from), nothing else
+// would restart it — the backend keeps running, so systemd's Restart=always
+// never fires — and the tunnel stays down (Cloudflare 1033) until a manual
+// reconnect. To survive power/network outages with no console access, we
+// respawn it ourselves with capped exponential backoff.
+let activeToken: string | null = null;        // null ⇒ intentionally stopped
+let restartTimer: NodeJS.Timeout | null = null;
+let stableTimer: NodeJS.Timeout | null = null;
+let restartAttempts = 0;
+const MAX_BACKOFF_MS = 60_000;
+const STABLE_AFTER_MS = 60_000; // uptime before we consider the run healthy
+
 function isAlive(): boolean {
   return !!child && child.exitCode === null && !child.killed;
+}
+
+function clearTimers(): void {
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  }
+  if (stableTimer) {
+    clearTimeout(stableTimer);
+    stableTimer = null;
+  }
+}
+
+/**
+ * Schedule a respawn after the current backoff delay. No-op if the tunnel was
+ * intentionally stopped, a restart is already pending, or it's already alive.
+ */
+function scheduleRestart(): void {
+  if (!activeToken) return;
+  if (restartTimer || isAlive()) return;
+  const delay = Math.min(MAX_BACKOFF_MS, 1_000 * 2 ** restartAttempts);
+  restartAttempts += 1;
+  logger.warn({ delay, attempt: restartAttempts }, 'Scheduling cloudflared restart');
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    const token = activeToken;
+    if (!token || isAlive()) return;
+    void startTunnel(token);
+  }, delay);
 }
 
 async function detectInstalled(): Promise<{ installed: boolean; version?: string }> {
@@ -114,6 +157,9 @@ export async function startTunnel(token: string): Promise<CloudflaredStatus> {
     return { installed: false, running: false, issues: ['not_installed'], localServiceUrl };
   }
 
+  // Remember the token so the exit handler can respawn unattended.
+  activeToken = token;
+
   return new Promise((resolve) => {
     try {
       const proc = spawn(
@@ -135,7 +181,13 @@ export async function startTunnel(token: string): Promise<CloudflaredStatus> {
       proc.on('error', (err) => {
         lastError = err.message;
         child = null;
+        if (stableTimer) {
+          clearTimeout(stableTimer);
+          stableTimer = null;
+        }
         logger.warn({ err }, 'cloudflared spawn error');
+        // Retry with backoff — e.g. the binary briefly unavailable mid-update.
+        scheduleRestart();
         finish({
           installed: true,
           running: false,
@@ -147,17 +199,32 @@ export async function startTunnel(token: string): Promise<CloudflaredStatus> {
 
       proc.on('exit', (code, signal) => {
         const reason = `exited with code=${code} signal=${signal}`;
-        // Only update lastError if this was unexpected — a stop() call sets
-        // child=null before killing, so the on('exit') handler won't see child.
+        // Only react if this was unexpected — a stop() call sets child=null
+        // (and clears activeToken) before killing, so this handler won't see
+        // child and won't schedule a respawn.
         if (child === proc) {
           lastError = reason;
           child = null;
+          if (stableTimer) {
+            clearTimeout(stableTimer);
+            stableTimer = null;
+          }
           logger.warn({ code, signal }, 'cloudflared exited unexpectedly');
+          // Respawn with backoff so the tunnel recovers on its own once the
+          // underlying cause (e.g. no network yet at boot) clears.
+          scheduleRestart();
         }
       });
 
       child = proc;
       lastError = undefined;
+      // If it stays up for STABLE_AFTER_MS, treat the run as healthy and reset
+      // the backoff so a future blip starts from a short delay again.
+      if (stableTimer) clearTimeout(stableTimer);
+      stableTimer = setTimeout(() => {
+        stableTimer = null;
+        restartAttempts = 0;
+      }, STABLE_AFTER_MS);
 
       // Give it a moment to bail out on bad token / unparseable args before
       // returning success. 750ms is enough for cloudflared to print and exit on
@@ -186,6 +253,11 @@ export async function startTunnel(token: string): Promise<CloudflaredStatus> {
 }
 
 export function stopTunnel(): { stopped: boolean } {
+  // Cancel supervision first so the exit handler doesn't respawn what we're
+  // about to intentionally kill.
+  activeToken = null;
+  restartAttempts = 0;
+  clearTimers();
   if (!child) return { stopped: false };
   const proc = child;
   child = null;

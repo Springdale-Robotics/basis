@@ -1,4 +1,4 @@
-import sharp from 'sharp';
+import { loadSharp } from '../../lib/sharp.js';
 
 const MAX_WIDTH = 800;
 const WEBP_QUALITY = 80;
@@ -24,6 +24,8 @@ export async function processRecipeImage(input: Buffer): Promise<ProcessedImage>
   if (input.length > MAX_FILE_SIZE) {
     throw new Error('Image file too large. Maximum size is 10MB.');
   }
+
+  const sharp = await loadSharp();
 
   // Get image metadata to validate format
   const metadata = await sharp(input).metadata();

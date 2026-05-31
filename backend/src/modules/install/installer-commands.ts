@@ -130,9 +130,24 @@ echo "Snapshot saved: $SNAPSHOT"
 
 echo "Installing backend dependencies..."
 cd "$DEST/backend"
-npm ci --no-audit --no-fund --omit=optional
+# NOTE: never pass --omit=optional here. sharp ships its native binary in
+# optional platform packages (@img/sharp-linux-*); omitting them yields an
+# empty node_modules/@img and the backend crashes on boot (sharp.js throws),
+# which also takes down the Cloudflare tunnel (1033). Mirrors install.sh.
+npm ci --no-audit --no-fund
 echo "Building backend..."
 npm run build
+
+# Smoke-test the staged build BEFORE migrating or swapping the live symlink.
+# A broken native dependency (e.g. sharp) or a build that didn't emit dist/
+# must never become /opt/basis/current — abort here and the currently-running
+# version keeps serving untouched. Migrations are forward-only, so this runs
+# before db:migrate too.
+echo "Smoke-testing the staged build (sharp native module + dist entrypoint)..."
+test -f "$DEST/backend/dist/index.js" || { echo "Build incomplete: dist/index.js missing. Aborting before going live."; exit 1; }
+node -e "require('sharp')" \
+  || { echo "Staged build can't load the sharp image library (native package missing). Aborting before going live."; exit 1; }
+echo "Smoke test passed."
 
 echo "Running database migrations..."
 npm run db:migrate
