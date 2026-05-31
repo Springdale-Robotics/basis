@@ -42,8 +42,8 @@ export function RecipesPage() {
 
   const createMutation = useMutation({
     mutationFn: async ({ formData, imageChange }: { formData: RecipeFormData; imageChange: RecipeImageChange }) => {
-      const prepTime = formData.prepTime || formData.prepTimeMinutes;
-      const cookTime = formData.cookTime || formData.cookTimeMinutes;
+      const prepTime = formData.prepTime;
+      const cookTime = formData.cookTime;
 
       // Create the recipe first
       const result = await recipesApi.create({

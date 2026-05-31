@@ -17,6 +17,11 @@ import { recipesApi, type FinishCookingRequest } from '@/api/recipes';
 import { inventoryApi } from '@/api/inventory';
 import type { RecipeIngredient } from '@/types/models';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
+import { toast } from '@/hooks/useToast';
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
 
 interface FinishCookingDialogProps {
   open: boolean;
@@ -80,7 +85,11 @@ export function FinishCookingDialog({
       await recipesApi.finishCooking(recipeId, { deductInventory: true });
       onComplete();
     } catch (error) {
-      console.error('Failed to finish cooking:', error);
+      toast({
+        title: 'Could not update inventory',
+        description: errorMessage(error, 'Failed to deduct ingredients. Your inventory was not changed.'),
+        variant: 'destructive',
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -119,7 +128,11 @@ export function FinishCookingDialog({
       await recipesApi.finishCooking(recipeId, request);
       onComplete();
     } catch (error) {
-      console.error('Failed to finish cooking:', error);
+      toast({
+        title: 'Could not update inventory',
+        description: errorMessage(error, 'Failed to deduct ingredients. Your inventory was not changed.'),
+        variant: 'destructive',
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -130,23 +143,39 @@ export function FinishCookingDialog({
     setIsSubmitting(true);
     try {
       await recipesApi.finishCooking(recipeId, { deductInventory: false });
-      // Mark used-up items as out of stock
+      // Mark used-up items as out of stock. Track failures instead of silently
+      // swallowing them — otherwise the user thinks stock updated when it didn't.
+      const failed: string[] = [];
       for (const itemId of usedUpItems) {
         try {
           await inventoryApi.markOutOfStock(itemId);
         } catch {
-          // Silently continue if one fails
+          failed.push(itemId);
         }
+      }
+      if (failed.length > 0) {
+        toast({
+          title: 'Some items not updated',
+          description: `${failed.length} of ${usedUpItems.size} item(s) couldn't be marked out of stock. Check your inventory.`,
+          variant: 'destructive',
+        });
       }
       onComplete();
     } catch (error) {
-      console.error('Failed to finish cooking:', error);
+      toast({
+        title: 'Could not finish cooking',
+        description: errorMessage(error, 'Something went wrong. Please try again.'),
+        variant: 'destructive',
+      });
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleClose = () => {
+    // Don't let an in-flight inventory write be abandoned by an Escape/overlay
+    // click — that's how stock ends up half-deducted with no feedback.
+    if (isSubmitting) return;
     setStep('confirm');
     setAdjustments([]);
     setUsedUpItems(new Set());
@@ -200,6 +229,12 @@ export function FinishCookingDialog({
                       try {
                         await recipesApi.finishCooking(recipeId, { deductInventory: false });
                         onComplete();
+                      } catch (error) {
+                        toast({
+                          title: 'Could not finish cooking',
+                          description: errorMessage(error, 'Something went wrong. Please try again.'),
+                          variant: 'destructive',
+                        });
                       } finally {
                         setIsSubmitting(false);
                       }

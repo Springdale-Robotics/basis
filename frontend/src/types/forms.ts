@@ -71,9 +71,6 @@ export const recipeFormSchema = z.object({
   servings: z.number().min(1, 'Servings must be at least 1').optional(),
   prepTime: z.number().min(0).optional(),
   cookTime: z.number().min(0).optional(),
-  prepTimeMinutes: z.number().min(0).optional(),
-  cookTimeMinutes: z.number().min(0).optional(),
-  difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
   ingredients: z.array(z.object({
     name: z.string(),
     amount: z.preprocess(

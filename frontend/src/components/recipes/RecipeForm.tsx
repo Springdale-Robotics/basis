@@ -8,13 +8,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -54,12 +47,6 @@ interface RecipeFormProps {
   onDelete?: () => void;
   isSubmitting?: boolean;
 }
-
-const difficultyOptions = [
-  { value: 'easy', label: 'Easy' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'hard', label: 'Hard' },
-];
 
 interface IngredientNameInputProps {
   value: string;
@@ -482,6 +469,9 @@ export function RecipeForm({
   parseLinkItemsRef.current = parseLinkItems;
   const [isParsing, setIsParsing] = useState(false);
   const [hasParsed, setHasParsed] = useState(false);
+  // Signature of the raw ingredient lines at the last parse, so we can detect
+  // edits and re-parse instead of silently keeping stale parsed results.
+  const parsedSigRef = useRef<string>('');
 
   // Fetch existing items for linking
   const { data: existingItemsData } = useQuery({
@@ -496,16 +486,21 @@ export function RecipeForm({
     icon: <span>{getItemIcon(item)}</span>,
   }));
 
-  // Parse ingredients when switching to parse-link tab
-  const handleParseIngredients = async () => {
-    const ingredients = getValues('ingredients');
-    const rawLines = ingredients
-      .map(i => i.rawText?.trim() || '')
-      .filter(t => t.length > 0);
+  const rawIngredientLines = (): string[] =>
+    getValues('ingredients').map(i => i.rawText?.trim() || '').filter(t => t.length > 0);
 
-    if (rawLines.length === 0) return;
+  // Parse + auto-match the raw ingredient lines. Returns the resulting items
+  // (and stores them in state) so callers can use the result synchronously
+  // without waiting for a re-render.
+  const parseIngredients = async (): Promise<ParseLinkItem[]> => {
+    const rawLines = rawIngredientLines();
+    if (rawLines.length === 0) {
+      setParseLinkItems([]);
+      setHasParsed(true);
+      parsedSigRef.current = JSON.stringify(rawLines);
+      return [];
+    }
     setIsParsing(true);
-
     try {
       // Parse ingredient lines with CRF (falls back to regex)
       const parseResult = await recipesApi.parseIngredientLines(rawLines);
@@ -521,49 +516,74 @@ export function RecipeForm({
         // Suggestions unavailable
       }
 
-      // Try auto-matching each ingredient
-      const items: ParseLinkItem[] = [];
-      for (let i = 0; i < parsed.length; i++) {
-        const p = parsed[i];
-        const suggestion = suggestions[i];
-        let action: 'create' | 'link' = 'create';
-        let linkedItemId: string | undefined;
-        let linkedItemName: string | undefined;
-
-        // Try to match against existing items
-        try {
-          const matchResult = await recipesApi.matchIngredient(p.name || rawLines[i], p.unit);
-          if (matchResult.suggestions?.length > 0 && matchResult.suggestions[0].confidence >= 0.8) {
-            action = 'link';
-            linkedItemId = matchResult.suggestions[0].itemId;
-            linkedItemName = matchResult.suggestions[0].name;
+      // Match every ingredient against the catalog concurrently — this was a
+      // sequential await-in-loop, i.e. N back-to-back round-trips, painfully
+      // slow for a long recipe.
+      const matches = await Promise.all(
+        parsed.map(async (p, i) => {
+          try {
+            const matchResult = await recipesApi.matchIngredient(p.name || rawLines[i], p.unit);
+            const top = matchResult.suggestions?.[0];
+            if (top && top.confidence >= 0.8) {
+              return { itemId: top.itemId, name: top.name };
+            }
+          } catch {
+            // Match failed
           }
-        } catch {
-          // Match failed
-        }
+          return null;
+        })
+      );
 
-        items.push({
+      const items: ParseLinkItem[] = parsed.map((p, i) => {
+        const suggestion = suggestions[i];
+        const match = matches[i];
+        return {
           originalText: rawLines[i],
           parsedName: p.name || rawLines[i],
           parsedQuantity: p.quantity,
           parsedUnit: p.unit,
           parsedNotes: p.notes,
-          action,
+          action: match ? 'link' : 'create',
           suggestedName: suggestion?.suggestedName || p.name || rawLines[i],
           category: suggestion?.category,
           similarExisting: suggestion?.similarExisting,
-          linkedItemId,
-          linkedItemName,
-        });
-      }
+          linkedItemId: match?.itemId,
+          linkedItemName: match?.name,
+        };
+      });
 
       setParseLinkItems(items);
       setHasParsed(true);
+      parsedSigRef.current = JSON.stringify(rawLines);
+      return items;
     } catch (err) {
       console.error('Failed to parse ingredients:', err);
+      return parseLinkItemsRef.current;
     } finally {
       setIsParsing(false);
     }
+  };
+
+  // Re-parse only when the raw lines changed since the last parse (or were
+  // never parsed). Stops edits in the Ingredients step from being silently
+  // discarded when moving on to Link / Save.
+  const ensureParsed = async (): Promise<ParseLinkItem[]> => {
+    const sig = JSON.stringify(rawIngredientLines());
+    if (!hasParsed || sig !== parsedSigRef.current) {
+      return parseIngredients();
+    }
+    return parseLinkItemsRef.current;
+  };
+
+  // Button handler for the explicit "Parse & Link" action.
+  const handleParseIngredients = () => { void parseIngredients(); };
+
+  // Navigate to a step. Entering the Link step (re)parses if the ingredient
+  // lines changed. Used by both the Continue button and the (clickable) step
+  // indicator so jumping around behaves consistently.
+  const goToStep = (key: FormStep) => {
+    if (key === 'parse-link') void ensureParsed();
+    setActiveStep(key);
   };
 
   // Image state
@@ -581,7 +601,7 @@ export function RecipeForm({
     getValues,
     watch,
     reset,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = useForm<RecipeFormData>({
     resolver: zodResolver(recipeSchema),
     defaultValues: {
@@ -590,7 +610,6 @@ export function RecipeForm({
       prepTime: 0,
       cookTime: 0,
       servings: 4,
-      difficulty: 'medium',
       ingredients: [{ name: '', amount: 1, unit: '' }],
       instructions: [{ step: 1, text: '' }],
       tags: [],
@@ -615,7 +634,6 @@ export function RecipeForm({
     name: 'instructions',
   });
 
-  const difficulty = watch('difficulty');
   const tags = watch('tags');
 
   // Reset form when dialog opens or recipe changes
@@ -629,7 +647,6 @@ export function RecipeForm({
               prepTime: recipe.prepTime || recipe.prepTimeMinutes || 0,
               cookTime: recipe.cookTime || recipe.cookTimeMinutes || 0,
               servings: recipe.servings ?? undefined,
-              difficulty: recipe.difficulty || 'medium',
               ingredients: (recipe.ingredients || []).map((ing) => {
                 const unit = normalizeUnit(ing.unit);
                 const amount = typeof ing.amount === 'number' ? ing.amount : 0;
@@ -658,7 +675,6 @@ export function RecipeForm({
               prepTime: 0,
               cookTime: 0,
               servings: 4,
-              difficulty: 'medium',
               ingredients: [{ name: '', amount: 1, unit: '' }],
               instructions: [{ step: 1, text: '' }],
               tags: [],
@@ -693,9 +709,13 @@ export function RecipeForm({
         }));
         setParseLinkItems(items);
         setHasParsed(true);
+        // Record the signature of the pre-populated lines so we don't needlessly
+        // re-parse (and lose existing links) unless the user actually edits them.
+        parsedSigRef.current = JSON.stringify(items.map(i => i.originalText));
       } else {
         setParseLinkItems([]);
         setHasParsed(false);
+        parsedSigRef.current = '';
       }
     }
   }, [open, recipe, reset]);
@@ -715,8 +735,21 @@ export function RecipeForm({
   };
 
   const handleFormSubmit = async (data: RecipeFormData) => {
-    // Use ref to get latest parseLinkItems (avoids stale closure)
-    const currentParseLinkItems = parseLinkItemsRef.current;
+    // Make sure the latest raw ingredient edits are parsed before we build the
+    // payload — otherwise edits made after the last parse are dropped.
+    const currentParseLinkItems = await ensureParsed();
+
+    // If parsing produced nothing (e.g. the parse API failed) but the user did
+    // type ingredient lines, fall back to the raw text as the name so the
+    // ingredients aren't silently lost.
+    if (currentParseLinkItems.length === 0) {
+      const rawLines = rawIngredientLines();
+      if (rawLines.length > 0) {
+        data.ingredients = rawLines.map(line => ({
+          name: line, amount: 0, unit: '', rawText: line,
+        }));
+      }
+    }
 
     // Apply parsed ingredient data from Parse & Link tab
     if (currentParseLinkItems.length > 0) {
@@ -765,11 +798,28 @@ export function RecipeForm({
     onSubmit(data, getImageChange());
   };
 
-  const handleFormError = (errors: any) => {
-    console.error('Form validation errors:', errors);
+  const handleFormError = (formErrors: any) => {
+    // Surface validation by jumping to the step that holds the first error —
+    // otherwise (e.g. an empty required title lives on the Details step) the
+    // user hits Save on a later step and nothing visibly happens.
+    if (formErrors?.title || formErrors?.servings || formErrors?.prepTime || formErrors?.cookTime) {
+      setActiveStep('details');
+    } else if (formErrors?.ingredients) {
+      setActiveStep('ingredients');
+    } else if (formErrors?.instructions) {
+      setActiveStep('instructions');
+    }
   };
 
+  const hasUnsavedChanges = (): boolean =>
+    isDirty || !!pendingImageFile || !!pendingImageUrl || imageRemoved;
+
   const handleClose = () => {
+    // Guard against discarding a partially-filled multi-step form on a stray
+    // Escape / overlay click.
+    if (hasUnsavedChanges() && !window.confirm('Discard your changes to this recipe?')) {
+      return;
+    }
     reset();
     // Reset image state
     setPendingImageFile(null);
@@ -809,13 +859,18 @@ export function RecipeForm({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Step indicator */}
+        {/* Step indicator — clickable so you can jump straight to a step */}
         <div className="flex items-center gap-1 flex-shrink-0 px-1">
           {formSteps.map((s, i) => (
-            <div key={s.key} className="flex flex-col items-center flex-1">
+            <button
+              type="button"
+              key={s.key}
+              onClick={() => goToStep(s.key)}
+              className="flex flex-col items-center flex-1 group"
+            >
               <div className={cn(
                 'h-1.5 w-full rounded-full transition-colors',
-                i <= currentStepIndex ? 'bg-primary' : 'bg-muted'
+                i <= currentStepIndex ? 'bg-primary' : 'bg-muted group-hover:bg-muted-foreground/30'
               )} />
               <span className={cn(
                 'text-[10px] mt-1 transition-colors',
@@ -823,7 +878,7 @@ export function RecipeForm({
               )}>
                 {s.label}
               </span>
-            </div>
+            </button>
           ))}
         </div>
 
@@ -884,7 +939,7 @@ export function RecipeForm({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="prepTime">Prep Time (min)</Label>
                   <Input
@@ -903,9 +958,6 @@ export function RecipeForm({
                     {...register('cookTime', { valueAsNumber: true })}
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="servings">Servings</Label>
                   <Input
@@ -914,26 +966,6 @@ export function RecipeForm({
                     min="1"
                     {...register('servings', { valueAsNumber: true })}
                   />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="difficulty">Difficulty</Label>
-                  <Select
-                    value={difficulty}
-                    onValueChange={(value) =>
-                      setValue('difficulty', value as 'easy' | 'medium' | 'hard')
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select difficulty" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {difficultyOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                 </div>
               </div>
 
@@ -1194,14 +1226,7 @@ export function RecipeForm({
               {!isLastStep ? (
                 <Button
                   type="button"
-                  onClick={() => {
-                    const nextStep = formSteps[currentStepIndex + 1];
-                    // Auto-parse when entering parse-link step
-                    if (nextStep.key === 'parse-link' && !hasParsed) {
-                      handleParseIngredients();
-                    }
-                    setActiveStep(nextStep.key);
-                  }}
+                  onClick={() => goToStep(formSteps[currentStepIndex + 1].key)}
                 >
                   Continue to {formSteps[currentStepIndex + 1].label}
                 </Button>
@@ -1209,11 +1234,10 @@ export function RecipeForm({
                 <Button
                   type="button"
                   disabled={isSubmitting}
-                  onClick={async () => {
-                    // Manually trigger form submission with parseLinkItems applied
-                    const data = getValues();
-                    await handleFormSubmit(data);
-                  }}
+                  // Route through react-hook-form's handleSubmit so the Zod
+                  // resolver actually runs (inline field errors, required title)
+                  // instead of silently shipping an invalid payload.
+                  onClick={handleSubmit(handleFormSubmit, handleFormError)}
                 >
                   {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   {isEditing ? 'Save Changes' : 'Save Recipe'}
