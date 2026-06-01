@@ -3,6 +3,24 @@ import { Upload, Link2, X, Loader2, ImageIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { toast } from '@/hooks/useToast';
+
+// Mirror the server's limits (recipe-image.service.ts) so we reject locally
+// with a clear message instead of letting the user fill out the whole form
+// and only fail on submit.
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+/** Returns an error message if the file is invalid, or null if it's fine. */
+function validateImageFile(file: File): string | null {
+  if (!ACCEPTED_TYPES.includes(file.type)) {
+    return 'Unsupported image type. Use JPEG, PNG, WebP, or GIF.';
+  }
+  if (file.size > MAX_FILE_SIZE) {
+    return 'Image is too large. Maximum size is 10MB.';
+  }
+  return null;
+}
 
 interface RecipeImageInputProps {
   /** Current image as base64 data URI or external URL */
@@ -57,26 +75,34 @@ export function RecipeImageInput({
     if (disabled || isProcessing) return;
 
     const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) {
-      // Show preview
-      const reader = new FileReader();
-      reader.onload = () => setPreviewImage(reader.result as string);
-      reader.readAsDataURL(file);
-      onFileSelect(file);
+    if (!file) return;
+    const error = validateImageFile(file);
+    if (error) {
+      toast({ title: 'Invalid image', description: error, variant: 'destructive' });
+      return;
     }
+    // Show preview
+    const reader = new FileReader();
+    reader.onload = () => setPreviewImage(reader.result as string);
+    reader.readAsDataURL(file);
+    onFileSelect(file);
   }, [disabled, isProcessing, onFileSelect]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      // Show preview
-      const reader = new FileReader();
-      reader.onload = () => setPreviewImage(reader.result as string);
-      reader.readAsDataURL(file);
-      onFileSelect(file);
-    }
-    // Reset input so same file can be selected again
+    // Reset input first so the same file can be re-selected after a rejection.
     e.target.value = '';
+    if (!file) return;
+    const error = validateImageFile(file);
+    if (error) {
+      toast({ title: 'Invalid image', description: error, variant: 'destructive' });
+      return;
+    }
+    // Show preview
+    const reader = new FileReader();
+    reader.onload = () => setPreviewImage(reader.result as string);
+    reader.readAsDataURL(file);
+    onFileSelect(file);
   };
 
   const handleUrlSubmit = () => {
@@ -196,39 +222,6 @@ export function RecipeImageInput({
         </div>
       )}
 
-      {/* URL input */}
-      {showUrlInput && !displayImage && (
-        <div className="flex gap-2">
-          <Input
-            placeholder="https://example.com/image.jpg"
-            value={urlValue}
-            onChange={(e) => setUrlValue(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleUrlSubmit())}
-            disabled={disabled || isProcessing}
-          />
-          <Button
-            type="button"
-            size="sm"
-            onClick={handleUrlSubmit}
-            disabled={disabled || isProcessing || !urlValue.trim()}
-          >
-            Fetch
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setShowUrlInput(false);
-              setUrlValue('');
-            }}
-            disabled={disabled || isProcessing}
-          >
-            Cancel
-          </Button>
-        </div>
-      )}
-
       {/* Replace image button when image exists */}
       {displayImage && !isProcessing && !disabled && (
         <div className="flex gap-2">
@@ -255,8 +248,8 @@ export function RecipeImageInput({
         </div>
       )}
 
-      {/* URL input when replacing */}
-      {showUrlInput && displayImage && (
+      {/* URL input — single block for both the empty and replace states */}
+      {showUrlInput && !isProcessing && (
         <div className="flex gap-2">
           <Input
             placeholder="https://example.com/image.jpg"
@@ -281,6 +274,7 @@ export function RecipeImageInput({
               setShowUrlInput(false);
               setUrlValue('');
             }}
+            disabled={disabled || isProcessing}
           >
             Cancel
           </Button>

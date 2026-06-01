@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { recipesApi, type GenerateShoppingListResponse } from '@/api/recipes';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
+import { toast } from '@/hooks/useToast';
 
 interface GenerateShoppingListDialogProps {
   open: boolean;
@@ -61,6 +62,13 @@ export function GenerateShoppingListDialog({
       setPreviewData(data);
       setStep('preview');
     },
+    onError: (error) => {
+      toast({
+        title: 'Could not preview shopping list',
+        description: error instanceof Error ? error.message : 'Failed to build the preview. Please try again.',
+        variant: 'destructive',
+      });
+    },
   });
 
   const generateMutation = useMutation({
@@ -74,6 +82,13 @@ export function GenerateShoppingListDialog({
       setPreviewData(data);
       setStep('success');
       queryClient.invalidateQueries({ queryKey: ['shopping-list'] });
+    },
+    onError: (error) => {
+      toast({
+        title: 'Could not generate shopping list',
+        description: error instanceof Error ? error.message : 'Failed to add items. Please try again.',
+        variant: 'destructive',
+      });
     },
   });
 

@@ -15,7 +15,6 @@ import {
   Check,
   X,
   Loader2,
-  Image as ImageIcon,
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -30,14 +29,14 @@ import { getItemIcon } from '@/lib/inventory-constants';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
-import { RecipeForm, type RecipeImageChange } from '@/components/recipes/RecipeForm';
+import { RecipeImageInput } from '@/components/recipes/RecipeImageInput';
+import type { RecipeImageChange } from '@/components/recipes/RecipeForm';
 import { EditGate } from '@/components/permissions';
 import { AddToMealPlanDialog } from './AddToMealPlanDialog';
 import { ShoppingCart } from 'lucide-react';
 import { recipesApi } from '@/api/recipes';
 import { inventoryApi } from '@/api/inventory';
 import { useState, useMemo } from 'react';
-import type { RecipeFormData } from '@/types/forms';
 import { toast } from '@/hooks/useToast';
 import { useRecipeWithIngredients } from '@/hooks/useRecipeWithIngredients';
 import {
@@ -59,6 +58,7 @@ interface RecipeDraft {
   prepTimeMinutes: string;
   cookTimeMinutes: string;
   servings: string;
+  tags: string[];
   ingredients: Array<Pick<RecipeIngredient, 'id' | 'name' | 'amount' | 'unit' | 'notes' | 'inventoryItemId' | 'linkedItemName'>>;
   instructions: Array<{ step: number; text: string }>;
 }
@@ -70,6 +70,7 @@ function makeDraft(recipe: Recipe): RecipeDraft {
     prepTimeMinutes: recipe.prepTimeMinutes != null ? String(recipe.prepTimeMinutes) : '',
     cookTimeMinutes: recipe.cookTimeMinutes != null ? String(recipe.cookTimeMinutes) : '',
     servings: recipe.servings != null ? String(recipe.servings) : '',
+    tags: recipe.tags ?? [],
     ingredients: (recipe.ingredients ?? []).map((ing) => ({
       id: ing.id,
       name: ing.name,
@@ -91,11 +92,19 @@ export function RecipeDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [editFormOpen, setEditFormOpen] = useState(false);
   const [addToMealPlanOpen, setAddToMealPlanOpen] = useState(false);
   const [scaledServings, setScaledServings] = useState<number | null>(null);
   const [draft, setDraft] = useState<RecipeDraft | null>(null);
   const editMode = draft !== null;
+
+  // Inline image editing (was previously only possible via the modal editor).
+  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
+  const [pendingImageUrl, setPendingImageUrl] = useState<string | null>(null);
+  const [imageRemoved, setImageRemoved] = useState(false);
+  // Free-text tag entry box (Enter / comma commits).
+  const [tagInput, setTagInput] = useState('');
+  // Natural-language "quick add" ingredient line (Enter parses + adds a row).
+  const [newIngredientLine, setNewIngredientLine] = useState('');
 
   const { recipe, isLoading } = useRecipeWithIngredients(id);
 
@@ -135,54 +144,6 @@ export function RecipeDetailPage() {
     return ids;
   }, [stockData]);
 
-  const updateMutation = useMutation({
-    mutationFn: async ({ formData, imageChange }: { formData: RecipeFormData; imageChange: RecipeImageChange }) => {
-      const prepTime = formData.prepTime || formData.prepTimeMinutes;
-      const cookTime = formData.cookTime || formData.cookTimeMinutes;
-
-      // Update recipe data first
-      await recipesApi.update(id!, {
-        title: formData.title,
-        description: formData.description || undefined,
-        servings: formData.servings || undefined,
-        prepTimeMinutes: prepTime && prepTime > 0 ? prepTime : undefined,
-        cookTimeMinutes: cookTime && cookTime > 0 ? cookTime : undefined,
-        ingredients: formData.ingredients
-          .filter((ing) => ing.name)
-          .map((ing) => ({
-            name: ing.name,
-            quantity: ing.amount || undefined,
-            unit: ing.unit || undefined,
-            notes: ing.notes || undefined,
-            inventoryItemId: ing.inventoryItemId || undefined,
-          })),
-        instructions: formData.instructions.filter((inst) => inst.text),
-        tags: formData.tags,
-      });
-
-      // Handle image changes
-      if (imageChange.type === 'file' && imageChange.file) {
-        await recipesApi.uploadImage(id!, imageChange.file);
-      } else if (imageChange.type === 'url' && imageChange.url) {
-        await recipesApi.uploadImageFromUrl(id!, imageChange.url);
-      } else if (imageChange.type === 'remove') {
-        await recipesApi.deleteImage(id!);
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['recipes', id] });
-      queryClient.invalidateQueries({ queryKey: ['tag-suggestions'] });
-      setEditFormOpen(false);
-    },
-    onError: (error) => {
-      toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to update recipe',
-        variant: 'destructive',
-      });
-    },
-  });
-
   const deleteMutation = useMutation({
     mutationFn: () => recipesApi.delete(id!),
     onSuccess: () => {
@@ -192,9 +153,8 @@ export function RecipeDetailPage() {
     },
   });
 
-  // Inline-edit save — persists the draft via the same PATCH endpoint as the
-  // modal form, minus the image-change handling (image still goes through the
-  // RecipeForm modal).
+  // Inline-edit save — the single editor now. Persists everything the recipe
+  // has (including image + tags, which used to require the modal).
   const inlineSaveMutation = useMutation({
     mutationFn: async (d: RecipeDraft) => {
       const prep = d.prepTimeMinutes.trim() === '' ? undefined : Number(d.prepTimeMinutes);
@@ -218,11 +178,23 @@ export function RecipeDetailPage() {
         instructions: d.instructions
           .filter((inst) => inst.text.trim())
           .map((inst, idx) => ({ step: idx + 1, text: inst.text.trim() })),
+        tags: d.tags,
       });
+
+      // Image changes — editable inline now (previously modal-only).
+      const imageChange = getImageChange();
+      if (imageChange.type === 'file' && imageChange.file) {
+        await recipesApi.uploadImage(id!, imageChange.file);
+      } else if (imageChange.type === 'url' && imageChange.url) {
+        await recipesApi.uploadImageFromUrl(id!, imageChange.url);
+      } else if (imageChange.type === 'remove') {
+        await recipesApi.deleteImage(id!);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['recipes', id] });
-      setDraft(null);
+      queryClient.invalidateQueries({ queryKey: ['tag-suggestions'] });
+      resetEditState();
       toast({ title: 'Saved' });
     },
     onError: (error) => {
@@ -234,14 +206,78 @@ export function RecipeDetailPage() {
     },
   });
 
-  const enterEditMode = () => {
-    if (recipe) setDraft(makeDraft(recipe));
+  const existingImageSrc = recipe?.imageData
+    ? `data:${recipe.imageMimeType};base64,${recipe.imageData}`
+    : recipe?.imageUrl || null;
+
+  const getImageChange = (): RecipeImageChange => {
+    if (imageRemoved) return { type: 'remove' };
+    if (pendingImageFile) return { type: 'file', file: pendingImageFile };
+    if (pendingImageUrl) return { type: 'url', url: pendingImageUrl };
+    return { type: 'none' };
   };
-  const cancelEdit = () => setDraft(null);
+
+  const resetImageState = () => {
+    setPendingImageFile(null);
+    setPendingImageUrl(null);
+    setImageRemoved(false);
+    setTagInput('');
+  };
+
+  const resetEditState = () => {
+    setDraft(null);
+    resetImageState();
+  };
+
+  const enterEditMode = () => {
+    if (recipe) {
+      setDraft(makeDraft(recipe));
+      resetImageState();
+    }
+  };
+  const cancelEdit = () => resetEditState();
   const saveEdit = () => { if (draft) inlineSaveMutation.mutate(draft); };
 
   const patchDraft = (patch: Partial<RecipeDraft>) => {
     setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+  };
+
+  // Inline tag editing.
+  const addTag = (raw: string) => {
+    const tag = raw.trim().toLowerCase();
+    if (!tag || !draft) return;
+    if (!draft.tags.includes(tag)) patchDraft({ tags: [...draft.tags, tag] });
+    setTagInput('');
+  };
+  const removeTag = (tag: string) => {
+    if (draft) patchDraft({ tags: draft.tags.filter((t) => t !== tag) });
+  };
+
+  // Natural-language quick-add: type "2 cups flour", we parse it into a row.
+  const quickAddIngredient = async (line: string) => {
+    const text = line.trim();
+    if (!text || !draft) return;
+    let parsed: { name?: string; quantity?: number; unit?: string; notes?: string } | undefined;
+    try {
+      const res = await recipesApi.parseIngredientLines([text]);
+      parsed = res.ingredients?.[0];
+    } catch {
+      // Parser unavailable — fall back to using the raw text as the name.
+    }
+    patchDraft({
+      ingredients: [
+        ...draft.ingredients,
+        {
+          id: `new-${Date.now()}`,
+          name: parsed?.name || text,
+          amount: parsed?.quantity ?? 0,
+          unit: parsed?.unit ?? '',
+          notes: parsed?.notes,
+          inventoryItemId: undefined,
+          linkedItemName: undefined,
+        },
+      ],
+    });
   };
 
   const addAllToShoppingListMutation = useMutation({
@@ -371,10 +407,6 @@ export function RecipeDetailPage() {
                   )}
                   Save
                 </Button>
-                <Button variant="outline" onClick={() => setEditFormOpen(true)} title="Open full editor (image, tags, etc.)">
-                  <ImageIcon className="mr-2 h-4 w-4" />
-                  More…
-                </Button>
               </>
             ) : (
               <>
@@ -407,19 +439,29 @@ export function RecipeDetailPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Main content */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Image - prefer imageData over imageUrl for backward compatibility */}
-          {(recipe.imageData || recipe.imageUrl) && (
-            <div className="aspect-video overflow-hidden rounded-lg bg-muted">
-              <img
-                src={
-                  recipe.imageData
-                    ? `data:${recipe.imageMimeType};base64,${recipe.imageData}`
-                    : recipe.imageUrl
-                }
-                alt={recipe.title}
-                className="h-full w-full object-cover"
-              />
-            </div>
+          {/* Image — editable inline (prefer imageData over imageUrl) */}
+          {editMode ? (
+            <RecipeImageInput
+              currentImage={imageRemoved ? undefined : (existingImageSrc || undefined)}
+              onFileSelect={(file) => { setPendingImageFile(file); setPendingImageUrl(null); setImageRemoved(false); }}
+              onUrlFetch={(url) => { setPendingImageUrl(url); setPendingImageFile(null); setImageRemoved(false); }}
+              onRemove={() => { setPendingImageFile(null); setPendingImageUrl(null); setImageRemoved(true); }}
+              disabled={inlineSaveMutation.isPending}
+            />
+          ) : (
+            (recipe.imageData || recipe.imageUrl) && (
+              <div className="aspect-video overflow-hidden rounded-lg bg-muted">
+                <img
+                  src={
+                    recipe.imageData
+                      ? `data:${recipe.imageMimeType};base64,${recipe.imageData}`
+                      : recipe.imageUrl
+                  }
+                  alt={recipe.title}
+                  className="h-full w-full object-cover"
+                />
+              </div>
+            )
           )}
 
           {/* Title (edit mode) */}
@@ -540,15 +582,47 @@ export function RecipeDetailPage() {
           </div>
           )}
 
-          {/* Tags */}
-          {recipe.tags && recipe.tags.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {recipe.tags.map((tag) => (
-                <Badge key={tag} variant="secondary">
-                  {tag}
-                </Badge>
-              ))}
+          {/* Tags — editable inline */}
+          {editMode && draft ? (
+            <div className="space-y-2">
+              <Label className="text-xs">Tags</Label>
+              <div className="flex flex-wrap items-center gap-2">
+                {draft.tags.map((tag) => (
+                  <Badge key={tag} variant="secondary" className="gap-1 pr-1">
+                    {tag}
+                    <button
+                      type="button"
+                      onClick={() => removeTag(tag)}
+                      className="ml-1 rounded-full p-0.5 hover:bg-muted-foreground/20"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                ))}
+                <Input
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ',') {
+                      e.preventDefault();
+                      addTag(tagInput);
+                    }
+                  }}
+                  placeholder="Add tag…"
+                  className="h-8 w-32"
+                />
+              </div>
             </div>
+          ) : (
+            recipe.tags && recipe.tags.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {recipe.tags.map((tag) => (
+                  <Badge key={tag} variant="secondary">
+                    {tag}
+                  </Badge>
+                ))}
+              </div>
+            )
           )}
 
           {/* Instructions */}
@@ -635,61 +709,99 @@ export function RecipeDetailPage() {
             </CardHeader>
             <CardContent>
               {editMode && draft ? (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {draft.ingredients.map((ing, i) => (
-                    <div key={ing.id ?? i} className="grid grid-cols-[5rem_5rem_1fr_2rem] gap-1 items-start">
-                      <Input
-                        type="number"
-                        step="any"
-                        min={0}
-                        value={ing.amount || ''}
-                        placeholder="amt"
-                        onChange={(e) => {
-                          const next = draft.ingredients.slice();
-                          next[i] = { ...next[i], amount: Number(e.target.value) || 0 };
-                          patchDraft({ ingredients: next });
-                        }}
-                      />
-                      <Input
-                        value={ing.unit ?? ''}
-                        placeholder="unit"
-                        onChange={(e) => {
-                          const next = draft.ingredients.slice();
-                          next[i] = { ...next[i], unit: e.target.value };
-                          patchDraft({ ingredients: next });
-                        }}
-                      />
-                      <Input
-                        value={ing.name ?? ''}
-                        placeholder="ingredient"
-                        onChange={(e) => {
-                          const next = draft.ingredients.slice();
-                          next[i] = { ...next[i], name: e.target.value };
-                          patchDraft({ ingredients: next });
-                        }}
-                      />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => patchDraft({
-                          ingredients: draft.ingredients.filter((_, idx) => idx !== i),
-                        })}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
+                    <div key={ing.id ?? i} className="space-y-1">
+                      <div className="grid grid-cols-[5rem_5rem_1fr_2rem] gap-1 items-start">
+                        <Input
+                          type="number"
+                          step="any"
+                          min={0}
+                          value={ing.amount || ''}
+                          placeholder="amt"
+                          onChange={(e) => {
+                            const next = draft.ingredients.slice();
+                            next[i] = { ...next[i], amount: Number(e.target.value) || 0 };
+                            patchDraft({ ingredients: next });
+                          }}
+                        />
+                        <Input
+                          value={ing.unit ?? ''}
+                          placeholder="unit"
+                          onChange={(e) => {
+                            const next = draft.ingredients.slice();
+                            next[i] = { ...next[i], unit: e.target.value };
+                            patchDraft({ ingredients: next });
+                          }}
+                        />
+                        <Input
+                          value={ing.name ?? ''}
+                          placeholder="ingredient"
+                          onChange={(e) => {
+                            const next = draft.ingredients.slice();
+                            // Editing the name breaks the inventory link — clear it
+                            // so the name and link can't silently drift apart.
+                            const stillMatchesLink = e.target.value === next[i].linkedItemName;
+                            next[i] = {
+                              ...next[i],
+                              name: e.target.value,
+                              ...(stillMatchesLink ? {} : { inventoryItemId: undefined, linkedItemName: undefined }),
+                            };
+                            patchDraft({ ingredients: next });
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              patchDraft({
+                                ingredients: [...draft.ingredients, { id: `new-${Date.now()}`, name: '', amount: 0, unit: '', notes: undefined, inventoryItemId: undefined, linkedItemName: undefined }],
+                              });
+                            }
+                          }}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => patchDraft({
+                            ingredients: draft.ingredients.filter((_, idx) => idx !== i),
+                          })}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="flex items-center gap-2 pl-1">
+                        <Input
+                          value={ing.notes ?? ''}
+                          placeholder="notes (optional)"
+                          className="h-7 text-xs"
+                          onChange={(e) => {
+                            const next = draft.ingredients.slice();
+                            next[i] = { ...next[i], notes: e.target.value || undefined };
+                            patchDraft({ ingredients: next });
+                          }}
+                        />
+                        {ing.inventoryItemId && (
+                          <span className="flex items-center gap-1 text-xs text-green-600 shrink-0">
+                            <Link2 className="h-3 w-3" />
+                            {ing.linkedItemName || 'linked'}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ))}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => patchDraft({
-                      ingredients: [...draft.ingredients, { id: `new-${Date.now()}`, name: '', amount: 0, unit: '', notes: undefined, inventoryItemId: undefined, linkedItemName: undefined }],
-                    })}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add ingredient
-                  </Button>
+                  <Input
+                    placeholder={'Add ingredient — e.g. "2 cups flour"'}
+                    value={newIngredientLine}
+                    onChange={(e) => setNewIngredientLine(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const line = newIngredientLine;
+                        setNewIngredientLine('');
+                        void quickAddIngredient(line);
+                      }
+                    }}
+                  />
                 </div>
               ) : (
               <ul className="space-y-2">
@@ -822,14 +934,6 @@ export function RecipeDetailPage() {
         confirmText="Delete"
         variant="destructive"
         onConfirm={() => deleteMutation.mutate()}
-      />
-
-      <RecipeForm
-        open={editFormOpen}
-        onOpenChange={setEditFormOpen}
-        recipe={recipe}
-        onSubmit={(formData, imageChange) => updateMutation.mutate({ formData, imageChange })}
-        isSubmitting={updateMutation.isPending}
       />
 
       <AddToMealPlanDialog
