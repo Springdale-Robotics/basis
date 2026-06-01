@@ -148,8 +148,15 @@ npm run build
 # must never become /opt/basis/current — abort here and the currently-running
 # version keeps serving untouched. Migrations are forward-only, so this runs
 # before db:migrate too.
-echo "Smoke-testing the staged build (sharp native module + dist entrypoint)..."
+echo "Smoke-testing the staged build (syntax + sharp native module + dist entrypoint)..."
 test -f "$DEST/backend/dist/index.js" || { echo "Build incomplete: dist/index.js missing. Aborting before going live."; exit 1; }
+# Syntax-check the entrypoints AND the updater itself. A syntax error in a
+# non-entrypoint file (e.g. a stray backtick in this very file) still emits
+# dist/index.js, so the existence check above won't catch it — but it crash-loops
+# the backend on boot. node --check parses without executing.
+for f in dist/index.js dist/worker.js dist/modules/install/installer-commands.js; do
+  node --check "$DEST/backend/$f" || { echo "Staged build has a syntax error in $f. Aborting before going live."; exit 1; }
+done
 node -e "require('sharp')" \
   || { echo "Staged build can't load the sharp image library (native package missing). Aborting before going live."; exit 1; }
 echo "Smoke test passed."
@@ -165,22 +172,23 @@ echo ""
 echo "✓ Update staged. Restarting basis.service in 3 seconds..."
 echo "  (Connection to this terminal will drop when the service restarts.)"
 # Detach the restart so it survives this PTY being torn down once the command
-# finishes. CRITICAL: use `setsid` to put the restarter in its OWN session, not
-# just `nohup ... & disown`. This script runs inside a node-pty PTY whose server
-# kills the whole PTY process group (term.kill SIGTERM) on exit/disconnect;
-# nohup (ignores SIGHUP) and disown (shell job table only) do NOT escape that
-# group, so the backgrounded restarter was being killed during its `sleep`
-# before it ever ran `systemctl restart` — the update swapped the symlink but
-# the old process kept running the old code. setsid breaks it out of the group.
+# finishes. We use setsid (not nohup plus disown) on purpose: this script runs
+# inside a node-pty PTY whose server kills the whole PTY process group with
+# SIGTERM on exit or disconnect. nohup only ignores SIGHUP and disown only edits
+# the shell job table, so neither escapes that process group -- the backgrounded
+# restarter was being SIGTERMed mid-sleep before it ever issued the restart, so
+# the update swapped the symlink but the old process kept running the old code.
+# setsid starts a new session, breaking the restarter out of the doomed group.
+# (Comment kept free of backtick, dollar-brace and backslash -- this whole shell
+# script is a JS template literal, where those would corrupt the emitted code.)
 #
 # Runs unattended thanks to the narrow NOPASSWD rule the installer drops at
-# /etc/sudoers.d/basis — without it this sudo can't read a password (stdin is
+# /etc/sudoers.d/basis -- without it this sudo cannot read a password (stdin is
 # /dev/null) and the new code would never start.
 # reset-failed first (best-effort) so a latched start-limit from an earlier
-# aborted attempt doesn't make the restart fail with "start request repeated too
-# quickly"; || true covers older installs whose sudoers predates that rule.
-# Then the parser sidecar best-effort (same older-sudoers caveat), then the
-# critical units last in their always-allowed form.
+# aborted attempt does not make the restart fail with "start request repeated
+# too quickly"; the true-fallbacks cover older installs whose sudoers predates
+# that rule. Then the parser sidecar best-effort, then the critical units last.
 setsid bash -c 'sleep 3 && { sudo systemctl reset-failed basis basis-worker || true; } && { sudo systemctl restart basis-ingredient-parser || true; } && sudo systemctl restart basis basis-worker' </dev/null >/dev/null 2>&1 &
 echo "Update complete — now at $NEW_VERSION"
 echo "Roll back if needed: point /opt/basis/current at the previous version,"
