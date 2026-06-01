@@ -29,14 +29,17 @@ import { recipesApi } from '@/api/recipes';
 import { useCategories } from '@/hooks/useCategories';
 import { getItemIcon } from '@/lib/inventory-constants';
 import { RecipeImageInput } from './RecipeImageInput';
+import { filesMediaApi } from '@/api/media';
 import { cn } from '@/lib/utils';
 import type { Recipe, InventoryItem } from '@/types/models';
 import { unitOptions, normalizeUnit } from '@/lib/inventory-constants';
 
 export interface RecipeImageChange {
-  type: 'file' | 'url' | 'remove' | 'none';
+  type: 'file' | 'url' | 'fileId' | 'remove' | 'none';
   file?: File;
   url?: string;
+  /** Existing Files/Photos id, when picking from the photo library. */
+  fileId?: string;
 }
 
 interface RecipeFormProps {
@@ -589,6 +592,7 @@ export function RecipeForm({
   // Image state
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [pendingImageUrl, setPendingImageUrl] = useState<string | null>(null);
+  const [pendingImageFileId, setPendingImageFileId] = useState<string | null>(null);
   const [imageProcessing, setImageProcessing] = useState(false);
   const [currentImage, setCurrentImage] = useState<string | null>(null);
   const [imageRemoved, setImageRemoved] = useState(false);
@@ -683,6 +687,7 @@ export function RecipeForm({
       // Reset image state
       setPendingImageFile(null);
       setPendingImageUrl(null);
+      setPendingImageFileId(null);
       setImageProcessing(false);
       setImageRemoved(false);
       // Set current image from recipe
@@ -730,6 +735,9 @@ export function RecipeForm({
     }
     if (pendingImageUrl) {
       return { type: 'url', url: pendingImageUrl };
+    }
+    if (pendingImageFileId) {
+      return { type: 'fileId', fileId: pendingImageFileId };
     }
     return { type: 'none' };
   };
@@ -824,6 +832,7 @@ export function RecipeForm({
     // Reset image state
     setPendingImageFile(null);
     setPendingImageUrl(null);
+    setPendingImageFileId(null);
     setImageProcessing(false);
     setCurrentImage(null);
     setImageRemoved(false);
@@ -894,6 +903,7 @@ export function RecipeForm({
                   onFileSelect={(file) => {
                     setPendingImageFile(file);
                     setPendingImageUrl(null);
+                    setPendingImageFileId(null);
                     setImageRemoved(false);
                     // Show preview
                     const reader = new FileReader();
@@ -903,13 +913,22 @@ export function RecipeForm({
                   onUrlFetch={(url) => {
                     setPendingImageUrl(url);
                     setPendingImageFile(null);
+                    setPendingImageFileId(null);
                     setImageRemoved(false);
                     // Show URL as preview (will be replaced after upload)
                     setCurrentImage(url);
                   }}
+                  onPhotoSelect={(fileId) => {
+                    setPendingImageFileId(fileId);
+                    setPendingImageFile(null);
+                    setPendingImageUrl(null);
+                    setImageRemoved(false);
+                    setCurrentImage(filesMediaApi.getThumbnailUrl(fileId, 'lg'));
+                  }}
                   onRemove={() => {
                     setPendingImageFile(null);
                     setPendingImageUrl(null);
+                    setPendingImageFileId(null);
                     setCurrentImage(null);
                     setImageRemoved(true);
                   }}

@@ -375,6 +375,10 @@ export const recipesApi = {
   uploadImageFromUrl: (recipeId: string, imageUrl: string) =>
     apiPost<RecipeImageResponse>(`/recipes/${recipeId}/image`, { imageUrl }),
 
+  // Copy an existing Files/Photos image into the recipe (processed + embedded).
+  uploadImageFromFile: (recipeId: string, fileId: string) =>
+    apiPost<RecipeImageResponse>(`/recipes/${recipeId}/image/from-file`, { fileId }),
+
   deleteImage: (recipeId: string) =>
     apiDelete<{ message: string }>(`/recipes/${recipeId}/image`),
 

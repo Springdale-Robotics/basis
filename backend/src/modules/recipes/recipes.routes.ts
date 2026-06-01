@@ -10,7 +10,9 @@ import {
   inventoryItems,
   shoppingList,
   households,
+  files,
 } from '../../db/schema/index.js';
+import { promises as fs } from 'fs';
 import { eq, and, sql, gt, gte, lte, asc, isNotNull } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
 import { requireRecipesAccess, requireMealPlanAccess } from '../../middleware/permission.middleware.js';
@@ -536,6 +538,80 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           })
           .where(eq(recipes.id, request.params.id))
           .returning();
+
+        return {
+          success: true,
+          data: {
+            imageData: processed.data,
+            imageMimeType: processed.mimeType,
+            imageWidth: processed.width,
+            imageHeight: processed.height,
+          },
+        };
+      } catch (error) {
+        throw Errors.badRequest(error instanceof Error ? error.message : 'Failed to process image');
+      }
+    }
+  );
+
+  // Set a recipe image from an existing Files/Photos item. Recipe images are
+  // self-contained (base64 WebP in the recipe row, see imageData) rather than
+  // references, so we COPY: read the stored file, run it through the same
+  // processRecipeImage pipeline as a fresh upload, and embed the result. This
+  // keeps recipes portable/exportable and unaffected if the source photo is
+  // later deleted.
+  app.post<{ Params: { id: string }; Body: { fileId: string } }>(
+    '/:id/image/from-file',
+    { preHandler: [authMiddleware, requireRecipesAccess('edit')] },
+    async (request) => {
+      const { fileId } = z.object({ fileId: z.string().uuid() }).parse(request.body);
+
+      // Recipe must exist in this household.
+      const recipe = await db.query.recipes.findFirst({
+        where: and(
+          eq(recipes.id, request.params.id),
+          eq(recipes.householdId, request.user!.householdId)
+        ),
+      });
+      if (!recipe) {
+        throw Errors.notFound('Recipe');
+      }
+
+      // File must exist, belong to the same household, and be an image.
+      const file = await db.query.files.findFirst({
+        where: and(
+          eq(files.id, fileId),
+          eq(files.householdId, request.user!.householdId)
+        ),
+      });
+      if (!file) {
+        throw Errors.notFound('File');
+      }
+      if (!file.mimeType.startsWith('image/')) {
+        throw Errors.badRequest('That file is not an image.');
+      }
+
+      let imageBuffer: Buffer;
+      try {
+        imageBuffer = await fs.readFile(file.storagePath);
+      } catch {
+        throw Errors.badRequest('The selected file could not be read from storage.');
+      }
+
+      try {
+        const processed = await processRecipeImage(imageBuffer);
+        await db
+          .update(recipes)
+          .set({
+            imageData: processed.data,
+            imageMimeType: processed.mimeType,
+            imageWidth: processed.width,
+            imageHeight: processed.height,
+            // Clear any stale external URL so imageData is the single source.
+            imageUrl: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(recipes.id, request.params.id));
 
         return {
           success: true,
