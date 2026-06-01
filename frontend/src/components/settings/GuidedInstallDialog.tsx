@@ -88,10 +88,21 @@ export function GuidedInstallDialog({
       term.open(termContainerRef.current);
       fit.fit();
 
-      const socket = io('/install', { withCredentials: true });
+      // No auto-reconnect: commands like `update-self` deliberately restart the
+      // backend, which drops this socket. With reconnection on (the default),
+      // socket.io would reconnect to the new backend, fire `connect` again, and
+      // re-emit `start` — re-running the ENTIRE update in a loop every time the
+      // backend restarts, until the user closes the dialog. A dropped socket
+      // here means "the command finished / the server is restarting," not
+      // "retry the command."
+      const socket = io('/install', { withCredentials: true, reconnection: false });
       socketRef.current = socket;
 
+      // Guard against any stray duplicate `connect` — only ever start once.
+      let started = false;
       socket.on('connect', () => {
+        if (started) return;
+        started = true;
         socket.emit('start', {
           id: commandId,
           cols: term.cols,
@@ -116,6 +127,28 @@ export function GuidedInstallDialog({
         setPhase(ok ? 'done' : 'error');
         if (ok) onSuccessRef.current?.();
       });
+
+      // `update-self` deliberately restarts the backend. Normally its script
+      // exits (emitting `exit`) ~3s before the detached restart fires, so the
+      // happy path resolves via `exit`. But if the restart races ahead and
+      // drops this socket while still 'running', treat that as success
+      // ("backend restarting onto the new version") instead of a perpetual
+      // spinner. Scope strictly to update-self: for other commands a mid-run
+      // disconnect is an interruption, not success.
+      if (commandId === 'update-self') {
+        socket.on('disconnect', (reason) => {
+          // Ignore client-initiated disconnects (dialog close / unmount).
+          if (reason === 'io client disconnect') return;
+          setPhase((p) => {
+            if (p === 'running') {
+              term.writeln('\r\n\x1b[32m[connection closed — backend is restarting]\x1b[0m');
+              onSuccessRef.current?.();
+              return 'done';
+            }
+            return p;
+          });
+        });
+      }
 
       socket.on('error', (err: { message: string }) => {
         setErrorMessage(err.message);

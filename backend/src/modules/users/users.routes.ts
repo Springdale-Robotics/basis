@@ -10,6 +10,7 @@ import argon2 from 'argon2';
 
 const updateUserSchema = z.object({
   displayName: z.string().min(1).max(255).optional(),
+  email: z.string().email().max(255).optional(),
   avatarUrl: z.string().url().nullable().optional(),
 });
 
@@ -66,6 +67,23 @@ export async function usersRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const input = updateUserSchema.parse(request.body);
+
+      // Normalize and enforce per-household email uniqueness (matches registration)
+      if (input.email !== undefined) {
+        input.email = input.email.toLowerCase();
+
+        const existingUser = await db.query.users.findFirst({
+          where: and(
+            eq(users.householdId, request.user!.householdId),
+            eq(users.email, input.email)
+          ),
+          columns: { id: true },
+        });
+
+        if (existingUser && existingUser.id !== request.params.id) {
+          throw Errors.duplicate('email');
+        }
+      }
 
       const [updated] = await db
         .update(users)
