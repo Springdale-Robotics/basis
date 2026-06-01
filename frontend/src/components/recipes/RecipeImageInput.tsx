@@ -1,9 +1,11 @@
 import { useState, useRef, useCallback } from 'react';
-import { Upload, Link2, X, Loader2, ImageIcon } from 'lucide-react';
+import { Upload, Link2, X, Loader2, ImageIcon, Images } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/useToast';
+import { filesMediaApi } from '@/api/media';
+import { PhotoPickerDialog } from './PhotoPickerDialog';
 
 // Mirror the server's limits (recipe-image.service.ts) so we reject locally
 // with a clear message instead of letting the user fill out the whole form
@@ -29,6 +31,8 @@ interface RecipeImageInputProps {
   onFileSelect: (file: File) => void;
   /** Callback to fetch image from URL */
   onUrlFetch: (url: string) => void;
+  /** Callback when an existing Files/Photos item is chosen (passes its id). */
+  onPhotoSelect?: (fileId: string) => void;
   /** Callback to remove the current image */
   onRemove: () => void;
   /** Whether image is being processed */
@@ -41,6 +45,7 @@ export function RecipeImageInput({
   currentImage,
   onFileSelect,
   onUrlFetch,
+  onPhotoSelect,
   onRemove,
   isProcessing = false,
   disabled = false,
@@ -49,7 +54,16 @@ export function RecipeImageInput({
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [urlValue, setUrlValue] = useState('');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [showPhotoPicker, setShowPhotoPicker] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handlePhotoChosen = (fileId: string) => {
+    if (!onPhotoSelect) return;
+    // Show the picked photo's thumbnail as an immediate preview; the recipe
+    // save copies + processes the real image server-side.
+    setPreviewImage(filesMediaApi.getThumbnailUrl(fileId, 'lg'));
+    onPhotoSelect(fileId);
+  };
 
   const displayImage = previewImage || currentImage;
 
@@ -219,6 +233,19 @@ export function RecipeImageInput({
             <Link2 className="h-4 w-4 mr-2" />
             From URL
           </Button>
+          {onPhotoSelect && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowPhotoPicker(true)}
+              disabled={disabled}
+              className="flex-1"
+            >
+              <Images className="h-4 w-4 mr-2" />
+              From Photos
+            </Button>
+          )}
         </div>
       )}
 
@@ -245,6 +272,18 @@ export function RecipeImageInput({
             <Link2 className="h-4 w-4 mr-2" />
             From URL
           </Button>
+          {onPhotoSelect && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowPhotoPicker(true)}
+              className="flex-1"
+            >
+              <Images className="h-4 w-4 mr-2" />
+              From Photos
+            </Button>
+          )}
         </div>
       )}
 
@@ -279,6 +318,14 @@ export function RecipeImageInput({
             Cancel
           </Button>
         </div>
+      )}
+
+      {onPhotoSelect && (
+        <PhotoPickerDialog
+          open={showPhotoPicker}
+          onOpenChange={setShowPhotoPicker}
+          onSelect={handlePhotoChosen}
+        />
       )}
     </div>
   );

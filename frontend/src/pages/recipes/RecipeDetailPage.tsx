@@ -100,6 +100,7 @@ export function RecipeDetailPage() {
   // Inline image editing (was previously only possible via the modal editor).
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [pendingImageUrl, setPendingImageUrl] = useState<string | null>(null);
+  const [pendingImageFileId, setPendingImageFileId] = useState<string | null>(null);
   const [imageRemoved, setImageRemoved] = useState(false);
   // Free-text tag entry box (Enter / comma commits).
   const [tagInput, setTagInput] = useState('');
@@ -187,6 +188,8 @@ export function RecipeDetailPage() {
         await recipesApi.uploadImage(id!, imageChange.file);
       } else if (imageChange.type === 'url' && imageChange.url) {
         await recipesApi.uploadImageFromUrl(id!, imageChange.url);
+      } else if (imageChange.type === 'fileId' && imageChange.fileId) {
+        await recipesApi.uploadImageFromFile(id!, imageChange.fileId);
       } else if (imageChange.type === 'remove') {
         await recipesApi.deleteImage(id!);
       }
@@ -214,12 +217,14 @@ export function RecipeDetailPage() {
     if (imageRemoved) return { type: 'remove' };
     if (pendingImageFile) return { type: 'file', file: pendingImageFile };
     if (pendingImageUrl) return { type: 'url', url: pendingImageUrl };
+    if (pendingImageFileId) return { type: 'fileId', fileId: pendingImageFileId };
     return { type: 'none' };
   };
 
   const resetImageState = () => {
     setPendingImageFile(null);
     setPendingImageUrl(null);
+    setPendingImageFileId(null);
     setImageRemoved(false);
     setTagInput('');
   };
@@ -443,9 +448,10 @@ export function RecipeDetailPage() {
           {editMode ? (
             <RecipeImageInput
               currentImage={imageRemoved ? undefined : (existingImageSrc || undefined)}
-              onFileSelect={(file) => { setPendingImageFile(file); setPendingImageUrl(null); setImageRemoved(false); }}
-              onUrlFetch={(url) => { setPendingImageUrl(url); setPendingImageFile(null); setImageRemoved(false); }}
-              onRemove={() => { setPendingImageFile(null); setPendingImageUrl(null); setImageRemoved(true); }}
+              onFileSelect={(file) => { setPendingImageFile(file); setPendingImageUrl(null); setPendingImageFileId(null); setImageRemoved(false); }}
+              onUrlFetch={(url) => { setPendingImageUrl(url); setPendingImageFile(null); setPendingImageFileId(null); setImageRemoved(false); }}
+              onPhotoSelect={(fileId) => { setPendingImageFileId(fileId); setPendingImageFile(null); setPendingImageUrl(null); setImageRemoved(false); }}
+              onRemove={() => { setPendingImageFile(null); setPendingImageUrl(null); setPendingImageFileId(null); setImageRemoved(true); }}
               disabled={inlineSaveMutation.isPending}
             />
           ) : (

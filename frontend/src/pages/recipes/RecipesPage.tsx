@@ -71,6 +71,8 @@ export function RecipesPage() {
         await recipesApi.uploadImage(recipeId, imageChange.file);
       } else if (imageChange.type === 'url' && imageChange.url) {
         await recipesApi.uploadImageFromUrl(recipeId, imageChange.url);
+      } else if (imageChange.type === 'fileId' && imageChange.fileId) {
+        await recipesApi.uploadImageFromFile(recipeId, imageChange.fileId);
       }
 
       return result;
