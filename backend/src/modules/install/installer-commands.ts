@@ -130,11 +130,16 @@ echo "Snapshot saved: $SNAPSHOT"
 
 echo "Installing backend dependencies..."
 cd "$DEST/backend"
-# NOTE: never pass --omit=optional here. sharp ships its native binary in
-# optional platform packages (@img/sharp-linux-*); omitting them yields an
-# empty node_modules/@img and the backend crashes on boot (sharp.js throws),
-# which also takes down the Cloudflare tunnel (1033). Mirrors install.sh.
-npm ci --no-audit --no-fund
+# We sourced /opt/basis/.env above (for the snapshot's DATABASE_URL), which sets
+# NODE_ENV=production. Under that, npm ci OMITS devDependencies — including
+# typescript, which the build needs (npm run build → tsc). The fresh install.sh
+# dodges this only because it runs before .env exists. So force a full install:
+#   --include=dev   so tsc et al. are present to build
+# And never add --omit=optional: sharp ships its native binary in optional
+# platform packages (@img/sharp-linux-*); omitting them yields an empty
+# node_modules/@img and the backend crashes on boot (sharp.js throws), taking
+# the Cloudflare tunnel down with it (1033).
+npm ci --no-audit --no-fund --include=dev
 echo "Building backend..."
 npm run build
 
