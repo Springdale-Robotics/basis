@@ -20,16 +20,35 @@ import { dirname, join } from 'node:path';
 const root = dirname(fileURLToPath(import.meta.url));
 const tscBin = join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc');
 
-const result = spawnSync(tscBin, [], { stdio: 'inherit' });
+// Capture (not inherit) so we can scan for syntax errors; echo it through after.
+const result = spawnSync(tscBin, [], { encoding: 'utf8' });
+const tscOutput = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+process.stdout.write(tscOutput);
 
 if (result.error) {
   console.error(`\nBuild failed — could not run tsc: ${result.error.message}`);
   process.exit(1);
 }
-// tsc exit codes: 0 = clean, 1/2 = type errors (emit still happened). Anything
-// else (or a terminating signal) means tsc itself failed — propagate it.
+// tsc exit codes: 0 = clean, 1/2 = errors (emit still happened). Anything else
+// (or a terminating signal) means tsc itself failed — propagate it.
 if (result.status !== 0 && result.status !== 1 && result.status !== 2) {
   process.exit(result.status ?? 1);
+}
+
+// Type errors (TS2xxx+) are non-fatal here (see header). But SYNTAX errors
+// (TS1xxx) mean tsc emitted CORRUPT JavaScript — and not necessarily in an
+// entrypoint, so the dist/index.js existence check below won't catch them. A
+// stray backtick in a template-literal comment once shipped a broken
+// installer-commands.js this way and crash-looped production on boot. Fail hard
+// on any TS1xxx so corrupt output can never reach a release or an install.
+const syntaxErrors = tscOutput
+  .split('\n')
+  .filter((l) => /error TS1\d{3}:/.test(l));
+if (syntaxErrors.length > 0) {
+  console.error(`\nBuild failed — ${syntaxErrors.length} TypeScript SYNTAX error(s) (TS1xxx).`);
+  console.error('These emit corrupt JS. Fix before releasing/installing:');
+  for (const l of syntaxErrors.slice(0, 10)) console.error(`  ${l.trim()}`);
+  process.exit(1);
 }
 
 const required = ['dist/index.js', 'dist/worker.js'];
