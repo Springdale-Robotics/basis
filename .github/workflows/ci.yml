@@ -35,6 +35,14 @@ jobs:
         working-directory: backend
 
       - name: Unit tests (no infra required)
+        # These tests don't touch the DB/Redis, but importing the app's config
+        # module validates env on load (and exits if it's missing), so provide
+        # syntactically-valid dummy values.
+        env:
+          DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+          REDIS_URL: redis://localhost:6379
+          SESSION_SECRET: ci-session-secret-not-used-in-ci-000000
+          ENCRYPTION_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
         run: npx vitest run src/lib/units.test.ts src/lib/confidence.test.ts src/services/crf-ingredient-parser.test.ts test/lib/tailscale.test.ts
         working-directory: backend
 
