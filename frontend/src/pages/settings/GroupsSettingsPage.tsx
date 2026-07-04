@@ -37,16 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import {
   Collapsible,
   CollapsibleContent,
@@ -220,32 +211,16 @@ export function GroupsSettingsPage() {
       />
 
       {/* Delete Confirmation */}
-      <AlertDialog
+      <ConfirmDialog
         open={!!deletingGroup}
         onOpenChange={(open) => !open && setDeletingGroup(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Group</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete "{deletingGroup?.name}"? This will remove all
-              permissions associated with this group. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => deletingGroup && deleteMutation.mutate(deletingGroup.id)}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {deleteMutation.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title="Delete Group"
+        description={`Are you sure you want to delete "${deletingGroup?.name}"? This will remove all permissions associated with this group. This action cannot be undone.`}
+        confirmText="Delete"
+        variant="destructive"
+        isPending={deleteMutation.isPending}
+        onConfirm={() => deletingGroup && deleteMutation.mutate(deletingGroup.id)}
+      />
     </div>
   );
 }

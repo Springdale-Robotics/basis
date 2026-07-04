@@ -43,6 +43,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ErrorState } from '@/components/shared/ErrorState';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { EditGate } from '@/components/permissions';
 import { TaskRow } from '@/components/tasks/TaskRow';
 import { QuickAddInput } from '@/components/tasks/QuickAddInput';
@@ -97,6 +98,12 @@ export function TasksPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sortBy, setSortBy] = useState<SortBy>(() => storedSort('task'));
+  // Pending delete confirmation: one task (with its title for the copy) or a
+  // bulk set of selected ids.
+  const [deleteTarget, setDeleteTarget] = useState<{
+    ids: string[];
+    title?: string;
+  } | null>(null);
 
   // Re-read sort preference when switching tabs.
   useEffect(() => {
@@ -345,8 +352,15 @@ export function TasksPage() {
       invalidate();
       setEditorOpen(false);
       setEditing(null);
+      setDeleteTarget(null);
     },
   });
+
+  const confirmDelete = () => {
+    if (!deleteTarget) return;
+    deleteTarget.ids.forEach((id) => deleteMutation.mutate(id));
+    setSelectedIds(new Set());
+  };
 
   const claimMutation = useMutation({
     mutationFn: (id: string) => tasksApi.claim(id),
@@ -418,8 +432,7 @@ export function TasksPage() {
     setSelectedIds(new Set());
   };
   const bulkDelete = () => {
-    selectedIds.forEach((id) => deleteMutation.mutate(id));
-    setSelectedIds(new Set());
+    setDeleteTarget({ ids: Array.from(selectedIds) });
   };
   const bulkAssign = (value: AssigneeValue) => {
     selectedIds.forEach((id) =>
@@ -647,7 +660,9 @@ export function TasksPage() {
                         setEditing(task);
                         setEditorOpen(true);
                       }}
-                      onDelete={() => deleteMutation.mutate(task.id)}
+                      onDelete={() =>
+                        setDeleteTarget({ ids: [task.id], title: task.title })
+                      }
                       onTogglePin={() =>
                         updateMutation.mutate({
                           id: task.id,
@@ -684,12 +699,36 @@ export function TasksPage() {
         groups={groups}
         onCreate={(data) => createMutation.mutate(data)}
         onUpdate={(id, data) => updateMutation.mutate({ id, data })}
-        onDelete={(id) => deleteMutation.mutate(id)}
+        onDelete={(id) => {
+          const target = allTasks.find((t) => t.id === id) ?? editing;
+          setDeleteTarget({ ids: [id], title: target?.title });
+        }}
         isSubmitting={
           createMutation.isPending ||
           updateMutation.isPending ||
           deleteMutation.isPending
         }
+      />
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={
+          deleteTarget && deleteTarget.ids.length > 1
+            ? `Delete ${deleteTarget.ids.length} tasks?`
+            : deleteTarget?.title
+            ? `Delete "${deleteTarget.title}"?`
+            : 'Delete task?'
+        }
+        description={
+          deleteTarget && deleteTarget.ids.length > 1
+            ? `The ${deleteTarget.ids.length} selected tasks will be permanently deleted. This action cannot be undone.`
+            : 'This task will be permanently deleted. This action cannot be undone.'
+        }
+        confirmText="Delete"
+        variant="destructive"
+        isPending={deleteMutation.isPending}
+        onConfirm={confirmDelete}
       />
     </div>
   );

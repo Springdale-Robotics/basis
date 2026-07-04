@@ -31,16 +31,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import {
   Select,
   SelectContent,
@@ -467,64 +458,36 @@ export function MembersSettingsPage() {
       </Dialog>
 
       {/* Remove Member Confirmation */}
-      <AlertDialog open={removeMemberDialogOpen} onOpenChange={setRemoveMemberDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove Member</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to remove {selectedMember?.displayName} from your
-              household? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => {
-                if (selectedMember) {
-                  removeMemberMutation.mutate(selectedMember.id);
-                }
-              }}
-              disabled={removeMemberMutation.isPending}
-            >
-              {removeMemberMutation.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              Remove
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={removeMemberDialogOpen}
+        onOpenChange={setRemoveMemberDialogOpen}
+        title="Remove Member"
+        description={`Are you sure you want to remove ${selectedMember?.displayName} from your household? This action cannot be undone.`}
+        confirmText="Remove"
+        variant="destructive"
+        isPending={removeMemberMutation.isPending}
+        onConfirm={() => {
+          if (selectedMember) {
+            removeMemberMutation.mutate(selectedMember.id);
+          }
+        }}
+      />
 
       {/* Revoke Invite Confirmation */}
-      <AlertDialog open={revokeInviteDialogOpen} onOpenChange={setRevokeInviteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Revoke Invite</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to revoke this invite? Anyone with this link will no
-              longer be able to join your household.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => {
-                if (selectedInvite) {
-                  revokeInviteMutation.mutate(selectedInvite.id);
-                }
-              }}
-              disabled={revokeInviteMutation.isPending}
-            >
-              {revokeInviteMutation.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              Revoke
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={revokeInviteDialogOpen}
+        onOpenChange={setRevokeInviteDialogOpen}
+        title="Revoke Invite"
+        description="Are you sure you want to revoke this invite? Anyone with this link will no longer be able to join your household."
+        confirmText="Revoke"
+        variant="destructive"
+        isPending={revokeInviteMutation.isPending}
+        onConfirm={() => {
+          if (selectedInvite) {
+            revokeInviteMutation.mutate(selectedInvite.id);
+          }
+        }}
+      />
     </div>
   );
 }

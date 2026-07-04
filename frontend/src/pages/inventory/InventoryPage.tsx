@@ -34,6 +34,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { SearchInput } from '@/components/shared/SearchInput';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { AreaForm } from '@/components/inventory/AreaForm';
 import { ItemForm } from '@/components/inventory/ItemForm';
 import { BulkAddDialog } from '@/components/inventory/BulkAddDialog';
@@ -158,6 +159,8 @@ export function InventoryPage() {
   const [collapsedAreas, setCollapsedAreas] = useState<Set<string>>(new Set());
   const [reconcileItem, setReconcileItem] = useState<InventoryItem | null>(null);
   const [relinkItem, setRelinkItem] = useState<InventoryItem | null>(null);
+  const [deletingArea, setDeletingArea] = useState<StorageArea | null>(null);
+  const [deletingLeftover, setDeletingLeftover] = useState<Leftover | null>(null);
 
   // Queries
   const { data: areas, isLoading: areasLoading, isError: areasError, error: areasErrorObj, refetch: refetchAreas } = useQuery({
@@ -489,6 +492,7 @@ export function InventoryPage() {
     mutationFn: (id: string) => inventoryApi.deleteArea(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      setDeletingArea(null);
       setEditingArea(null);
       setAreaFormOpen(false);
     },
@@ -656,6 +660,9 @@ export function InventoryPage() {
     mutationFn: (id: string) => inventoryApi.deleteLeftover(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory', 'leftovers'] });
+      setDeletingLeftover(null);
+      setEditingLeftover(null);
+      setLeftoverFormOpen(false);
     },
   });
 
@@ -1601,7 +1608,7 @@ export function InventoryPage() {
                     setEditingLeftover(leftover);
                     setLeftoverFormOpen(true);
                   }}
-                  onDelete={() => deleteLeftoverMutation.mutate(leftover.id)}
+                  onDelete={() => setDeletingLeftover(leftover)}
                 />
               ))}
             </div>
@@ -1624,7 +1631,7 @@ export function InventoryPage() {
             createAreaMutation.mutate(data);
           }
         }}
-        onDelete={editingArea ? () => deleteAreaMutation.mutate(editingArea.id) : undefined}
+        onDelete={editingArea ? () => setDeletingArea(editingArea) : undefined}
         isSubmitting={createAreaMutation.isPending || updateAreaMutation.isPending || deleteAreaMutation.isPending}
       />
 
@@ -1645,24 +1652,24 @@ export function InventoryPage() {
         isSubmitting={createItemMutation.isPending || updateItemMutation.isPending}
       />
 
-      <AlertDialog
-        open={deleteDialog.open}
-        onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {deleteDialog.isBulk
-                ? `Delete ${deleteDialog.items.length} items?`
-                : `Delete "${deleteDialog.items[0]?.name}"?`}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {isAdvanced
-                ? `Choose how you want to remove ${deleteDialog.isBulk ? 'these items' : 'this item'}:`
-                : `This will permanently remove ${deleteDialog.isBulk ? 'these items' : 'this item'}. This cannot be undone.`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {isAdvanced ? (
+      {/* Advanced mode gets a multi-choice dialog (stock-only vs catalog);
+          basic mode uses the shared ConfirmDialog. */}
+      {isAdvanced ? (
+        <AlertDialog
+          open={deleteDialog.open}
+          onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {deleteDialog.isBulk
+                  ? `Delete ${deleteDialog.items.length} items?`
+                  : `Delete "${deleteDialog.items[0]?.name}"?`}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                Choose how you want to remove {deleteDialog.isBulk ? 'these items' : 'this item'}:
+              </AlertDialogDescription>
+            </AlertDialogHeader>
             <div className="grid gap-4 py-4">
               <Card
                 className="cursor-pointer border-2 hover:border-primary transition-colors"
@@ -1687,21 +1694,55 @@ export function InventoryPage() {
                 </CardContent>
               </Card>
             </div>
-          ) : (
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <Button variant="destructive" onClick={() => handleDeleteItems('catalog')}>
-                Delete
-              </Button>
-            </AlertDialogFooter>
-          )}
-          {isAdvanced && (
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
             </AlertDialogFooter>
-          )}
-        </AlertDialogContent>
-      </AlertDialog>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : (
+        <ConfirmDialog
+          open={deleteDialog.open}
+          onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
+          title={
+            deleteDialog.isBulk
+              ? `Delete ${deleteDialog.items.length} items?`
+              : `Delete "${deleteDialog.items[0]?.name}"?`
+          }
+          description={`This will permanently remove ${deleteDialog.isBulk ? 'these items' : 'this item'}. This cannot be undone.`}
+          confirmText="Delete"
+          variant="destructive"
+          isPending={deleteItemMutation.isPending || batchDeleteMutation.isPending}
+          onConfirm={() => handleDeleteItems('catalog')}
+        />
+      )}
+
+      <ConfirmDialog
+        open={!!deletingArea}
+        onOpenChange={(open) => !open && setDeletingArea(null)}
+        title={deletingArea ? `Delete "${deletingArea.name}"?` : 'Delete area?'}
+        description="Stock recorded in this area will be deleted along with it. Items themselves stay in your catalog, but any that used this as their default area will no longer have one. This action cannot be undone."
+        confirmText="Delete"
+        variant="destructive"
+        isPending={deleteAreaMutation.isPending}
+        onConfirm={() => deletingArea && deleteAreaMutation.mutate(deletingArea.id)}
+      />
+
+      <ConfirmDialog
+        open={!!deletingLeftover}
+        onOpenChange={(open) => !open && setDeletingLeftover(null)}
+        title={
+          deletingLeftover
+            ? `Delete "${deletingLeftover.name}"?`
+            : 'Delete leftover?'
+        }
+        description="This leftover will be permanently deleted. This action cannot be undone."
+        confirmText="Delete"
+        variant="destructive"
+        isPending={deleteLeftoverMutation.isPending}
+        onConfirm={() =>
+          deletingLeftover && deleteLeftoverMutation.mutate(deletingLeftover.id)
+        }
+      />
 
       <BulkAddDialog
         open={bulkAddDialogOpen}
@@ -1738,7 +1779,7 @@ export function InventoryPage() {
             createLeftoverMutation.mutate(data);
           }
         }}
-        onDelete={editingLeftover ? () => deleteLeftoverMutation.mutate(editingLeftover.id) : undefined}
+        onDelete={editingLeftover ? () => setDeletingLeftover(editingLeftover) : undefined}
         isSubmitting={createLeftoverMutation.isPending || updateLeftoverMutation.isPending}
       />
 

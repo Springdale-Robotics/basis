@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Card,
@@ -18,6 +19,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ExternalLink, RotateCw, Trash2, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { toast } from '@/hooks/useToast';
 import { bugReportsApi, type BugReportStatus, type BugReportSummary } from '@/api/bug-reports';
 
@@ -53,6 +55,7 @@ function formatDate(iso: string): string {
 
 export function BugReportsSettingsPage() {
   const qc = useQueryClient();
+  const [deleteTarget, setDeleteTarget] = useState<BugReportSummary | null>(null);
   const { data, isLoading } = useQuery({
     queryKey: ['bug-reports'],
     queryFn: bugReportsApi.list,
@@ -78,6 +81,7 @@ export function BugReportsSettingsPage() {
     onSuccess: () => {
       toast({ title: 'Report deleted' });
       qc.invalidateQueries({ queryKey: ['bug-reports'] });
+      setDeleteTarget(null);
     },
     onError: (err) =>
       toast({
@@ -174,7 +178,7 @@ export function BugReportsSettingsPage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => deleteMutation.mutate(r.id)}
+                        onClick={() => setDeleteTarget(r)}
                         disabled={deleteMutation.isPending}
                         title="Delete"
                       >
@@ -188,6 +192,17 @@ export function BugReportsSettingsPage() {
           </Table>
         )}
       </CardContent>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="Delete bug report?"
+        description="The report and its delivery history will be permanently removed. This action cannot be undone."
+        confirmText="Delete"
+        variant="destructive"
+        isPending={deleteMutation.isPending}
+        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+      />
     </Card>
   );
 }

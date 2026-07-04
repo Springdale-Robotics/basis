@@ -18,16 +18,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -263,30 +254,16 @@ export function CalendarPublicLinkCard({ calendar }: CalendarPublicLinkCardProps
       </Card>
 
       {/* Revoke Confirmation Dialog */}
-      <AlertDialog open={showRevokeDialog} onOpenChange={setShowRevokeDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Revoke Public Access?</AlertDialogTitle>
-            <AlertDialogDescription>
-              External calendar apps that have subscribed to this calendar will
-              no longer be able to access it. This action cannot be undone, but
-              you can create a new link at any time.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => revokeMutation.mutate()}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {revokeMutation.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : null}
-              Revoke Access
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={showRevokeDialog}
+        onOpenChange={setShowRevokeDialog}
+        title="Revoke Public Access?"
+        description="External calendar apps that have subscribed to this calendar will no longer be able to access it. This action cannot be undone, but you can create a new link at any time."
+        confirmText="Revoke Access"
+        variant="destructive"
+        isPending={revokeMutation.isPending}
+        onConfirm={() => revokeMutation.mutate()}
+      />
     </>
   );
 }

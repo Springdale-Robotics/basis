@@ -32,16 +32,7 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { calendarsApi } from '@/api/calendars';
 import { IntraHouseholdAccess } from '@/components/calendar/IntraHouseholdAccess';
 import type { Calendar } from '@/types/models';
@@ -95,6 +86,7 @@ export function CalendarForm({
   const [activeTab, setActiveTab] = useState('general');
   const [copiedField, setCopiedField] = useState<'feed' | 'webcal' | null>(null);
   const [showRevokeDialog, setShowRevokeDialog] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const {
     register,
@@ -155,6 +147,12 @@ export function CalendarForm({
   });
 
   useEffect(() => {
+    if (!open) {
+      // Parent closed the dialog (e.g. after a successful delete) — make sure
+      // nested confirmation dialogs don't outlive it.
+      setShowDeleteDialog(false);
+      setShowRevokeDialog(false);
+    }
     if (open) {
       setActiveTab(initialTab);
       if (calendar) {
@@ -273,7 +271,7 @@ export function CalendarForm({
                       <Button
                         type="button"
                         variant="destructive"
-                        onClick={onDelete}
+                        onClick={() => setShowDeleteDialog(true)}
                         disabled={isSubmitting || isDeleting}
                       >
                         {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -550,29 +548,28 @@ export function CalendarForm({
       </Dialog>
 
       {/* Revoke Confirmation Dialog */}
-      <AlertDialog open={showRevokeDialog} onOpenChange={setShowRevokeDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Revoke Public Access?</AlertDialogTitle>
-            <AlertDialogDescription>
-              External calendar apps that have subscribed to this calendar will
-              no longer be able to access it. You can create a new link at any time.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => revokeLinkMutation.mutate()}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {revokeLinkMutation.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              Revoke Access
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={showRevokeDialog}
+        onOpenChange={setShowRevokeDialog}
+        title="Revoke Public Access?"
+        description="External calendar apps that have subscribed to this calendar will no longer be able to access it. You can create a new link at any time."
+        confirmText="Revoke Access"
+        variant="destructive"
+        isPending={revokeLinkMutation.isPending}
+        onConfirm={() => revokeLinkMutation.mutate()}
+      />
+
+      {/* Delete Calendar Confirmation Dialog */}
+      <ConfirmDialog
+        open={showDeleteDialog}
+        onOpenChange={setShowDeleteDialog}
+        title={calendar?.name ? `Delete "${calendar.name}"?` : 'Delete calendar?'}
+        description="This calendar and all of its events will be permanently deleted. This action cannot be undone."
+        confirmText="Delete"
+        variant="destructive"
+        isPending={isDeleting ?? false}
+        onConfirm={() => onDelete?.()}
+      />
     </>
   );
 }

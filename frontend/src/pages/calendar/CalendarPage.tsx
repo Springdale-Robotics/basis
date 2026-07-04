@@ -8,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/shared/ErrorState';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { getErrorMessage } from '@/lib/api-error';
 import { EventForm } from '@/components/calendar/EventForm';
 import { EventDetail } from '@/components/calendar/EventDetail';
@@ -58,6 +59,7 @@ export function CalendarPage() {
   const [defaultEventDate, setDefaultEventDate] = useState<Date | undefined>(undefined);
   const [editRecurringDialogOpen, setEditRecurringDialogOpen] = useState(false);
   const [deleteRecurringDialogOpen, setDeleteRecurringDialogOpen] = useState(false);
+  const [deleteEventConfirmOpen, setDeleteEventConfirmOpen] = useState(false);
   const [pendingFormData, setPendingFormData] = useState<EventFormData | null>(null);
   const [imageParseOpen, setImageParseOpen] = useState(false);
   const queryClient = useQueryClient();
@@ -402,6 +404,7 @@ export function CalendarPage() {
       await queryClient.invalidateQueries({ queryKey: ['events'] });
       setFormOpen(false);
       setDetailOpen(false);
+      setDeleteEventConfirmOpen(false);
       setSelectedEvent(null);
     },
   });
@@ -460,7 +463,7 @@ export function CalendarPage() {
     if (isRecurring) {
       setDeleteRecurringDialogOpen(true);
     } else {
-      deleteMutation.mutate(undefined);
+      setDeleteEventConfirmOpen(true);
     }
   };
 
@@ -980,6 +983,21 @@ export function CalendarPage() {
         onOpenChange={setDeleteRecurringDialogOpen}
         onConfirm={handleDeleteRecurringConfirm}
         eventTitle={selectedEvent?.title}
+      />
+
+      <ConfirmDialog
+        open={deleteEventConfirmOpen}
+        onOpenChange={setDeleteEventConfirmOpen}
+        title={
+          selectedEvent?.title
+            ? `Delete "${selectedEvent.title}"?`
+            : 'Delete event?'
+        }
+        description="This event will be permanently deleted. This action cannot be undone."
+        confirmText="Delete"
+        variant="destructive"
+        isPending={deleteMutation.isPending}
+        onConfirm={() => deleteMutation.mutate(undefined)}
       />
 
       <ImageParseDialog
