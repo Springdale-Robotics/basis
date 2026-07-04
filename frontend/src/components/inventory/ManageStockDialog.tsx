@@ -4,7 +4,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import {
   Dialog,
   DialogContent,
@@ -15,8 +14,9 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { QuantityWeightPromptDialog } from './UnitConversionPromptDialog';
+import { UnitCombobox, AreaCombobox } from '@/components/inventory/fields';
 import type { StorageArea, InventoryItem, StockEntry } from '@/types/models';
-import { unitOptions, calculateTotalStock, convertQuantity, normalizeUnit } from '@/lib/inventory-constants';
+import { calculateTotalStock, convertQuantity, normalizeUnit } from '@/lib/inventory-constants';
 import { isCountUnit as isQuantityUnit } from '@/lib/units';
 import { formatDate, cn } from '@/lib/utils';
 import { inventoryApi } from '@/api/inventory';
@@ -110,22 +110,6 @@ export function ManageStockDialog({
     }
     return lookup;
   }, [areas]);
-
-  // Combobox options
-  const areaComboboxOptions: ComboboxOption[] = useMemo(
-    () =>
-      areas.map((area) => ({
-        value: area.id,
-        label: area.name,
-        icon: <span>{area.icon}</span>,
-      })),
-    [areas]
-  );
-
-  const unitComboboxOptions: ComboboxOption[] = useMemo(
-    () => unitOptions.map((u) => ({ value: u, label: u })),
-    []
-  );
 
   // Check if a conversion exists between two units
   const hasConversion = useCallback((fromUnit: string, toUnit: string): boolean => {
@@ -336,15 +320,12 @@ export function ManageStockDialog({
                             </div>
                             <div>
                               <Label className="text-xs">Unit</Label>
-                              <Combobox
-                                options={unitComboboxOptions}
+                              <UnitCombobox
                                 value={editingStock.unit}
                                 onValueChange={(v) =>
                                   setEditingStock({ ...editingStock, unit: v || 'pieces' })
                                 }
                                 placeholder="Unit"
-                                searchPlaceholder="Search..."
-                                emptyText="Not found"
                               />
                             </div>
                           </div>
@@ -464,13 +445,10 @@ export function ManageStockDialog({
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <Label className="text-xs">Storage Area *</Label>
-                  <Combobox
-                    options={areaComboboxOptions}
+                  <AreaCombobox
+                    areas={areas}
                     value={addForm.areaId}
                     onValueChange={(v) => setAddForm({ ...addForm, areaId: v })}
-                    placeholder="Select area..."
-                    searchPlaceholder="Search areas..."
-                    emptyText="No areas found"
                   />
                 </div>
                 <div>
@@ -486,13 +464,10 @@ export function ManageStockDialog({
                 </div>
                 <div>
                   <Label className="text-xs">Unit</Label>
-                  <Combobox
-                    options={unitComboboxOptions}
+                  <UnitCombobox
                     value={addForm.unit}
                     onValueChange={(v) => setAddForm({ ...addForm, unit: v || 'pieces' })}
                     placeholder="Unit"
-                    searchPlaceholder="Search..."
-                    emptyText="Not found"
                   />
                 </div>
                 <div className="col-span-2">

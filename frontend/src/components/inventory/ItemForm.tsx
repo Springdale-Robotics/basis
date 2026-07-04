@@ -1,11 +1,10 @@
 import { useForm } from 'react-hook-form';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2, Info, Database, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import {
   Dialog,
   DialogContent,
@@ -17,11 +16,13 @@ import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { inventoryItemSchema, type InventoryItemFormData } from '@/types/forms';
 import type { InventoryItem, StorageArea } from '@/types/models';
-import { unitOptions, getUnitOptionsByCategory } from '@/lib/inventory-constants';
+import { getUnitOptionsByCategory } from '@/lib/inventory-constants';
 import { lookupDensityWithSource, type DensityMatch } from '@/lib/ingredient-densities';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
-import { useCategories } from '@/hooks/useCategories';
 import { categoryIcons } from '@/lib/inventory-constants';
+import { UnitCombobox, CategoryCombobox, AreaCombobox } from '@/components/inventory/fields';
+
+const countUnitKeys = getUnitOptionsByCategory('count');
 
 interface ItemFormProps {
   open: boolean;
@@ -48,7 +49,6 @@ export function ItemForm({
 }: ItemFormProps) {
   const isEditing = !!item;
   const { isAdvanced } = useInventoryTier();
-  const { categories } = useCategories();
   const [densitySuggestion, setDensitySuggestion] = useState<DensityMatch | null>(null);
 
   const getDefaultValues = (item: InventoryItem | null | undefined): InventoryItemFormData => {
@@ -159,30 +159,6 @@ export function ItemForm({
     }
   }, [name]);
 
-  const categoryComboboxOptions: ComboboxOption[] = useMemo(
-    () => categories.map((cat) => ({
-      value: cat,
-      label: cat,
-      icon: categoryIcons[cat] ? <span>{categoryIcons[cat]}</span> : undefined,
-    })),
-    [categories]
-  );
-
-  const unitComboboxOptions: ComboboxOption[] = useMemo(
-    () => unitOptions.map((u) => ({ value: u, label: u })),
-    []
-  );
-
-  const areaComboboxOptions: ComboboxOption[] = useMemo(
-    () =>
-      areas.map((area) => ({
-        value: area.id,
-        label: area.name,
-        icon: <span>{area.icon}</span>,
-      })),
-    [areas]
-  );
-
   const handleFormSubmit = (data: InventoryItemFormData) => {
     onSubmit(data);
     reset();
@@ -217,47 +193,31 @@ export function ItemForm({
             </div>
 
             <div className={isAdvanced ? 'grid grid-cols-2 gap-3' : ''}>
-              <div className="space-y-2">
-                <Label>Category</Label>
-                <Combobox
-                  options={categoryComboboxOptions}
-                  value={category}
-                  onValueChange={(value) => setValue('category', value)}
-                  placeholder="Select category"
-                  searchPlaceholder="Search categories..."
-                  emptyText="No category found."
-                  allowClear
-                  clearLabel="No category"
-                />
-              </div>
+              <CategoryCombobox
+                label="Category"
+                value={category}
+                onValueChange={(value) => setValue('category', value)}
+                allowClear
+                clearLabel="No category"
+              />
               {isAdvanced && (
-                <div className="space-y-2">
-                  <Label>Unit</Label>
-                  <Combobox
-                    options={unitComboboxOptions}
-                    value={unit}
-                    onValueChange={(value) => setValue('unit', value || 'pieces')}
-                    placeholder="Select unit"
-                    searchPlaceholder="Search units..."
-                    emptyText="No unit found."
-                  />
-                </div>
+                <UnitCombobox
+                  label="Unit"
+                  value={unit}
+                  onValueChange={(value) => setValue('unit', value || 'pieces')}
+                />
               )}
             </div>
 
-            <div className="space-y-2">
-              <Label>Default Storage Area</Label>
-              <Combobox
-                options={areaComboboxOptions}
-                value={areaId}
-                onValueChange={(value) => setValue('defaultAreaId', value)}
-                placeholder="Select storage area"
-                searchPlaceholder="Search areas..."
-                emptyText="No area found."
-                allowClear
-                clearLabel="No default area"
-              />
-            </div>
+            <AreaCombobox
+              label="Default Storage Area"
+              areas={areas}
+              value={areaId}
+              onValueChange={(value) => setValue('defaultAreaId', value)}
+              placeholder="Select storage area"
+              allowClear
+              clearLabel="No default area"
+            />
           </div>
 
           {/* === Freshness === */}
@@ -423,13 +383,11 @@ export function ItemForm({
             <div className="flex items-end gap-1.5">
               <div className="flex-1 space-y-1">
                 <Label className="text-xs text-muted-foreground">1 of…</Label>
-                <Combobox
-                  options={getUnitOptionsByCategory('count').map((u) => ({ value: u, label: u }))}
+                <UnitCombobox
+                  units={countUnitKeys}
                   value={newConvUnit}
                   onValueChange={setNewConvUnit}
                   placeholder="bottle"
-                  searchPlaceholder="Search units..."
-                  emptyText="No unit found"
                   className="h-9"
                 />
               </div>
@@ -451,13 +409,10 @@ export function ItemForm({
               </div>
               <div className="w-28 space-y-1">
                 <Label className="text-xs text-muted-foreground">Unit</Label>
-                <Combobox
-                  options={unitOptions.map((u) => ({ value: u, label: u }))}
+                <UnitCombobox
                   value={newConvSizeUnit}
                   onValueChange={setNewConvSizeUnit}
                   placeholder="unit"
-                  searchPlaceholder="Search units..."
-                  emptyText="No unit found"
                   className="h-9"
                 />
               </div>

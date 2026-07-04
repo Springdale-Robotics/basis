@@ -26,7 +26,7 @@ import {
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { ShareButton, EditGate } from '@/components/permissions';
-import { EditListDialog } from '@/components/lists/EditListDialog';
+import { ListFormDialog } from '@/components/lists/ListFormDialog';
 import { ChecklistView } from '@/components/lists/ChecklistView';
 import { WishlistView } from '@/components/lists/WishlistView';
 import { NotesView } from '@/components/lists/NotesView';
@@ -201,7 +201,7 @@ export function ListDetailPage() {
         )}
       </div>
 
-      <EditListDialog open={editOpen} onOpenChange={setEditOpen} list={list} />
+      <ListFormDialog open={editOpen} onOpenChange={setEditOpen} list={list} />
 
       <ConfirmDialog
         open={deleteOpen}

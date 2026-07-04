@@ -480,7 +480,7 @@ export function TasksPage() {
       />
 
       <Tabs value={kind} onValueChange={(v) => setKind(v as TaskKind)}>
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <TabsList className="self-start">
             <TabsTrigger value="task">
               Tasks

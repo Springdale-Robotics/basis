@@ -28,7 +28,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ImageParseDialog } from '@/components/image-parse';
-import { CreateListDialog } from '@/components/lists/CreateListDialog';
+import { ListFormDialog } from '@/components/lists/ListFormDialog';
 import { listsApi } from '@/api/lists';
 import { listsOffline } from '@/lib/offline/listsOffline';
 import { getListTypeMeta } from '@/lib/listTypes';
@@ -102,7 +102,7 @@ export function ListsPage() {
         }
       />
 
-      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)}>
           <TabsList>
             <TabsTrigger value="active">Active</TabsTrigger>
@@ -113,7 +113,7 @@ export function ListsPage() {
         <SearchInput
           onChange={setSearch}
           placeholder="Search lists…"
-          className="sm:w-64"
+          className="max-w-sm"
         />
       </div>
 
@@ -124,7 +124,7 @@ export function ListsPage() {
         onSuccess={handleImageParseSuccess}
       />
 
-      <CreateListDialog
+      <ListFormDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
         onCreated={(id) => navigate(`/lists/${id}`)}

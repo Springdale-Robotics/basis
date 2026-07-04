@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery } from '@tanstack/react-query';
@@ -33,7 +33,7 @@ import { RecipeImageInput } from './RecipeImageInput';
 import { filesMediaApi } from '@/api/media';
 import { cn } from '@/lib/utils';
 import type { Recipe, InventoryItem } from '@/types/models';
-import { unitOptions, normalizeUnit } from '@/lib/inventory-constants';
+import { normalizeUnit } from '@/lib/inventory-constants';
 
 export interface RecipeImageChange {
   type: 'file' | 'url' | 'fileId' | 'remove' | 'none';
@@ -244,30 +244,6 @@ interface TagInputProps {
   tags: string[];
   onAddTag: (tag: string) => void;
   onRemoveTag: (tag: string) => void;
-}
-
-interface UnitComboboxProps {
-  value: string;
-  onChange: (value: string) => void;
-}
-
-function UnitCombobox({ value, onChange }: UnitComboboxProps) {
-  const unitComboboxOptions: ComboboxOption[] = useMemo(
-    () => unitOptions.map((u) => ({ value: u, label: u })),
-    []
-  );
-
-  return (
-    <Combobox
-      options={unitComboboxOptions}
-      value={value}
-      onValueChange={onChange}
-      placeholder="Unit"
-      searchPlaceholder="Search units..."
-      emptyText="No unit found"
-      className="h-10"
-    />
-  );
 }
 
 function TagInput({ tags, onAddTag, onRemoveTag }: TagInputProps) {

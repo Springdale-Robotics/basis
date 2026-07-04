@@ -34,7 +34,7 @@ import { UserAvatar } from '@/components/shared/UserAvatar';
 import { Badge } from '@/components/ui/badge';
 import { householdsApi } from '@/api/households';
 import { ItemDetailSheet } from './ItemDetailSheet';
-import { BulkAddDialog } from './BulkAddDialog';
+import { BulkAddItemsDialog } from './BulkAddItemsDialog';
 import { useListMutations } from './useListMutations';
 import { cn, hoverAction } from '@/lib/utils';
 import { formatDueDate, isDueDateOverdue } from '@/lib/due-date';
@@ -414,7 +414,7 @@ export function ChecklistView({ list, items }: ChecklistViewProps) {
         )}
       </div>
 
-      <BulkAddDialog
+      <BulkAddItemsDialog
         open={bulkOpen}
         onOpenChange={setBulkOpen}
         onSubmit={handleBulk}

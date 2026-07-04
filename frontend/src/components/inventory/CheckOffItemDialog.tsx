@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { UnitCombobox } from '@/components/inventory/fields';
 import { cn } from '@/lib/utils';
 import { unitOptions, getUnitOptionsByCategory } from '@/lib/inventory-constants';
 import { getUnitCategory, resolveUnit } from '@/lib/units';
@@ -61,7 +61,7 @@ export function CheckOffItemDialog({
   // Build the picker options: same-dimension first (most likely the user's
   // pick), then the rest of the registry. Pulled from the canonical units
   // table so this stays in sync with every other unit selector in the app.
-  const unitOptionsList: ComboboxOption[] = useMemo(() => {
+  const orderedUnitKeys: string[] = useMemo(() => {
     const dim = dimensionOf(originalUnit);
     const primary = dim !== 'unknown' ? getUnitOptionsByCategory(dim) : [];
     const seen = new Set<string>();
@@ -72,7 +72,7 @@ export function CheckOffItemDialog({
         ordered.push(u);
       }
     }
-    return ordered.map((u) => ({ value: u, label: u }));
+    return ordered;
   }, [originalUnit]);
 
   // Same-dimension swaps (e.g., fl oz ↔ tbsp) always convert without extra
@@ -152,13 +152,11 @@ export function CheckOffItemDialog({
               >
                 <Plus className="h-4 w-4" />
               </Button>
-              <Combobox
-                options={unitOptionsList}
+              <UnitCombobox
+                units={orderedUnitKeys}
                 value={unit}
                 onValueChange={setUnit}
                 placeholder="unit"
-                searchPlaceholder="Search units..."
-                emptyText="No unit found"
                 className="w-32"
               />
             </div>

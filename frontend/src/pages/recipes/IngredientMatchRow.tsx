@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { Check, X, ChevronDown, Plus, Loader2, Link2, Unlink, AlertCircle } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
@@ -8,7 +8,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { UnitCombobox, CategoryCombobox, AreaCombobox } from '@/components/inventory/fields';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchInput } from '@/components/shared/SearchInput';
@@ -16,7 +16,7 @@ import { inventoryApi } from '@/api/inventory';
 import { recipesApi, type IngredientMatch, type MatchSuggestion, type MatchReason } from '@/api/recipes';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { unitOptions, categoryOptions, normalizeUnit } from '@/lib/inventory-constants';
+import { normalizeUnit } from '@/lib/inventory-constants';
 import { getUnitCategoryForDensity } from '@/lib/unit-conversions';
 import { isCountUnit as isQuantityUnit } from '@/lib/units';
 
@@ -112,22 +112,6 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
   const areas = areasData?.areas || [];
   const suggestions = suggestionsData?.suggestions || match.suggestions || [];
 
-  // Memoized options for comboboxes
-  const unitComboboxOptions: ComboboxOption[] = useMemo(
-    () => unitOptions.map((u) => ({ value: u, label: u })),
-    []
-  );
-
-  const categoryComboboxOptions: ComboboxOption[] = useMemo(
-    () => categoryOptions.map((c) => ({ value: c.toLowerCase(), label: c })),
-    []
-  );
-
-  const areaComboboxOptions: ComboboxOption[] = useMemo(
-    () => areas.map((a) => ({ value: a.id, label: a.name })),
-    [areas]
-  );
-
   const handleSelect = (itemId: string, itemName: string) => {
     // With density-based conversions, just link directly
     onUpdate(match.parsedName, itemId, itemName, recipeUnit);
@@ -191,16 +175,13 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
             <span className="font-medium text-muted-foreground">{match.parsedQuantity}</span>
           )}
           {/* Inline unit dropdown */}
-          <Combobox
-            options={unitComboboxOptions}
+          <UnitCombobox
             value={recipeUnit}
             onValueChange={(newUnit) => {
               setRecipeUnit(newUnit);
               onUpdate(match.parsedName, match.matchedItemId, match.matchedItemName, newUnit);
             }}
             placeholder="unit"
-            searchPlaceholder="Search units..."
-            emptyText="No unit found"
             allowClear
             clearLabel="None"
             className="h-7 px-2.5 text-sm font-medium text-muted-foreground bg-muted/50 hover:bg-muted border-dashed w-auto min-w-[90px]"
@@ -414,13 +395,10 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
 
                     <div className="space-y-1.5">
                       <Label>Default Unit (Inventory)</Label>
-                      <Combobox
-                        options={unitComboboxOptions}
+                      <UnitCombobox
                         value={newItemUnit}
                         onValueChange={setNewItemUnit}
                         placeholder="How you store this item"
-                        searchPlaceholder="Search units..."
-                        emptyText="No unit found"
                         allowClear
                         clearLabel="None"
                       />
@@ -443,28 +421,23 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
 
                     <div className="space-y-1.5">
                       <Label>Category</Label>
-                      <Combobox
-                        options={categoryComboboxOptions}
+                      <CategoryCombobox
                         value={newItemCategory}
                         onValueChange={setNewItemCategory}
                         placeholder="Select category (optional)"
-                        searchPlaceholder="Search categories..."
-                        emptyText="No category found"
                         allowClear
                         clearLabel="None"
                       />
                     </div>
 
-                    {areaComboboxOptions.length > 0 && (
+                    {areas.length > 0 && (
                       <div className="space-y-1.5">
                         <Label>Default Storage Area</Label>
-                        <Combobox
-                          options={areaComboboxOptions}
+                        <AreaCombobox
+                          areas={areas}
                           value={newItemAreaId}
                           onValueChange={setNewItemAreaId}
                           placeholder="Select area (optional)"
-                          searchPlaceholder="Search areas..."
-                          emptyText="No area found"
                           allowClear
                           clearLabel="None"
                         />

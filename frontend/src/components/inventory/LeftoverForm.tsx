@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { AreaCombobox } from '@/components/inventory/fields';
 import {
   Dialog,
   DialogContent,
@@ -145,16 +146,6 @@ export function LeftoverForm({
     [recipesData]
   );
 
-  const areaComboboxOptions: ComboboxOption[] = useMemo(
-    () =>
-      areas.map((area) => ({
-        value: area.id,
-        label: area.name,
-        icon: <span>{area.icon}</span>,
-      })),
-    [areas]
-  );
-
   const handleFormSubmit = (data: LeftoverFormData) => {
     onSubmit(data);
     reset();
@@ -243,19 +234,15 @@ export function LeftoverForm({
             </div>
           )}
 
-          <div className="space-y-2">
-            <Label>Storage Area</Label>
-            <Combobox
-              options={areaComboboxOptions}
-              value={areaId || ''}
-              onValueChange={(value) => setValue('areaId', value)}
-              placeholder="Select storage area"
-              searchPlaceholder="Search areas..."
-              emptyText="No area found."
-              allowClear
-              clearLabel="No area"
-            />
-          </div>
+          <AreaCombobox
+            label="Storage Area"
+            areas={areas}
+            value={areaId || ''}
+            onValueChange={(value) => setValue('areaId', value)}
+            placeholder="Select storage area"
+            allowClear
+            clearLabel="No area"
+          />
 
           {isAdvanced && (
             <div className="grid grid-cols-2 gap-4">

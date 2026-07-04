@@ -11,13 +11,13 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 
-interface BulkAddDialogProps {
+interface BulkAddItemsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (lines: string[]) => Promise<void> | void;
 }
 
-export function BulkAddDialog({ open, onOpenChange, onSubmit }: BulkAddDialogProps) {
+export function BulkAddItemsDialog({ open, onOpenChange, onSubmit }: BulkAddItemsDialogProps) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
 

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { AreaCombobox } from '@/components/inventory/fields';
 import {
   Dialog,
   DialogContent,
@@ -103,16 +104,6 @@ export function PutAwayDialog({
 
   const itemsWithDefaultArea = putAwayItems.filter(item => item.areaId).length;
   const itemsWithoutDefaultArea = putAwayItems.filter(item => !item.areaId).length;
-
-  const areaOptions: ComboboxOption[] = useMemo(
-    () =>
-      areas.map((area) => ({
-        value: area.id,
-        label: area.name,
-        icon: <span>{area.icon}</span>,
-      })),
-    [areas]
-  );
 
   const inventoryOptions: ComboboxOption[] = useMemo(
     () =>
@@ -473,13 +464,11 @@ export function PutAwayDialog({
             <div className="space-y-4">
               <div>
                 <Label>Storage Area *</Label>
-                <Combobox
-                  options={areaOptions}
+                <AreaCombobox
+                  areas={areas}
                   value={currentItem.areaId}
                   onValueChange={(v) => updateCurrentItem({ areaId: v })}
                   placeholder="Select where to store..."
-                  searchPlaceholder="Search areas..."
-                  emptyText="No areas found"
                 />
                 {!currentItem.areaId && (
                   <p className="text-xs text-muted-foreground mt-1">

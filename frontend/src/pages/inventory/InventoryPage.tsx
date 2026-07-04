@@ -45,7 +45,7 @@ import { FixIncompleteItemDialog } from '@/components/inventory/FixIncompleteIte
 import { ReconcileDialog } from '@/components/inventory/ReconcileDialog';
 import { RelinkDialog } from '@/components/inventory/RelinkDialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { CategoryCombobox, AreaCombobox } from '@/components/inventory/fields';
 import { inventoryApi } from '@/api/inventory';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
@@ -362,26 +362,6 @@ export function InventoryPage() {
 
     return { groups, unassigned };
   }, [filteredItems, itemStockTotals]);
-
-  // Filter options
-  const categoryFilterOptions: ComboboxOption[] = useMemo(
-    () => categories.map((cat) => ({
-      value: cat,
-      label: cat,
-      icon: categoryIcons[cat] ? <span>{categoryIcons[cat]}</span> : undefined,
-    })),
-    [categories]
-  );
-
-  const areaFilterOptions: ComboboxOption[] = useMemo(
-    () =>
-      (areas?.areas || []).map((area) => ({
-        value: area.id,
-        label: area.name,
-        icon: <span>{area.icon}</span>,
-      })),
-    [areas]
-  );
 
   // Sort function
   const sortItems = useCallback(
@@ -1220,45 +1200,40 @@ export function InventoryPage() {
           </SelectContent>
         </Select>
         <div className="w-[180px]">
-          <Combobox
-            options={areaFilterOptions}
+          <AreaCombobox
+            areas={areas?.areas || []}
             value={selectedArea || ''}
             onValueChange={(value) => setSelectedArea(value || undefined)}
             placeholder="All Areas"
-            searchPlaceholder="Search areas..."
-            emptyText="No area found."
             allowClear
             clearLabel="All Areas"
           />
         </div>
         <div className="w-[180px]">
-          <Combobox
-            options={categoryFilterOptions}
+          <CategoryCombobox
             value={selectedCategory || ''}
             onValueChange={(value) => setSelectedCategory(value || undefined)}
             placeholder="All Categories"
-            searchPlaceholder="Search categories..."
-            emptyText="No category found."
             allowClear
             clearLabel="All Categories"
           />
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        {(['all', 'in-stock', 'not-in-stock'] as const).map((filter) => (
-          <Button
-            key={filter}
-            variant={stockFilter === filter ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setStockFilter(filter)}
-          >
-            {filter === 'all' ? 'All' : filter === 'in-stock' ? 'In Stock' : 'Not in Stock'}
-          </Button>
-        ))}
-      </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {(['all', 'in-stock', 'not-in-stock'] as const).map((filter) => (
+            <Button
+              key={filter}
+              variant={stockFilter === filter ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setStockFilter(filter)}
+            >
+              {filter === 'all' ? 'All' : filter === 'in-stock' ? 'In Stock' : 'Not in Stock'}
+            </Button>
+          ))}
+        </div>
         {!bulkMode && (
-          <>
+          <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => setBulkMode(true)}>
               <Check className="mr-2 h-4 w-4" />
               Select Multiple
@@ -1271,7 +1246,7 @@ export function InventoryPage() {
               <Plus className="mr-2 h-4 w-4" />
               Bulk Add
             </Button>
-          </>
+          </div>
         )}
       </div>
     </div>

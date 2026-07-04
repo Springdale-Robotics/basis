@@ -4,7 +4,6 @@ import { ClipboardCheck, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import {
   Dialog,
   DialogContent,
@@ -14,8 +13,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ConfidenceBadge, type ConfidenceBand } from './ConfidenceBadge';
+import { UnitCombobox, AreaCombobox } from '@/components/inventory/fields';
 import type { StorageArea, InventoryItem } from '@/types/models';
-import { unitOptions } from '@/lib/inventory-constants';
 import { inventoryApi } from '@/api/inventory';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
@@ -61,17 +60,6 @@ export function ReconcileDialog({ open, onOpenChange, item, areas, currentConfid
     },
   });
 
-  const areaOptions: ComboboxOption[] = areas.map((area) => ({
-    value: area.id,
-    label: area.name,
-    icon: <span>{area.icon}</span>,
-  }));
-
-  const unitSelectOptions: ComboboxOption[] = unitOptions.map((u) => ({
-    value: u,
-    label: u,
-  }));
-
   if (!item) return null;
 
   return (
@@ -110,30 +98,15 @@ export function ReconcileDialog({ open, onOpenChange, item, areas, currentConfid
                 autoFocus
               />
             </div>
-            <div className="space-y-2">
-              <Label>Unit</Label>
-              <Combobox
-                options={unitSelectOptions}
-                value={unit}
-                onValueChange={setUnit}
-                placeholder="Select unit"
-                searchPlaceholder="Search units..."
-                emptyText="No unit found"
-              />
-            </div>
+            <UnitCombobox label="Unit" value={unit} onValueChange={setUnit} />
           </div>
 
-          <div className="space-y-2">
-            <Label>Storage Area</Label>
-            <Combobox
-              options={areaOptions}
-              value={areaId}
-              onValueChange={setAreaId}
-              placeholder="Select area"
-              searchPlaceholder="Search areas..."
-              emptyText="No area found"
-            />
-          </div>
+          <AreaCombobox
+            label="Storage Area"
+            areas={areas}
+            value={areaId}
+            onValueChange={setAreaId}
+          />
         </div>
 
         <DialogFooter>

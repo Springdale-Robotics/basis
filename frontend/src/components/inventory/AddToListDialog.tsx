@@ -15,11 +15,10 @@ import {
 } from '@/components/ui/dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { UnitCombobox, CategoryCombobox, AreaCombobox } from '@/components/inventory/fields';
 import { SearchInput } from '@/components/shared/SearchInput';
 import { inventoryApi } from '@/api/inventory';
 import type { StorageArea, InventoryItem } from '@/types/models';
-import { categoryOptions, unitOptions } from '@/lib/inventory-constants';
 import { lookupDensity } from '@/lib/ingredient-densities';
 
 interface AddToListDialogProps {
@@ -97,26 +96,6 @@ export function AddToListDialog({
   const selectedItem = useMemo(
     () => inventoryItems.find((item) => item.id === selectedItemId),
     [inventoryItems, selectedItemId]
-  );
-
-  const areaOptions: ComboboxOption[] = useMemo(
-    () =>
-      areas.map((area) => ({
-        value: area.id,
-        label: area.name,
-        icon: <span>{area.icon}</span>,
-      })),
-    [areas]
-  );
-
-  const categoryComboboxOptions: ComboboxOption[] = useMemo(
-    () => categoryOptions.map((cat) => ({ value: cat, label: cat })),
-    []
-  );
-
-  const unitComboboxOptions: ComboboxOption[] = useMemo(
-    () => unitOptions.map((u) => ({ value: u, label: u })),
-    []
   );
 
   // Auto-suggest density for new items
@@ -338,45 +317,29 @@ export function AddToListDialog({
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Category</Label>
-                <Combobox
-                  options={categoryComboboxOptions}
-                  value={newItem.category}
-                  onValueChange={(v) => updateNewItem({ category: v })}
-                  placeholder="Select category"
-                  searchPlaceholder="Search..."
-                  emptyText="No category found"
-                  allowClear
-                  clearLabel="No category"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Unit</Label>
-                <Combobox
-                  options={unitComboboxOptions}
-                  value={newItem.unit}
-                  onValueChange={(v) => updateNewItem({ unit: v || 'pieces' })}
-                  placeholder="Select unit"
-                  searchPlaceholder="Search..."
-                  emptyText="No unit found"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Default Storage Area</Label>
-              <Combobox
-                options={areaOptions}
-                value={newItem.defaultAreaId}
-                onValueChange={(v) => updateNewItem({ defaultAreaId: v })}
-                placeholder="Select storage area"
-                searchPlaceholder="Search areas..."
-                emptyText="No area found"
+              <CategoryCombobox
+                label="Category"
+                value={newItem.category}
+                onValueChange={(v) => updateNewItem({ category: v })}
                 allowClear
-                clearLabel="No default area"
+                clearLabel="No category"
+              />
+              <UnitCombobox
+                label="Unit"
+                value={newItem.unit}
+                onValueChange={(v) => updateNewItem({ unit: v || 'pieces' })}
               />
             </div>
+
+            <AreaCombobox
+              label="Default Storage Area"
+              areas={areas}
+              value={newItem.defaultAreaId}
+              onValueChange={(v) => updateNewItem({ defaultAreaId: v })}
+              placeholder="Select storage area"
+              allowClear
+              clearLabel="No default area"
+            />
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
