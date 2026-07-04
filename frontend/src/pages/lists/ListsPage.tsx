@@ -30,6 +30,7 @@ import {
 import { ImageParseDialog } from '@/components/image-parse';
 import { CreateListDialog } from '@/components/lists/CreateListDialog';
 import { listsApi } from '@/api/lists';
+import { listsOffline } from '@/lib/offline/listsOffline';
 import { getListTypeMeta } from '@/lib/listTypes';
 import { cn } from '@/lib/utils';
 import type { List } from '@/types/models';
@@ -49,8 +50,10 @@ export function ListsPage() {
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['lists', { includeArchived, onlyTemplates, search }],
+    // Offline-aware read: the default (active) view is snapshotted to
+    // IndexedDB and served from there when the fetch fails while offline.
     queryFn: () =>
-      listsApi.list({
+      listsOffline.list({
         includeArchived,
         onlyTemplates,
         search: search || undefined,
@@ -137,7 +140,9 @@ export function ListsPage() {
             <Skeleton key={i} className="h-32" />
           ))}
         </div>
-      ) : isError ? (
+      ) : isError && !data ? (
+        // Only when there's nothing to render — a failed background refetch
+        // (e.g. offline) keeps showing the cached lists.
         <ErrorState
           title="Couldn't load lists"
           error={error}

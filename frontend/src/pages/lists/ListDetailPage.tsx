@@ -31,6 +31,7 @@ import { ChecklistView } from '@/components/lists/ChecklistView';
 import { WishlistView } from '@/components/lists/WishlistView';
 import { NotesView } from '@/components/lists/NotesView';
 import { listsApi } from '@/api/lists';
+import { listsOffline } from '@/lib/offline/listsOffline';
 import { getListTypeMeta } from '@/lib/listTypes';
 import { cn } from '@/lib/utils';
 
@@ -43,7 +44,9 @@ export function ListDetailPage() {
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['lists', id],
-    queryFn: () => listsApi.get(id!),
+    // Offline-aware read: snapshots successful responses to IndexedDB and
+    // serves the snapshot when the fetch fails while offline.
+    queryFn: () => listsOffline.getList(id!),
     enabled: !!id,
   });
 
@@ -81,7 +84,9 @@ export function ListDetailPage() {
       </div>
     );
   }
-  if (isError) {
+  // Only show the error state when we have nothing to render — a failed
+  // background refetch (e.g. offline) keeps showing the cached list.
+  if (isError && !data) {
     return (
       <ErrorState
         title="Couldn't load list"

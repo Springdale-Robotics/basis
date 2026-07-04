@@ -1,16 +1,40 @@
 import { listsApi } from '@/api/lists';
+import { queryClient } from '@/providers/QueryProvider';
 import { offlineDb, type QueuedMutation } from './db';
 
-type DrainListener = (status: { remaining: number; lastError?: string }) => void;
-const listeners = new Set<DrainListener>();
+export interface SyncStatus {
+  /** Queued mutations still waiting to be replayed. */
+  remaining: number;
+  /**
+   * Cumulative count of mutations discarded during the current drain run
+   * because the server permanently rejected them (4xx). Resets to 0 at the
+   * start of each run.
+   */
+  discarded: number;
+  /** Message from the most recent permanent failure, if any. */
+  lastError?: string;
+}
 
-export function onDrain(cb: DrainListener) {
+type SyncListener = (status: SyncStatus) => void;
+const listeners = new Set<SyncListener>();
+
+export function onDrain(cb: SyncListener) {
   listeners.add(cb);
   return () => listeners.delete(cb);
 }
 
-function notify(remaining: number, lastError?: string) {
-  for (const cb of listeners) cb({ remaining, lastError });
+function notify(status: SyncStatus) {
+  for (const cb of listeners) cb(status);
+}
+
+/**
+ * Re-count the queue and notify listeners. Called when a mutation is enqueued
+ * (so the OfflineIndicator can show a pending count while offline) and by the
+ * indicator on mount to pick up a queue persisted across reloads.
+ */
+export async function announceQueueSize(): Promise<void> {
+  const remaining = (await offlineDb.queue.all()).length;
+  notify({ remaining, discarded: 0 });
 }
 
 /**
@@ -99,14 +123,21 @@ let draining = false;
 /**
  * Drain the queue oldest-first. Stops on first transient failure. Pops on
  * success or permanent failure (we deliberately discard mutations that the
- * server rejects so we don't get stuck in a loop).
+ * server rejects so we don't get stuck in a loop). Discards are surfaced to
+ * listeners via `discarded`/`lastError` so the UI can tell the user.
+ *
+ * After a run that touched the server (replayed or discarded anything), the
+ * lists queries are invalidated so ghost offline items get reconciled with
+ * server truth.
  */
 export async function drainQueue(): Promise<void> {
   if (draining) return;
   draining = true;
+  let discarded = 0;
+  let replayed = 0;
   try {
     let remaining = (await offlineDb.queue.all()).length;
-    notify(remaining);
+    notify({ remaining, discarded });
     while (true) {
       const queue = await offlineDb.queue.all();
       if (queue.length === 0) break;
@@ -116,23 +147,29 @@ export async function drainQueue(): Promise<void> {
         ok = await replay(head);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        // Permanent — drop it.
+        // Permanent — drop it, and tell listeners so the user finds out.
         await offlineDb.queue.pop(head.id);
-        notify(remaining - 1, msg);
         remaining -= 1;
+        discarded += 1;
+        notify({ remaining, discarded, lastError: msg });
         continue;
       }
       if (!ok) {
         // Transient — stop draining, try again on next reconnect.
-        notify(remaining);
+        notify({ remaining, discarded });
         break;
       }
       await offlineDb.queue.pop(head.id);
       remaining -= 1;
-      notify(remaining);
+      replayed += 1;
+      notify({ remaining, discarded });
     }
   } finally {
     draining = false;
+    if (replayed > 0 || discarded > 0) {
+      // Replace ghost/offline cache entries with server truth.
+      void queryClient.invalidateQueries({ queryKey: ['lists'] });
+    }
   }
 }
 
