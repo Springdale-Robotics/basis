@@ -443,7 +443,7 @@ function MealChip({
             {servingsLabel}
           </span>
         )}
-        {cooked && <Check className="h-3 w-3 shrink-0 text-emerald-600" />}
+        {cooked && <Check className="h-3 w-3 shrink-0 text-success" />}
       </button>
     );
   }
@@ -473,7 +473,7 @@ function MealChip({
           </div>
         )}
         {cooked && (
-          <div className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm">
+          <div className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-success text-success-foreground shadow-sm">
             <Check className="h-2.5 w-2.5" />
           </div>
         )}

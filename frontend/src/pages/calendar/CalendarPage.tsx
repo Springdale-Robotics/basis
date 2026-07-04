@@ -1,3 +1,4 @@
+import { DEFAULT_COLOR } from '@/components/calendar/calendar-utils';
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, ChevronLeft, ChevronRight, Keyboard, PanelLeftClose, PanelLeft, Camera, Share2, MoreVertical } from 'lucide-react';
@@ -509,7 +510,7 @@ export function CalendarPage() {
     if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
       return getColorForIndex(colorPalette, calendar.colorIndex);
     }
-    return calendar.color || '#4A90D9';
+    return calendar.color || DEFAULT_COLOR;
   };
 
   // Filter events by visible calendars

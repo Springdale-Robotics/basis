@@ -44,8 +44,8 @@ export function ForgotPasswordForm() {
   if (success) {
     return (
       <div className="space-y-4 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
-          <CheckCircle className="h-6 w-6 text-green-600" />
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-success-muted">
+          <CheckCircle className="h-6 w-6 text-success" />
         </div>
         <h3 className="text-lg font-medium">Check your email</h3>
         <p className="text-sm text-muted-foreground">

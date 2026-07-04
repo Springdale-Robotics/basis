@@ -876,7 +876,7 @@ export function InventoryPage() {
               {item.needsConversion && (
                 <Badge
                   variant="outline"
-                  className="shrink-0 border-amber-500/40 bg-amber-50 text-amber-900 text-[10px] py-0 px-1.5 dark:bg-amber-950/40 dark:text-amber-200"
+                  className="shrink-0 border-warning/40 bg-warning-muted text-warning-muted-foreground text-[10px] py-0 px-1.5"
                   title="This item's stock units can't be converted to the units your recipes use. Edit the item and add a density or a conversion to bridge them."
                 >
                   Needs conversion
@@ -900,7 +900,7 @@ export function InventoryPage() {
                     <span className={cn(
                       'flex items-center gap-0.5',
                       daysLeft < 0 && 'text-destructive',
-                      daysLeft >= 0 && daysLeft <= 7 && 'text-orange-500'
+                      daysLeft >= 0 && daysLeft <= 7 && 'text-warning'
                     )}>
                       <Clock className="h-3 w-3" />
                       Expires {formatDate(displayExpiry)} {relativeText}

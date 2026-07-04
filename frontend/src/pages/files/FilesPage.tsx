@@ -857,7 +857,7 @@ function FileGridItem({ file, thumbnailSize = 'md', onClick, onDownload, onDelet
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <span>{isFolder ? 'Folder' : formatFileSize(getFileSize(file))}</span>
             {fileIsRestricted && (
-              <Badge variant="outline" className="ml-1 text-xs border-amber-500 text-amber-600">
+              <Badge variant="outline" className="ml-1 text-xs border-warning text-warning">
                 <Lock className="mr-1 h-3 w-3" />
                 Restricted
               </Badge>
@@ -982,7 +982,7 @@ function FileListItem({ file, onClick, onDownload, onDelete, onMove, onRestrict,
             <div className="flex items-center gap-2">
               <p className="truncate font-medium">{getFileName(file)}</p>
               {fileIsRestricted && (
-                <Badge variant="outline" className="text-xs shrink-0 border-amber-500 text-amber-600">
+                <Badge variant="outline" className="text-xs shrink-0 border-warning text-warning">
                   <Lock className="mr-1 h-3 w-3" />
                   Restricted
                 </Badge>
@@ -1116,7 +1116,7 @@ function MediaPreviewModal({ file, files, onClose, onNavigate }: MediaPreviewMod
     >
       {/* Close button */}
       <button
-        className="absolute top-4 right-4 text-white hover:text-gray-300 z-10"
+        className="absolute top-4 right-4 text-white hover:text-white/70 z-10"
         onClick={onClose}
       >
         <span className="sr-only">Close</span>
@@ -1173,7 +1173,7 @@ function MediaPreviewModal({ file, files, onClose, onNavigate }: MediaPreviewMod
         <div className="flex items-center justify-between">
           <div>
             <p className="font-medium">{getFileName(file)}</p>
-            <p className="text-sm text-gray-300">
+            <p className="text-sm text-white/70">
               {formatDate(file.createdAt)} &middot; {formatFileSize(getFileSize(file))}
             </p>
           </div>

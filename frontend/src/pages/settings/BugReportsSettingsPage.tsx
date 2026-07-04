@@ -28,7 +28,7 @@ import { bugReportsApi, type BugReportStatus, type BugReportSummary } from '@/ap
 function StatusBadge({ status }: { status: BugReportStatus }) {
   if (status === 'sent') {
     return (
-      <Badge variant="default" className="bg-green-600 hover:bg-green-600">
+      <Badge variant="default" className="bg-success text-success-foreground hover:bg-success">
         <CheckCircle2 className="mr-1 h-3 w-3" />
         sent
       </Badge>

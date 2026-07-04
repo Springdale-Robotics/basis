@@ -9,8 +9,8 @@ interface SetupCompleteProps {
 export function SetupComplete({ onComplete, isLoading }: SetupCompleteProps) {
   return (
     <div className="text-center">
-      <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
-        <CheckCircle2 className="h-8 w-8 text-green-600" />
+      <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-success-muted">
+        <CheckCircle2 className="h-8 w-8 text-success" />
       </div>
 
       <div className="mb-2 flex items-center justify-center gap-2">

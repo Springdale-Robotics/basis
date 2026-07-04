@@ -66,8 +66,8 @@ function getAgeBadgeVariant(daysOld: number): 'default' | 'secondary' | 'destruc
 }
 
 function getAgeBadgeClass(daysOld: number): string {
-  if (daysOld <= 3) return 'bg-green-500/15 text-green-700 border-green-500/30';
-  if (daysOld <= 6) return 'bg-yellow-500/15 text-yellow-700 border-yellow-500/30';
+  if (daysOld <= 3) return 'bg-success-muted text-success-muted-foreground border-success/30';
+  if (daysOld <= 6) return 'bg-warning-muted text-warning-muted-foreground border-warning/30';
   return ''; // destructive variant handles red
 }
 

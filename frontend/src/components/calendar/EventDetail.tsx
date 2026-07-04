@@ -1,3 +1,4 @@
+import { DEFAULT_COLOR } from './calendar-utils';
 import { format } from 'date-fns';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -82,7 +83,7 @@ export function EventDetail({
     if (calendar?.colorIndex !== undefined && calendar.colorIndex >= 0) {
       return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
     }
-    return calendar?.color || '#4A90D9';
+    return calendar?.color || DEFAULT_COLOR;
   };
   const calColor = getCalendarColor();
 

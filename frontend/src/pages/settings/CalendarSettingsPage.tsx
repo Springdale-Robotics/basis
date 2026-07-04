@@ -1,3 +1,4 @@
+import { DEFAULT_COLOR } from '@/components/calendar/calendar-utils';
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams, Link } from 'react-router-dom';
@@ -65,7 +66,7 @@ export function CalendarSettingsPage() {
     if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
       return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
     }
-    return calendar.color || '#4A90D9';
+    return calendar.color || DEFAULT_COLOR;
   };
 
   // Dialog states
@@ -74,7 +75,7 @@ export function CalendarSettingsPage() {
   const [selectedGoogleCalendar, setSelectedGoogleCalendar] = useState('');
   const [selectedOutlookCalendar, setSelectedOutlookCalendar] = useState('');
   const [calendarName, setCalendarName] = useState('');
-  const [calendarColor, setCalendarColor] = useState('#3B82F6');
+  const [calendarColor, setCalendarColor] = useState(DEFAULT_COLOR);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importFilePickerOpen, setImportFilePickerOpen] = useState(false);
@@ -280,7 +281,7 @@ export function CalendarSettingsPage() {
     setSelectedGoogleCalendar('');
     setSelectedOutlookCalendar('');
     setCalendarName('');
-    setCalendarColor('#3B82F6');
+    setCalendarColor(DEFAULT_COLOR);
   };
 
   const calendars = calendarsData?.calendars || [];
@@ -898,7 +899,7 @@ function SyncedCalendarItem({
       const lastSync = new Date(calendar.lastSyncAt);
       const hoursSince = (Date.now() - lastSync.getTime()) / (1000 * 60 * 60);
       if (hoursSince < 2) {
-        return <Badge variant="default" className="bg-green-500">Synced</Badge>;
+        return <Badge variant="default" className="bg-success text-success-foreground">Synced</Badge>;
       }
     }
     return <Badge variant="secondary">Pending</Badge>;
@@ -1004,7 +1005,7 @@ function CalendarNameColorInputs({
           <Input
             value={color}
             onChange={(e) => onColorChange(e.target.value)}
-            placeholder="#3B82F6"
+            placeholder={DEFAULT_COLOR}
             className="flex-1"
           />
         </div>

@@ -54,7 +54,7 @@ export function PermissionBadge({
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Badge variant="default" className="bg-amber-500 hover:bg-amber-600">
+            <Badge variant="default" className="bg-warning text-warning-foreground hover:bg-warning/80">
               <Crown className="h-3 w-3" />
               {showLabel && <span className="ml-1">Owner</span>}
             </Badge>
@@ -143,7 +143,7 @@ export function StaticPermissionBadge({
 
   if (isOwner) {
     return (
-      <Badge variant="default" className="bg-amber-500 hover:bg-amber-600">
+      <Badge variant="default" className="bg-warning text-warning-foreground hover:bg-warning/80">
         <Crown className="h-3 w-3" />
         {showLabel && <span className="ml-1">Owner</span>}
       </Badge>

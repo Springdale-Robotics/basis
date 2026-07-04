@@ -268,8 +268,8 @@ export function GenerateShoppingListDialog({
         {step === 'success' && previewData && (
           <>
             <div className="flex flex-col items-center justify-center py-8 text-center">
-              <div className="rounded-full bg-green-100 p-3 dark:bg-green-900">
-                <Check className="h-8 w-8 text-green-600 dark:text-green-400" />
+              <div className="rounded-full bg-success-muted p-3">
+                <Check className="h-8 w-8 text-success" />
               </div>
               <h3 className="mt-4 text-lg font-medium">Shopping List Updated</h3>
               <p className="mt-1 text-sm text-muted-foreground">

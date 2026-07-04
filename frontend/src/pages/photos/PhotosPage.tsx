@@ -251,7 +251,7 @@ export function PhotosPage() {
               <div>
                 <p className="font-medium">{previewPhoto.filename}</p>
                 {previewPhoto.metadata?.dateTaken && (
-                  <p className="text-sm text-gray-300">
+                  <p className="text-sm text-white/70">
                     {formatDate(previewPhoto.metadata.dateTaken)}
                   </p>
                 )}

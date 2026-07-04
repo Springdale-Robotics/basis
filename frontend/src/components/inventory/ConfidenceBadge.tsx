@@ -12,17 +12,17 @@ interface ConfidenceBadgeProps {
 
 const BAND_CONFIG = {
   high: {
-    color: 'bg-green-500',
+    color: 'bg-success',
     label: 'In stock',
     tooltip: 'High confidence — recently verified or purchased',
   },
   medium: {
-    color: 'bg-yellow-500',
+    color: 'bg-warning',
     label: 'Check stock',
     tooltip: 'Medium confidence — consider verifying your supply',
   },
   low: {
-    color: 'bg-red-500',
+    color: 'bg-destructive',
     label: 'Low confidence',
     tooltip: 'Low confidence — stock data may be outdated',
   },

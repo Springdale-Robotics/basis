@@ -91,9 +91,9 @@ export function UpdatesSettingsPage() {
             <div className="rounded-md border p-4 space-y-3">
               <div className="flex items-start gap-3">
                 {data.updateAvailable ? (
-                  <ArrowUpCircle className="mt-0.5 h-5 w-5 text-blue-600" />
+                  <ArrowUpCircle className="mt-0.5 h-5 w-5 text-info" />
                 ) : data.productionInstall ? (
-                  <CheckCircle2 className="mt-0.5 h-5 w-5 text-green-600" />
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 text-success" />
                 ) : (
                   <Info className="mt-0.5 h-5 w-5 text-muted-foreground" />
                 )}

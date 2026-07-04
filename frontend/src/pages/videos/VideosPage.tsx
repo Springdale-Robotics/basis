@@ -237,7 +237,7 @@ export function VideosPage() {
           info={
             <div>
               <p className="font-medium">{previewVideo.filename}</p>
-              <p className="text-sm text-gray-300">
+              <p className="text-sm text-white/70">
                 {formatDate(previewVideo.createdAt)} &middot;{' '}
                 {formatFileSize(previewVideo.sizeBytes)}
               </p>

@@ -211,7 +211,7 @@ export function RestrictionDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {isRestricted ? (
-              <Lock className="h-5 w-5 text-amber-500" />
+              <Lock className="h-5 w-5 text-warning" />
             ) : (
               <Unlock className="h-5 w-5" />
             )}

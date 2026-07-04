@@ -136,7 +136,7 @@ function IngredientNameInput({
             placeholder="Type or search inventory..."
             className={cn(
               'pr-8',
-              inventoryItemId && 'border-green-500 focus-visible:ring-green-500'
+              inventoryItemId && 'border-success focus-visible:ring-success'
             )}
           />
           {inventoryItemId ? (
@@ -149,7 +149,7 @@ function IngredientNameInput({
                       e.stopPropagation();
                       onUnlink();
                     }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-green-600 hover:text-green-700"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-success hover:text-success/80"
                   >
                     <Link2 className="h-4 w-4" />
                   </button>

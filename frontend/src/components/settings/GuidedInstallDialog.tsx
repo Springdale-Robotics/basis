@@ -231,7 +231,7 @@ export function GuidedInstallDialog({
 
         {phase === 'done' && (
           <Alert>
-            <CheckCircle2 className="h-4 w-4 text-green-600" />
+            <CheckCircle2 className="h-4 w-4 text-success" />
             <AlertTitle>Install completed</AlertTitle>
             <AlertDescription>
               Exit code {exitInfo?.code}. You can close this window.

@@ -68,13 +68,13 @@ export function OfflineIndicator() {
       style={{ bottom: stackHeight + 12 }}
       className={cn(
         'fixed right-3 z-50 flex items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-xs shadow-md',
-        !online && 'border-orange-500/40 bg-orange-500/5',
+        !online && 'border-warning/40 bg-warning/5',
         online && queued === 0 && recentFailures > 0 && 'border-destructive/40 bg-destructive/5',
       )}
     >
       {!online ? (
         <>
-          <CloudOff className="h-3.5 w-3.5 text-orange-500" />
+          <CloudOff className="h-3.5 w-3.5 text-warning" />
           <span>
             {queued > 0
               ? `Offline — ${queued} change${queued === 1 ? '' : 's'} waiting to sync`
@@ -83,7 +83,7 @@ export function OfflineIndicator() {
         </>
       ) : queued > 0 ? (
         <>
-          <RefreshCw className="h-3.5 w-3.5 animate-spin text-blue-500" />
+          <RefreshCw className="h-3.5 w-3.5 animate-spin text-info" />
           <span>Syncing {queued} change{queued === 1 ? '' : 's'}…</span>
         </>
       ) : (

@@ -30,7 +30,7 @@ function formatDuration(seconds?: number): string {
 function ServiceStateBadge({ state }: { state: string }) {
   if (state === 'active') {
     return (
-      <Badge variant="default" className="bg-green-600 hover:bg-green-600">
+      <Badge variant="default" className="bg-success text-success-foreground hover:bg-success">
         <CheckCircle2 className="mr-1 h-3 w-3" />
         active
       </Badge>

@@ -456,7 +456,7 @@ function TimerDisplay({ timer, onStart, onPause, onReset, onAddTime, onDismiss }
     <div
       className={cn(
         'rounded-lg border p-3',
-        timer.isComplete && 'border-green-500 bg-green-50 dark:bg-green-950 animate-pulse',
+        timer.isComplete && 'border-success bg-success-muted animate-pulse',
         timer.isRunning && 'border-primary'
       )}
     >

@@ -183,7 +183,7 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
   return (
     <div className={cn(
       'flex items-center justify-between p-3 rounded-lg border',
-      isLinked ? 'border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950' : 'border-border'
+      isLinked ? 'border-success/30 bg-success-muted' : 'border-border'
     )}>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
@@ -223,7 +223,7 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
             <Link2 className="h-3 w-3 flex-shrink-0" />
             <span>Linked to: {match.matchedItemName}</span>
             {match.needsQuantityWeight && (
-              <Badge variant="outline" className="ml-2 text-xs text-orange-600 border-orange-300">
+              <Badge variant="outline" className="ml-2 text-xs text-warning border-warning/40">
                 <AlertCircle className="h-3 w-3 mr-1" />
                 needs quantity weight
               </Badge>
@@ -302,7 +302,7 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
                             </div>
                             <div className="flex items-center gap-1">
                               {suggestion.needsQuantityWeight && (
-                                <Badge variant="outline" className="text-xs text-orange-600">
+                                <Badge variant="outline" className="text-xs text-warning">
                                   needs weight
                                 </Badge>
                               )}
@@ -364,7 +364,7 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
                               </div>
                               <div className="flex items-center gap-1">
                                 {unitsDiffer && !convertible && (
-                                  <Badge variant="outline" className="text-xs text-orange-600">
+                                  <Badge variant="outline" className="text-xs text-warning">
                                     different units
                                   </Badge>
                                 )}

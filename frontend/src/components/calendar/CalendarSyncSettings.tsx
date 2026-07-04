@@ -1,3 +1,4 @@
+import { DEFAULT_COLOR } from './calendar-utils';
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -58,10 +59,10 @@ export function CalendarSyncSettings({ calendars }: CalendarSyncSettingsProps) {
     if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
       return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
     }
-    return calendar.color || '#4A90D9';
+    return calendar.color || DEFAULT_COLOR;
   };
   const [calendarName, setCalendarName] = useState('');
-  const [calendarColor, setCalendarColor] = useState('#4285F4');
+  const [calendarColor, setCalendarColor] = useState(DEFAULT_COLOR);
 
   // Check if Google sync is configured
   const { data: googleStatus } = useQuery({
@@ -379,7 +380,7 @@ export function CalendarSyncSettings({ calendars }: CalendarSyncSettingsProps) {
                   <Input
                     value={calendarColor}
                     onChange={(e) => setCalendarColor(e.target.value)}
-                    placeholder="#4285F4"
+                    placeholder={DEFAULT_COLOR}
                     className="flex-1"
                   />
                 </div>

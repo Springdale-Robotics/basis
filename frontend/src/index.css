@@ -117,32 +117,6 @@
   }
 }
 
-/* Skylight Calendar inspired styles */
-@layer components {
-  /* Cards with subtle shadows */
-  .card-skylight {
-    @apply rounded-xl bg-card shadow-sm hover:shadow-md transition-shadow duration-200;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  }
-
-  .card-skylight:hover {
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-  }
-
-  /* Family-friendly buttons */
-  .btn-skylight {
-    @apply rounded-full px-6 py-2 font-medium transition-all duration-200;
-  }
-
-  .btn-skylight-primary {
-    @apply btn-skylight bg-primary text-primary-foreground hover:opacity-90 active:scale-95;
-  }
-
-  .btn-skylight-secondary {
-    @apply btn-skylight bg-secondary text-secondary-foreground hover:bg-secondary/80 active:scale-95;
-  }
-}
-
 /* Custom scrollbar styles */
 @layer utilities {
   .scrollbar-thin {

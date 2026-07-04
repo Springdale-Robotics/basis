@@ -530,7 +530,7 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
                       <p className="text-sm text-muted-foreground">{items.length} file{items.length !== 1 ? 's' : ''} loaded</p>
                       {items.map(item => (
                         <div key={item.id} className="flex items-center gap-2 text-sm px-2 py-1 rounded bg-muted/30">
-                          <Check className="h-3 w-3 text-green-500" />
+                          <Check className="h-3 w-3 text-success" />
                           <span className="truncate">{item.label}</span>
                         </div>
                       ))}
@@ -568,7 +568,7 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
             <div className="space-y-4 py-4">
               <div className="text-center space-y-2">
                 {!processingComplete && <Loader2 className="h-8 w-8 mx-auto animate-spin text-primary" />}
-                {processingComplete && <Check className="h-8 w-8 mx-auto text-green-500" />}
+                {processingComplete && <Check className="h-8 w-8 mx-auto text-success" />}
                 <p className="font-medium">
                   {processingComplete
                     ? `Done — ${readyCount} recipe${readyCount !== 1 ? 's' : ''} ready`
@@ -584,7 +584,7 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
                   <div key={item.id} className="flex items-center gap-2 text-sm px-3 py-1.5 rounded bg-muted/30">
                     {item.status === 'pending' && <div className="h-3 w-3 rounded-full bg-muted-foreground/30" />}
                     {(item.status === 'uploading' || item.status === 'processing') && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
-                    {item.status === 'ready' && <Check className="h-3 w-3 text-green-500" />}
+                    {item.status === 'ready' && <Check className="h-3 w-3 text-success" />}
                     {item.status === 'failed' && <X className="h-3 w-3 text-destructive" />}
                     <span className="truncate flex-1">{item.label}</span>
                     {item.error && <span className="text-xs text-destructive truncate">{item.error}</span>}
@@ -839,7 +839,7 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
           {step === 'confirm' && (
             <div className="space-y-4 py-4">
               <div className="text-center py-4">
-                <Check className="h-12 w-12 mx-auto text-green-500" />
+                <Check className="h-12 w-12 mx-auto text-success" />
                 <h3 className="mt-3 text-lg font-medium">Ready to Import</h3>
                 <p className="text-sm text-muted-foreground mt-1">
                   {readyItems.filter(i => !i.excluded).length} recipe{readyItems.filter(i => !i.excluded).length !== 1 ? 's' : ''} will be created

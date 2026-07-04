@@ -958,7 +958,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                             {previewRecipe?.servings && <span>{previewRecipe.servings} servings</span>}
                           </div>
                           {Object.keys(importedCatalogItems).length > 0 && (
-                            <div className="text-sm text-green-600">
+                            <div className="text-sm text-success">
                               {Object.keys(importedCatalogItems).length} ingredients have catalog data for easy linking
                             </div>
                           )}
@@ -1398,7 +1398,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Auto-matched</p>
                   {matched.map(m => (
                     <div key={m.parsedName} className="flex items-center gap-2 px-3 py-1.5 rounded bg-muted/30 text-sm">
-                      <Check className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                      <Check className="h-3.5 w-3.5 text-success shrink-0" />
                       <span className="text-muted-foreground truncate">{m.parsedName}</span>
                       <span className="text-muted-foreground shrink-0">→</span>
                       <span className="font-medium truncate">{m.matchedItemName}</span>
@@ -1524,7 +1524,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
           {step === 'confirm' && (
             <div className="space-y-4 py-4">
               <div className="text-center py-6">
-                <Check className="h-16 w-16 mx-auto text-green-500" />
+                <Check className="h-16 w-16 mx-auto text-success" />
                 <h3 className="mt-4 text-lg font-medium">Ready to Import</h3>
                 <p className="text-sm text-muted-foreground mt-1">
                   {session?.parsedRecipe?.title ?? overrides.title}

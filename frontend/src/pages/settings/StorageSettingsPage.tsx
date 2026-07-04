@@ -14,12 +14,7 @@ import { filesApi, type StorageUsage } from '@/api/files';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
 import { cn, formatFileSize } from '@/lib/utils';
-
-function getProgressColor(percent: number): string {
-  if (percent >= 95) return 'bg-red-500';
-  if (percent >= 80) return 'bg-yellow-500';
-  return 'bg-primary';
-}
+import { getStorageMeterClass } from '@/lib/storage';
 
 function getLimitSourceLabel(source: string): string {
   switch (source) {
@@ -149,7 +144,7 @@ export function StorageSettingsPage() {
                   <div
                     className={cn(
                       'h-full transition-all',
-                      getProgressColor(usage.percentUsed)
+                      getStorageMeterClass(usage.percentUsed)
                     )}
                     style={{ width: `${Math.min(usage.percentUsed, 100)}%` }}
                   />

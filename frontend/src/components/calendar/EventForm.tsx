@@ -1,3 +1,4 @@
+import { DEFAULT_COLOR } from './calendar-utils';
 import { useEffect, useState, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -85,7 +86,7 @@ export function EventForm({
     if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
       return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
     }
-    return calendar.color || '#4A90D9';
+    return calendar.color || DEFAULT_COLOR;
   };
 
   const {

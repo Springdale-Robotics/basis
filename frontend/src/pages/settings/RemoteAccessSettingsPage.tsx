@@ -423,7 +423,7 @@ function TailscalePanel({
     return (
       <>
         <Alert>
-          <CheckCircle2 className="h-4 w-4 text-green-600" />
+          <CheckCircle2 className="h-4 w-4 text-success" />
           <AlertTitle>Tailscale HTTPS is active</AlertTitle>
           <AlertDescription className="space-y-2">
             <p>
@@ -466,7 +466,7 @@ function TailscalePanel({
   return (
     <>
       <Alert>
-        <CheckCircle2 className="h-4 w-4 text-green-600" />
+        <CheckCircle2 className="h-4 w-4 text-success" />
         <AlertTitle>Tailscale detected — hostname: {detect.hostname}</AlertTitle>
         <AlertDescription className="space-y-2">
           <p>
@@ -597,7 +597,7 @@ function CloudflarePanel({
   } else if (data.running) {
     body = (
       <Alert>
-        <CheckCircle2 className="h-4 w-4 text-green-600" />
+        <CheckCircle2 className="h-4 w-4 text-success" />
         <AlertTitle>Cloudflare tunnel is connected</AlertTitle>
         <AlertDescription className="space-y-2">
           <p>
@@ -772,7 +772,7 @@ function CustomDomainPanel({ publicUrl }: { publicUrl: string }) {
           <div className="flex items-center gap-2 text-sm">
             {result.ok ? (
               <>
-                <CheckIcon className="h-4 w-4 text-green-600" />
+                <CheckIcon className="h-4 w-4 text-success" />
                 <span>
                   Reached in {result.elapsedMs}ms ({result.status})
                 </span>

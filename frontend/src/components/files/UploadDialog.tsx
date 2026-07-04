@@ -195,7 +195,7 @@ export function UploadDialog({
               >
                 <div className="shrink-0">
                   {uploadFile.status === 'success' ? (
-                    <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    <CheckCircle2 className="h-5 w-5 text-success" />
                   ) : uploadFile.status === 'error' ? (
                     <AlertCircle className="h-5 w-5 text-destructive" />
                   ) : (

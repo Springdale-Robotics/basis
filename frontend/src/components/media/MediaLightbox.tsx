@@ -52,7 +52,7 @@ export function MediaLightbox({
           </DialogPrimitive.Title>
 
           {/* Close button */}
-          <DialogPrimitive.Close className="absolute right-4 top-4 z-10 text-white hover:text-gray-300">
+          <DialogPrimitive.Close className="absolute right-4 top-4 z-10 text-white hover:text-white/70">
             <X className="h-8 w-8" />
             <span className="sr-only">Close</span>
           </DialogPrimitive.Close>

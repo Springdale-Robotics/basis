@@ -341,7 +341,7 @@ export function CalendarForm({
                 ) : (
                   <div className="space-y-4">
                     <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                      <Badge variant="outline" className="bg-success-muted text-success-muted-foreground border-success/30">
                         Public Access Enabled
                       </Badge>
                     </div>
@@ -362,7 +362,7 @@ export function CalendarForm({
                           onClick={() => copyToClipboard(linkStatus.webcalUrl!, 'webcal')}
                         >
                           {copiedField === 'webcal' ? (
-                            <Check className="h-3 w-3 text-green-500" />
+                            <Check className="h-3 w-3 text-success" />
                           ) : (
                             <Copy className="h-3 w-3" />
                           )}
@@ -391,7 +391,7 @@ export function CalendarForm({
                           onClick={() => copyToClipboard(linkStatus.feedUrl!, 'feed')}
                         >
                           {copiedField === 'feed' ? (
-                            <Check className="h-3 w-3 text-green-500" />
+                            <Check className="h-3 w-3 text-success" />
                           ) : (
                             <Copy className="h-3 w-3" />
                           )}

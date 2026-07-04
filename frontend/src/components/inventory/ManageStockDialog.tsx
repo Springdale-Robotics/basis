@@ -292,7 +292,7 @@ export function ManageStockDialog({
               {stockTotal.total.toFixed(1)} {item.defaultUnit || 'units'}
             </p>
             {!stockTotal.allConverted && (
-              <p className="text-xs text-amber-600 mt-1">
+              <p className="text-xs text-warning mt-1">
                 + items in {stockTotal.unconvertedUnits.join(', ')} (no conversion available)
               </p>
             )}
@@ -407,7 +407,7 @@ export function ManageStockDialog({
                                 return (
                                   <span className={cn(
                                     daysLeft < 0 && 'text-destructive',
-                                    daysLeft >= 0 && daysLeft <= 7 && 'text-orange-500'
+                                    daysLeft >= 0 && daysLeft <= 7 && 'text-warning'
                                   )}>
                                     Expires: {formatDate(entry.expiryDate)} {relativeText}
                                   </span>

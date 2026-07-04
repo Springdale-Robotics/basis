@@ -1,3 +1,4 @@
+import { DEFAULT_COLOR } from './calendar-utils';
 import { useState, useImperativeHandle, forwardRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
@@ -116,7 +117,7 @@ export const CalendarSearch = forwardRef<CalendarSearchRef, CalendarSearchProps>
     if (calendar?.colorIndex !== undefined && calendar.colorIndex >= 0) {
       return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
     }
-    return calendar?.color || '#4A90D9';
+    return calendar?.color || DEFAULT_COLOR;
   };
 
   // Helper for calendar objects
@@ -124,7 +125,7 @@ export const CalendarSearch = forwardRef<CalendarSearchRef, CalendarSearchProps>
     if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
       return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
     }
-    return calendar.color || '#4A90D9';
+    return calendar.color || DEFAULT_COLOR;
   };
 
   return (

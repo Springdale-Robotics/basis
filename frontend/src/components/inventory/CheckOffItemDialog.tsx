@@ -198,12 +198,11 @@ export function CheckOffItemDialog({
           {crossDimensionHint && (
             <div
               className={cn(
-                'flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2',
-                'dark:border-amber-900/40 dark:bg-amber-950/40'
+                'flex items-start gap-2 rounded-md border border-warning/30 bg-warning-muted p-2'
               )}
             >
-              <Info className="h-4 w-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
-              <span className="text-xs text-amber-900 dark:text-amber-100">
+              <Info className="h-4 w-4 mt-0.5 shrink-0 text-warning" />
+              <span className="text-xs text-warning-muted-foreground">
                 Will store as {quantity} {unit}. Add a density or a conversion on{' '}
                 <span className="font-medium">{item.name}</span> so we can bridge
                 {' '}{unit} ↔ {originalUnit}.

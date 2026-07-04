@@ -799,7 +799,7 @@ export function RecipeDetailPage() {
                           }}
                         />
                         {ing.inventoryItemId && (
-                          <span className="flex items-center gap-1 text-xs text-green-600 shrink-0">
+                          <span className="flex items-center gap-1 text-xs text-success shrink-0">
                             <Link2 className="h-3 w-3" />
                             {ing.linkedItemName || 'linked'}
                           </span>
@@ -833,7 +833,7 @@ export function RecipeDetailPage() {
                   return (
                   <li key={ingredient.id} className="flex items-center gap-2">
                     {hasItem !== null && (
-                      <span className={`h-2 w-2 rounded-full shrink-0 ${hasItem ? 'bg-green-500' : 'bg-red-500'}`} />
+                      <span className={`h-2 w-2 rounded-full shrink-0 ${hasItem ? 'bg-success' : 'bg-destructive'}`} />
                     )}
                     <span className="font-medium shrink-0">
                       {scaledAmount} {ingredient.unit}
