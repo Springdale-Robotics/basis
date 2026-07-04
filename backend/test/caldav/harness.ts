@@ -35,7 +35,7 @@ export async function setupCalDavTest(): Promise<CalDavTestContext> {
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
   // Use the seed admin if present, otherwise create one for this test run.
-  let user = await db.query.users.findFirst({
+  const user = await db.query.users.findFirst({
     where: eq(users.email, 'admin@demo.local'),
   });
   if (!user) {
@@ -45,7 +45,7 @@ export async function setupCalDavTest(): Promise<CalDavTestContext> {
   }
 
   // Ensure they have a default calendar
-  let calendar = await db.query.calendars.findFirst({
+  const calendar = await db.query.calendars.findFirst({
     where: eq(calendars.householdId, user.householdId),
   });
   if (!calendar) {
