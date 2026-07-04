@@ -1,35 +1,55 @@
 import { useState } from 'react';
-import { Loader2, Globe, Cloud, Network, Laptop } from 'lucide-react';
+import { Loader2, Globe, Cloud, Network, Laptop, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
+export type SetupRemoteMode =
+  | 'basis_remote'
+  | 'local'
+  | 'cloudflare'
+  | 'tailscale'
+  | 'custom';
+
 interface RemoteAccessSetupProps {
-  onSubmit: (mode: 'local' | 'cloudflare' | 'tailscale' | 'custom') => void;
+  onSubmit: (mode: SetupRemoteMode) => void;
   onSkip: () => void;
   isLoading: boolean;
 }
 
-const options = [
+const options: Array<{
+  id: SetupRemoteMode;
+  label: string;
+  description: string;
+  icon: typeof Globe;
+  badge?: string;
+}> = [
   {
-    id: 'local' as const,
+    id: 'basis_remote',
+    label: 'Basis Remote',
+    description: 'yourname.home-basis.com — one code, we handle the rest',
+    icon: Zap,
+    badge: 'Recommended',
+  },
+  {
+    id: 'local',
     label: 'Local Only',
     description: 'Only accessible on your local network',
     icon: Laptop,
   },
   {
-    id: 'cloudflare' as const,
+    id: 'cloudflare',
     label: 'Cloudflare Tunnel',
     description: 'Secure remote access through Cloudflare',
     icon: Cloud,
   },
   {
-    id: 'tailscale' as const,
+    id: 'tailscale',
     label: 'Tailscale',
     description: 'Access through your Tailscale network',
     icon: Network,
   },
   {
-    id: 'custom' as const,
+    id: 'custom',
     label: 'Custom Domain',
     description: 'Use your own domain with DDNS',
     icon: Globe,
@@ -37,7 +57,7 @@ const options = [
 ];
 
 export function RemoteAccessSetup({ onSubmit, onSkip, isLoading }: RemoteAccessSetupProps) {
-  const [selected, setSelected] = useState<'local' | 'cloudflare' | 'tailscale' | 'custom'>('local');
+  const [selected, setSelected] = useState<SetupRemoteMode>('local');
 
   return (
     <div>
@@ -77,7 +97,14 @@ export function RemoteAccessSetup({ onSubmit, onSkip, isLoading }: RemoteAccessS
                 <Icon className="h-5 w-5" />
               </div>
               <div className="flex-1">
-                <p className="font-medium">{option.label}</p>
+                <p className="font-medium">
+                  {option.label}
+                  {option.badge && (
+                    <span className="ml-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                      {option.badge}
+                    </span>
+                  )}
+                </p>
                 <p className="text-sm text-muted-foreground">
                   {option.description}
                 </p>

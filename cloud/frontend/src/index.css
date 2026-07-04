@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  body {
+    @apply bg-white font-sans text-stone-900;
+  }
+
+  ::selection {
+    @apply bg-pine-200 text-pine-950;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-pine-500 ring-offset-2 ring-offset-white;
+  }
+}

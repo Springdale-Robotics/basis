@@ -276,7 +276,7 @@ export async function setupRoutes(app: FastifyInstance): Promise<void> {
   // Configure remote access during setup
   app.post('/remote-access', async (request) => {
     const schema = z.object({
-      mode: z.enum(['local', 'cloudflare', 'tailscale', 'custom']),
+      mode: z.enum(['local', 'cloudflare', 'tailscale', 'custom', 'basis_remote']),
       config: z.record(z.unknown()).optional(),
     });
 

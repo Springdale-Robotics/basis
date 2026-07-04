@@ -1,0 +1,50 @@
+# Caddyfile — Basis Remote (home-basis.com).
+#
+# Installed to /etc/caddy/Caddyfile by provision.sh. All three sites use
+# ACME DNS-01 via the Cloudflare DNS plugin (caddy add-package
+# github.com/caddy-dns/cloudflare) so the wildcard cert can be issued.
+# CLOUDFLARE_API_TOKEN comes from /etc/caddy/env (chmod 600), wired in via a
+# systemd drop-in EnvironmentFile. DNS stays grey-cloud (DNS only) — frps
+# streams media, which Cloudflare's proxy ToS disallows.
+
+{
+	email admin@home-basis.com
+}
+
+# Control plane: marketing site, account dashboard, API, Stripe webhook.
+home-basis.com {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+
+	# The frp plugin callback endpoint is loopback-only (frps → control
+	# plane). Never expose it publicly, even though the path embeds a secret
+	# and the handler checks the source address itself.
+	respond /frp-plugin/* 404
+
+	reverse_proxy 127.0.0.1:4000
+}
+
+www.home-basis.com {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+	redir https://home-basis.com{uri} permanent
+}
+
+# Tenant tunnels: *.home-basis.com → frps HTTP vhost router (loopback).
+*.home-basis.com {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+
+	# Authoritative suspension gate. The control plane answers 204 for tenants
+	# allowed to serve (active / in-grace, 30s cache) and a friendly 403 page
+	# otherwise. This holds even if a hostile frpc keeps its tunnel open —
+	# frp-plugin Ping rejection alone only works for cooperating clients.
+	forward_auth 127.0.0.1:4000 {
+		uri /frp-gate
+	}
+
+	reverse_proxy 127.0.0.1:8080
+}

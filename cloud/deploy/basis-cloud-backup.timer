@@ -1,0 +1,13 @@
+[Unit]
+Description=Nightly Basis Remote database backup
+
+[Timer]
+# 03:17 local with jitter — off the exact hour to avoid thundering-herd
+# effects with other nightly jobs on shared hosts.
+OnCalendar=*-*-* 03:17:00
+RandomizedDelaySec=15m
+# Run on next boot if the box was off/rebooting at the scheduled time.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

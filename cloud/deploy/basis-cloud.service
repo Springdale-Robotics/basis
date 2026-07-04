@@ -1,0 +1,42 @@
+[Unit]
+Description=Basis Remote control plane (home-basis.com)
+Documentation=https://github.com/Springdale-Robotics/basis
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+# Never permanently give up restarting. This VPS is unattended — a transient
+# boot-time failure (DB still replaying WAL, network not yet up) must not latch
+# the unit into a failed state requiring a manual `systemctl reset-failed`.
+# StartLimit* belong in [Unit] (systemd ignores them under [Service]);
+# IntervalSec=0 disables the rate limiter so Restart=always retries forever.
+# A genuinely broken build can't reach here: update.sh smoke-tests and
+# health-polls before leaving a version live, rolling back on failure.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=basis-cloud
+Group=basis-cloud
+WorkingDirectory=/opt/basis-cloud/current/server
+EnvironmentFile=/opt/basis-cloud/.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Hardening. Unlike the box-side basis.service (which needs sudo for its
+# in-UI terminal), nothing here escalates: NoNewPrivileges is safe. The
+# sudoers grant for basis-cloud is for interactive/update use from a shell,
+# not from inside this unit.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# The app itself is read-only on disk; keep /opt/basis-cloud writable so
+# future features (e.g. local artifacts) don't fail mysteriously under
+# ProtectSystem=strict. Secrets stay 0600.
+ReadWritePaths=/opt/basis-cloud
+
+[Install]
+WantedBy=multi-user.target

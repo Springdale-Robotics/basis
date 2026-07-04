@@ -1,0 +1,44 @@
+{
+  "name": "basis-cloud-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Basis Remote control plane — accounts, billing, and frp relay auth for home-basis.com",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "node build.mjs",
+    "start": "node dist/index.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/migrate.ts",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "comp": "tsx scripts/comp.ts",
+    "seed:dev": "tsx scripts/seed-dev.ts",
+    "lint": "eslint src scripts test --ext .ts",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^9.3.1",
+    "@fastify/static": "^7.0.4",
+    "argon2": "^0.40.1",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.45.1",
+    "fastify": "^4.26.2",
+    "pino": "^8.19.0",
+    "postgres": "^3.4.4",
+    "stripe": "^17.5.0",
+    "zod": "^3.22.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@typescript-eslint/eslint-plugin": "^7.4.0",
+    "@typescript-eslint/parser": "^7.4.0",
+    "drizzle-kit": "^0.31.8",
+    "eslint": "^8.57.0",
+    "pino-pretty": "^11.0.0",
+    "tsx": "^4.7.1",
+    "typescript": "^5.4.3",
+    "vitest": "^1.4.0"
+  }
+}

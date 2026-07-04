@@ -6,6 +6,7 @@ import { logger } from './lib/logger.js';
 import { config } from './config/index.js';
 import { db } from './config/database.js';
 import { resumeTunnel, stopTunnel as stopCloudflareTunnel } from './lib/cloudflared.js';
+import { resumeBasisRemote, stopBasisRemote } from './lib/basis-remote.js';
 import { probeSharp } from './lib/sharp.js';
 import { reportServerError } from './lib/error-reporter.js';
 
@@ -45,22 +46,25 @@ async function main(): Promise<void> {
     // front instead of only when a user first uploads an image.
     void probeSharp();
 
-    // Resume Cloudflare tunnel if one was previously configured. Looks at the
-    // first household with a stored token — matches Tailscale's single-host
-    // assumption (one backend, one tunnel).
+    // Resume the remote-access tunnel if one was previously configured. Looks
+    // at the first household with a stored token — matches Tailscale's
+    // single-host assumption (one backend, one tunnel).
     void (async () => {
       try {
         const all = await db.query.households.findMany({ columns: { settings: true } });
         for (const h of all) {
           const remote = (h.settings as any)?.remoteAccess;
-          const token = remote?.cloudflare?.tunnelToken;
-          if (token && remote?.mode === 'cloudflare') {
-            await resumeTunnel(token);
+          if (remote?.mode === 'cloudflare' && remote?.cloudflare?.tunnelToken) {
+            await resumeTunnel(remote.cloudflare.tunnelToken);
+            break;
+          }
+          if (remote?.mode === 'basis_remote' && remote?.basisRemote?.tunnelToken) {
+            await resumeBasisRemote(remote.basisRemote);
             break;
           }
         }
       } catch (err) {
-        logger.warn({ err }, 'Failed to resume Cloudflare tunnel');
+        logger.warn({ err }, 'Failed to resume remote-access tunnel');
       }
     })();
 
@@ -82,9 +86,10 @@ async function main(): Promise<void> {
       }, timeoutMs);
 
       try {
-        // Stop the Cloudflare tunnel child before everything else so it gets a
+        // Stop the tunnel children before everything else so they get a
         // clean SIGTERM rather than being orphaned.
         stopCloudflareTunnel();
+        stopBasisRemote();
 
         // Stop accepting new connections first
         await Promise.race([

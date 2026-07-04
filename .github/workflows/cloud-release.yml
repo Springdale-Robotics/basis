@@ -1,0 +1,188 @@
+name: Cloud Release
+
+on:
+  push:
+    tags:
+      - 'cloud-v*'
+  # Allow running the pre-flight verify on demand (from any branch) without
+  # cutting a release — the publish job below is guarded to tags only.
+  workflow_dispatch:
+
+# Permissions for creating the GitHub Release and uploading assets.
+permissions:
+  contents: write
+
+jobs:
+  # Gate the release on a full pre-flight of the exact artifact sources. The
+  # cloud server's tests are unit-only (frp handler decisions, subdomain
+  # validation, usage deltas, webhook transitions) — no Postgres service
+  # needed, just dummy env so config validation on import passes.
+  verify:
+    name: Verify cloud build (lint, typecheck, tests, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Server install
+        working-directory: cloud/server
+        run: npm ci --no-audit --no-fund
+
+      - name: Server lint
+        working-directory: cloud/server
+        run: npm run lint
+
+      - name: Server typecheck
+        working-directory: cloud/server
+        run: npx tsc --noEmit
+
+      - name: Server unit tests (no infra required)
+        working-directory: cloud/server
+        env:
+          DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+          SESSION_SECRET: ci-session-secret-not-used-in-ci-000000
+          FRP_PLUGIN_SECRET: ci-plugin-secret-not-used-in-ci-00000
+          FRPS_ADMIN_USER: admin
+          FRPS_ADMIN_PASSWORD: ci-admin-password-not-used
+          FRPS_ADMIN_URL: http://127.0.0.1:7500
+          APP_ORIGIN: http://localhost:4000
+          RELAY_SERVER_ADDR: localhost
+          RELAY_SERVER_PORT: '7000'
+          STRIPE_SECRET_KEY: sk_test_ci_dummy
+          STRIPE_WEBHOOK_SECRET: whsec_ci_dummy
+          STRIPE_PRICE_BASIC_ANNUAL: price_ci_basic_dummy
+          STRIPE_PRICE_STREAMING_ANNUAL: price_ci_streaming_dummy
+          CAP_BASIC_GB: '250'
+          CAP_STREAMING_GB: '2048'
+          THROTTLE_BASIC_MBPS: '4'
+        run: npx vitest run
+
+      - name: Server build
+        working-directory: cloud/server
+        run: node build.mjs
+
+      - name: Frontend install
+        working-directory: cloud/frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Frontend lint
+        working-directory: cloud/frontend
+        run: npm run lint
+
+      - name: Frontend typecheck
+        working-directory: cloud/frontend
+        run: npx tsc --noEmit
+
+      - name: Frontend build
+        working-directory: cloud/frontend
+        run: npm run build
+
+  release:
+    name: Build tarball + publish release
+    needs: verify
+    # Only publish for real tag pushes; a manual workflow_dispatch just runs verify.
+    if: startsWith(github.ref, 'refs/tags/cloud-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tag annotation is the release notes — need full history.
+          fetch-depth: 0
+
+      - id: version
+        name: Resolve version from tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"            # e.g. cloud-v0.1.0-alpha
+          VERSION="${TAG#cloud-v}"            # strip leading 'cloud-v'
+          # Pre-release if it has a suffix (alpha, beta, rc, ...).
+          if [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building $TAG"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build server
+        working-directory: cloud/server
+        run: |
+          npm ci --no-audit --no-fund
+          node build.mjs
+
+      - name: Build frontend
+        working-directory: cloud/frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Stage tarball contents
+        run: |
+          # Layout is what cloud/deploy/update.sh expects: the compiled server
+          # (dist/ is a tsc emit, NOT a bundle — package.json + lockfile ship
+          # so the host runs `npm ci --omit=dev` for runtime deps), the drizzle
+          # migrations, the built frontend, and the deploy scripts themselves.
+          STAGE=staging/basis-cloud-${{ steps.version.outputs.version }}
+          mkdir -p "$STAGE/server" "$STAGE/frontend"
+          echo "${{ steps.version.outputs.version }}" > "$STAGE/VERSION"
+          cp -r cloud/server/dist              "$STAGE/server/dist"
+          cp    cloud/server/package.json      "$STAGE/server/"
+          cp    cloud/server/package-lock.json "$STAGE/server/"
+          cp -r cloud/server/drizzle           "$STAGE/server/drizzle"
+          cp -r cloud/frontend/dist            "$STAGE/frontend/dist"
+          cp -r cloud/deploy                   "$STAGE/deploy"
+
+      - name: Pack tarball
+        run: |
+          cd staging
+          tar -czf ../basis-cloud-${{ steps.version.outputs.version }}.tar.gz basis-cloud-${{ steps.version.outputs.version }}
+          cd ..
+          sha256sum basis-cloud-${{ steps.version.outputs.version }}.tar.gz \
+            | tee basis-cloud-${{ steps.version.outputs.version }}.tar.gz.sha256
+          ls -lh basis-cloud-${{ steps.version.outputs.version }}.tar.gz*
+
+      - name: Compose release notes from tag annotation
+        id: notes
+        run: |
+          # Use the annotation message of the tag as the release body. Falls
+          # back to a default if the tag was lightweight (no annotation).
+          NOTES="$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}")"
+          if [ -z "$NOTES" ]; then
+            NOTES="Release ${GITHUB_REF_NAME}"
+          fi
+          {
+            echo 'notes<<__EOF__'
+            echo "$NOTES"
+            echo
+            echo "## Deploy"
+            echo
+            echo 'On the provisioned VPS (see cloud/README.md for first-time provisioning):'
+            echo
+            echo '```bash'
+            echo "sudo bash /opt/basis-cloud/current/deploy/update.sh --version ${GITHUB_REF_NAME}"
+            echo '```'
+            echo
+            echo "update.sh downloads this tarball, verifies its .sha256, migrates,"
+            echo "smoke-tests, swaps the current symlink, and auto-rolls-back if the"
+            echo "new version doesn't become healthy."
+            echo '__EOF__'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body: ${{ steps.notes.outputs.notes }}
+          prerelease: ${{ steps.version.outputs.prerelease == 'true' }}
+          files: |
+            basis-cloud-*.tar.gz
+            basis-cloud-*.tar.gz.sha256

@@ -4,7 +4,7 @@ import { useMutation } from '@tanstack/react-query';
 import { Check } from 'lucide-react';
 import { HouseholdSetup } from './HouseholdSetup';
 import { AdminSetup } from './AdminSetup';
-import { RemoteAccessSetup } from './RemoteAccessSetup';
+import { RemoteAccessSetup, type SetupRemoteMode } from './RemoteAccessSetup';
 import { SetupComplete } from './SetupComplete';
 import { setupApi } from '@/api/setup';
 import { cn } from '@/lib/utils';
@@ -21,6 +21,7 @@ export function SetupWizard() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(0);
   const [householdId, setHouseholdId] = useState<string | null>(null);
+  const [remoteMode, setRemoteMode] = useState<SetupRemoteMode | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const createHouseholdMutation = useMutation({
@@ -79,8 +80,16 @@ export function SetupWizard() {
     createAdminMutation.mutate(data);
   };
 
-  const handleRemoteAccessSubmit = (mode: 'local' | 'cloudflare' | 'tailscale' | 'custom') => {
+  const handleRemoteAccessSubmit = (mode: SetupRemoteMode) => {
     setError(null);
+    setRemoteMode(mode);
+    if (mode === 'basis_remote') {
+      // The setup acknowledgment endpoint doesn't accept basis_remote (and
+      // saves nothing either way) — the real claim flow lives in
+      // Settings → Remote Access, which the completion step points to.
+      setCurrentStep(3);
+      return;
+    }
     remoteAccessMutation.mutate({ mode });
   };
 
@@ -160,6 +169,7 @@ export function SetupWizard() {
             <SetupComplete
               onComplete={handleComplete}
               isLoading={completeMutation.isPending}
+              basisRemoteChosen={remoteMode === 'basis_remote'}
             />
           )}
         </div>
