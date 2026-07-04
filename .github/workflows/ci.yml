@@ -11,12 +11,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Backend lint + typecheck both currently broken in pre-existing ways:
+  # Backend lint + full typecheck are still skipped (pre-existing):
   #  - ESLint has no config file (neither .eslintrc nor eslint.config.js)
-  #  - `tsc --noEmit` trips on Drizzle schema generic inference that the
-  #    dev runtime (tsx) tolerates.
-  # CI re-enables once those are sorted out — for now we skip rather than
-  # ship a workflow that's red on every push.
+  #  - `tsc --noEmit` has a backlog of errors the dev runtime (tsx) tolerates.
+  # The backend job below runs the infra-free unit tests, which are green — a
+  # real gate that catches regressions in the tested libs. Expand toward
+  # typecheck + the DB-backed suites as the error backlog is burned down.
+
+  backend:
+    name: Backend unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install deps
+        run: npm ci --no-audit --no-fund
+        working-directory: backend
+
+      - name: Unit tests (no infra required)
+        run: npx vitest run src/lib/units.test.ts src/lib/confidence.test.ts src/services/crf-ingredient-parser.test.ts test/lib/tailscale.test.ts
+        working-directory: backend
 
   frontend:
     name: Frontend typecheck
