@@ -42,6 +42,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { EditGate } from '@/components/permissions';
 import { TaskRow } from '@/components/tasks/TaskRow';
 import { QuickAddInput } from '@/components/tasks/QuickAddInput';
@@ -56,6 +57,7 @@ import { groupsApi } from '@/api/groups';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/useToast';
 import { cn } from '@/lib/utils';
+import { getErrorMessage } from '@/lib/api-error';
 import type { Task, TaskKind } from '@/types/models';
 import type { CreateTaskRequest, UpdateTaskRequest } from '@/api/tasks';
 
@@ -112,7 +114,7 @@ export function TasksPage() {
 
   // One query for both tabs — keeps counts in sync regardless of active tab.
   const allTasksQueryKey = ['tasks', 'all', showCompleted] as const;
-  const { data: allTasksData, isLoading } = useQuery({
+  const { data: allTasksData, isLoading, isError, error, refetch } = useQuery({
     queryKey: allTasksQueryKey,
     queryFn: () =>
       tasksApi.list({
@@ -265,11 +267,12 @@ export function TasksPage() {
       }
       return { prev };
     },
-    onError: (_e, _v, ctx) => {
+    onError: (e, _v, ctx) => {
       if (ctx?.prev) queryClient.setQueryData(allTasksQueryKey, ctx.prev);
       toast({
         title: 'Could not create task',
-        description: 'Try again or open More options.',
+        description: getErrorMessage(e),
+        variant: 'destructive',
       });
     },
     onSettled: () => {
@@ -286,8 +289,12 @@ export function TasksPage() {
       setEditorOpen(false);
       setEditing(null);
     },
-    onError: (e: Error) =>
-      toast({ title: 'Could not save task', description: e.message }),
+    onError: (e) =>
+      toast({
+        title: 'Could not save task',
+        description: getErrorMessage(e),
+        variant: 'destructive',
+      }),
   });
 
   const completeMutation = useMutation({
@@ -321,8 +328,13 @@ export function TasksPage() {
         });
       }
     },
-    onError: (_e, _id, ctx) => {
+    onError: (e, _id, ctx) => {
       if (ctx?.prev) queryClient.setQueryData(allTasksQueryKey, ctx.prev);
+      toast({
+        title: 'Could not complete task',
+        description: getErrorMessage(e),
+        variant: 'destructive',
+      });
     },
     onSettled: invalidate,
   });
@@ -343,7 +355,14 @@ export function TasksPage() {
 
   const reorderMutation = useMutation({
     mutationFn: (taskIds: string[]) => tasksApi.reorder({ taskIds }),
-    onError: invalidate,
+    onError: (e) => {
+      invalidate();
+      toast({
+        title: 'Could not reorder tasks',
+        description: getErrorMessage(e),
+        variant: 'destructive',
+      });
+    },
   });
 
   // ===== Drag-and-drop =====
@@ -581,6 +600,12 @@ export function TasksPage() {
                 <Skeleton key={i} className="h-14" />
               ))}
             </div>
+          ) : isError ? (
+            <ErrorState
+              title={kind === 'chore' ? "Couldn't load chores" : "Couldn't load tasks"}
+              error={error}
+              onRetry={refetch}
+            />
           ) : orderedTasks.length === 0 ? (
             <EmptyState
               icon={<CheckSquare className="h-12 w-12" />}

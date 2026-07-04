@@ -10,6 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { ErrorState } from '@/components/shared/ErrorState';
+import { getErrorMessage } from '@/lib/api-error';
 import { RecipeForm, type RecipeImageChange } from '@/components/recipes/RecipeForm';
 import { ImportRecipeDialog } from './ImportRecipeDialog';
 import { recipesApi } from '@/api/recipes';
@@ -30,7 +32,7 @@ export function RecipesPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['recipes', search],
     queryFn: () => recipesApi.list({ search: search || undefined }),
   });
@@ -85,7 +87,7 @@ export function RecipesPage() {
     onError: (error) => {
       toast({
         title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to create recipe',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     },
@@ -161,6 +163,12 @@ export function RecipesPage() {
             <Skeleton key={i} className={viewMode === 'grid' ? 'h-64' : 'h-24'} />
           ))}
         </div>
+      ) : isError ? (
+        <ErrorState
+          title="Couldn't load recipes"
+          error={error}
+          onRetry={refetch}
+        />
       ) : recipes.length === 0 ? (
         <EmptyState
           title="No recipes yet"

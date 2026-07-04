@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
@@ -46,19 +47,19 @@ export function MusicPage() {
   const [search, setSearch] = useState('');
   const { playTrack, addToQueue, currentTrack, isPlaying } = usePlayerStore();
 
-  const { data: artistsData, isLoading: artistsLoading } = useQuery({
+  const { data: artistsData, isLoading: artistsLoading, isError: artistsError, error: artistsErrorObj, refetch: refetchArtists } = useQuery({
     queryKey: ['artists', search],
     queryFn: () => musicApi.getArtists({ search: search || undefined, limit: 100 }),
     enabled: activeTab === 'artists',
   });
 
-  const { data: albumsData, isLoading: albumsLoading } = useQuery({
+  const { data: albumsData, isLoading: albumsLoading, isError: albumsError, error: albumsErrorObj, refetch: refetchAlbums } = useQuery({
     queryKey: ['albums'],
     queryFn: () => musicApi.getAlbums({ limit: 100 }),
     enabled: activeTab === 'albums',
   });
 
-  const { data: recentData, isLoading: recentLoading } = useQuery({
+  const { data: recentData, isLoading: recentLoading, isError: recentError, error: recentErrorObj, refetch: refetchRecent } = useQuery({
     queryKey: ['recent-music'],
     queryFn: () => musicApi.getRecent(50),
     enabled: activeTab === 'recent',
@@ -123,6 +124,12 @@ export function MusicPage() {
                 <AlbumCardSkeleton key={i} />
               ))}
             </div>
+          ) : albumsError ? (
+            <ErrorState
+              title="Couldn't load albums"
+              error={albumsErrorObj}
+              onRetry={refetchAlbums}
+            />
           ) : albums.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12">
@@ -150,6 +157,12 @@ export function MusicPage() {
                 <ArtistCardSkeleton key={i} />
               ))}
             </div>
+          ) : artistsError ? (
+            <ErrorState
+              title="Couldn't load artists"
+              error={artistsErrorObj}
+              onRetry={refetchArtists}
+            />
           ) : artists.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12">
@@ -177,6 +190,12 @@ export function MusicPage() {
                 <Skeleton key={i} className="h-14" />
               ))}
             </div>
+          ) : recentError ? (
+            <ErrorState
+              title="Couldn't load recent plays"
+              error={recentErrorObj}
+              onRetry={refetchRecent}
+            />
           ) : recentTracks.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12">

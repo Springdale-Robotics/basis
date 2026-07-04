@@ -28,6 +28,8 @@ import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { getItemIcon } from '@/lib/inventory-constants';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
+import { getErrorMessage } from '@/lib/api-error';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { RecipeImageInput } from '@/components/recipes/RecipeImageInput';
 import type { RecipeImageChange } from '@/components/recipes/RecipeForm';
@@ -107,7 +109,7 @@ export function RecipeDetailPage() {
   // Natural-language "quick add" ingredient line (Enter parses + adds a row).
   const [newIngredientLine, setNewIngredientLine] = useState('');
 
-  const { recipe, isLoading } = useRecipeWithIngredients(id);
+  const { recipe, isLoading, isError, error, refetch } = useRecipeWithIngredients(id);
 
   // Fetch stock data for ingredient availability
   const { data: stockData } = useQuery({
@@ -203,7 +205,7 @@ export function RecipeDetailPage() {
     onError: (error) => {
       toast({
         title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to save changes',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     },
@@ -315,7 +317,7 @@ export function RecipeDetailPage() {
     onError: (error) => {
       toast({
         title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to add to shopping list',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     },
@@ -376,6 +378,16 @@ export function RecipeDetailPage() {
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-64 w-full" />
       </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <ErrorState
+        title="Couldn't load recipe"
+        error={error}
+        onRetry={refetch}
+      />
     );
   }
 

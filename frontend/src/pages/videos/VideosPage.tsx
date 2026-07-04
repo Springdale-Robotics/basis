@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { Badge } from '@/components/ui/badge';
 import {
   Select,
@@ -45,13 +46,13 @@ export function VideosPage() {
   const [selectedMonth, setSelectedMonth] = useState<number | undefined>();
   const [previewVideo, setPreviewVideo] = useState<VideoType | null>(null);
 
-  const { data: videosData, isLoading: videosLoading } = useQuery({
+  const { data: videosData, isLoading: videosLoading, isError: videosError, error: videosErrorObj, refetch: refetchVideos } = useQuery({
     queryKey: ['videos', sort, order],
     queryFn: () => videosApi.list({ limit: 200, sort, order }),
     enabled: viewMode === 'grid',
   });
 
-  const { data: timelineData, isLoading: timelineLoading } = useQuery({
+  const { data: timelineData, isLoading: timelineLoading, isError: timelineError, error: timelineErrorObj, refetch: refetchTimeline } = useQuery({
     queryKey: ['videos-timeline', selectedYear, selectedMonth],
     queryFn: () => videosApi.getTimeline({ year: selectedYear, month: selectedMonth }),
     enabled: viewMode === 'timeline',
@@ -162,6 +163,12 @@ export function VideosPage() {
                 <Skeleton key={i} className="aspect-video" />
               ))}
             </div>
+          ) : videosError ? (
+            <ErrorState
+              title="Couldn't load videos"
+              error={videosErrorObj}
+              onRetry={refetchVideos}
+            />
           ) : videos.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12">
@@ -200,6 +207,12 @@ export function VideosPage() {
                 </div>
               </div>
             ))
+          ) : timelineError ? (
+            <ErrorState
+              title="Couldn't load timeline"
+              error={timelineErrorObj}
+              onRetry={refetchTimeline}
+            />
           ) : timeline.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12">

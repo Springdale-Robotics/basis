@@ -4,6 +4,7 @@ import { ChefHat } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { recipesApi } from '@/api/recipes';
 
 const MEAL_LABEL: Record<string, string> = {
@@ -18,7 +19,7 @@ export function TodaysMealsCard() {
   todayStart.setHours(0, 0, 0, 0);
   const todayDateString = `${todayStart.getFullYear()}-${String(todayStart.getMonth() + 1).padStart(2, '0')}-${String(todayStart.getDate()).padStart(2, '0')}`;
 
-  const { data: mealPlans, isLoading: mealsLoading } = useQuery({
+  const { data: mealPlans, isLoading: mealsLoading, isError, refetch } = useQuery({
     queryKey: ['meal-plans', todayDateString],
     queryFn: () => recipesApi.getMealPlans({ start: todayDateString, end: todayDateString }),
   });
@@ -35,6 +36,8 @@ export function TodaysMealsCard() {
             <Skeleton className="h-14 w-full" />
             <Skeleton className="h-14 w-3/4" />
           </div>
+        ) : isError ? (
+          <ErrorState title="Couldn't load meals" compact onRetry={refetch} />
         ) : !mealPlans?.mealPlans?.length ? (
           <div className="space-y-1">
             <p className="text-sm text-muted-foreground">No meals planned yet</p>

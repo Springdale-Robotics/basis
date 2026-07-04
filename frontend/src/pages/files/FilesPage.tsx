@@ -46,6 +46,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { SearchInput } from '@/components/shared/SearchInput';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { CreateFolderDialog } from '@/components/files/CreateFolderDialog';
@@ -155,7 +156,7 @@ export function FilesPage() {
   // Media preview state
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['files', parentId, search],
     queryFn: () =>
       filesApi.list({ parentId, search: search || undefined }),
@@ -590,6 +591,12 @@ export function FilesPage() {
             <Skeleton key={i} className={viewMode === 'grid' ? 'h-32' : 'h-16'} />
           ))}
         </div>
+      ) : isError ? (
+        <ErrorState
+          title="Couldn't load files"
+          error={error}
+          onRetry={refetch}
+        />
       ) : files.length === 0 ? (
         <EmptyState
           icon={<FolderOpen className="h-12 w-12" />}

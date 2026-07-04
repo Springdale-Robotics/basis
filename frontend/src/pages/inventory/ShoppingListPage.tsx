@@ -8,6 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { EditGate } from '@/components/permissions';
 import { PutAwayDialog } from '@/components/inventory/PutAwayDialog';
 import { AddToListDialog } from '@/components/inventory/AddToListDialog';
@@ -26,7 +27,7 @@ export function ShoppingListPage() {
   const [checkOffDialogOpen, setCheckOffDialogOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<ShoppingListItem | null>(null);
 
-  const { data: items, isLoading } = useQuery({
+  const { data: items, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['shopping-list'],
     queryFn: inventoryApi.getShoppingList,
   });
@@ -203,6 +204,12 @@ export function ShoppingListPage() {
             <Skeleton key={i} className="h-16" />
           ))}
         </div>
+      ) : isError ? (
+        <ErrorState
+          title="Couldn't load shopping list"
+          error={error}
+          onRetry={refetch}
+        />
       ) : !shoppingList.length ? (
         <EmptyState
           icon={<ShoppingBag className="h-12 w-12" />}

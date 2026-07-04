@@ -32,6 +32,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { SearchInput } from '@/components/shared/SearchInput';
 import { AreaForm } from '@/components/inventory/AreaForm';
 import { ItemForm } from '@/components/inventory/ItemForm';
@@ -159,12 +160,12 @@ export function InventoryPage() {
   const [relinkItem, setRelinkItem] = useState<InventoryItem | null>(null);
 
   // Queries
-  const { data: areas, isLoading: areasLoading } = useQuery({
+  const { data: areas, isLoading: areasLoading, isError: areasError, error: areasErrorObj, refetch: refetchAreas } = useQuery({
     queryKey: ['inventory', 'areas'],
     queryFn: inventoryApi.getAreas,
   });
 
-  const { data: items, isLoading: itemsLoading } = useQuery({
+  const { data: items, isLoading: itemsLoading, isError: itemsError, error: itemsErrorObj, refetch: refetchItems } = useQuery({
     queryKey: ['inventory', 'items', selectedCategory],
     queryFn: () =>
       inventoryApi.getItems({
@@ -172,7 +173,7 @@ export function InventoryPage() {
       }),
   });
 
-  const { data: stock, isLoading: stockLoading } = useQuery({
+  const { data: stock, isLoading: stockLoading, isError: stockError, error: stockErrorObj, refetch: refetchStock } = useQuery({
     queryKey: ['inventory', 'stock'],
     queryFn: inventoryApi.getStock,
   });
@@ -182,7 +183,7 @@ export function InventoryPage() {
     queryFn: inventoryApi.getKeepInStockItems,
   });
 
-  const { data: leftoversData, isLoading: leftoversLoading } = useQuery({
+  const { data: leftoversData, isLoading: leftoversLoading, isError: leftoversError, error: leftoversErrorObj, refetch: refetchLeftovers } = useQuery({
     queryKey: ['inventory', 'leftovers'],
     queryFn: inventoryApi.getLeftovers,
   });
@@ -807,6 +808,13 @@ export function InventoryPage() {
   };
 
   const isLoading = areasLoading || itemsLoading || stockLoading;
+  const isError = areasError || itemsError || stockError;
+  const loadError = areasErrorObj ?? itemsErrorObj ?? stockErrorObj;
+  const refetchPrimary = () => {
+    if (areasError) void refetchAreas();
+    if (itemsError) void refetchItems();
+    if (stockError) void refetchStock();
+  };
 
   // Alert counts
   const expiringItemCount = expiringItems?.expiring?.length || 0;
@@ -1420,6 +1428,12 @@ export function InventoryPage() {
                 <Skeleton key={i} className="h-32" />
               ))}
             </div>
+          ) : isError ? (
+            <ErrorState
+              title="Couldn't load inventory"
+              error={loadError}
+              onRetry={refetchPrimary}
+            />
           ) : (areas?.areas?.length || 0) === 0 ? (
             <EmptyState
               icon={<MapPin className="h-12 w-12" />}
@@ -1501,6 +1515,12 @@ export function InventoryPage() {
                 <Skeleton key={i} className="h-16" />
               ))}
             </div>
+          ) : isError ? (
+            <ErrorState
+              title="Couldn't load inventory"
+              error={loadError}
+              onRetry={refetchPrimary}
+            />
           ) : !catalogItems.length ? (
             <EmptyState
               icon={<Package className="h-12 w-12" />}
@@ -1537,6 +1557,12 @@ export function InventoryPage() {
                 <Skeleton key={i} className="h-20" />
               ))}
             </div>
+          ) : leftoversError ? (
+            <ErrorState
+              title="Couldn't load leftovers"
+              error={leftoversErrorObj}
+              onRetry={refetchLeftovers}
+            />
           ) : !leftoversData?.leftovers?.length ? (
             <EmptyState
               icon={<Soup className="h-12 w-12" />}

@@ -12,6 +12,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { Badge } from '@/components/ui/badge';
 import { listsApi } from '@/api/lists';
 import { useAuthStore } from '@/stores/authStore';
@@ -24,12 +25,12 @@ export function PendingListsCard() {
   const currentUser = useAuthStore((s) => s.user);
   const features = useFeatureFlags();
 
-  const { data: listsData, isLoading: listsLoading } = useQuery({
+  const { data: listsData, isLoading: listsLoading, isError: listsError, refetch: refetchLists } = useQuery({
     queryKey: ['lists', { dashboard: true }],
     queryFn: () => listsApi.list({}),
   });
 
-  const { data: itemsData, isLoading: itemsLoading } = useQuery({
+  const { data: itemsData, isLoading: itemsLoading, isError: itemsError, refetch: refetchItems } = useQuery({
     queryKey: ['lists', 'items-search', 'dashboard'],
     queryFn: () =>
       listsApi.searchItems({
@@ -85,6 +86,15 @@ export function PendingListsCard() {
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
           </div>
+        ) : listsError || itemsError ? (
+          <ErrorState
+            title="Couldn't load your lists"
+            compact
+            onRetry={() => {
+              if (listsError) void refetchLists();
+              if (itemsError) void refetchItems();
+            }}
+          />
         ) : empty ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <ListChecks className="h-4 w-4" />

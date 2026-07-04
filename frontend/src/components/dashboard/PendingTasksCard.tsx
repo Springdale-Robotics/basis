@@ -12,13 +12,14 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { tasksApi } from '@/api/tasks';
 import { formatDate } from '@/lib/utils';
 
 export function PendingTasksCard() {
   const queryClient = useQueryClient();
 
-  const { data: tasksData, isLoading } = useQuery({
+  const { data: tasksData, isLoading, isError, refetch } = useQuery({
     queryKey: ['tasks', 'pending'],
     queryFn: () => tasksApi.list({ kind: 'task', status: 'pending', limit: 5 }),
   });
@@ -50,6 +51,8 @@ export function PendingTasksCard() {
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
           </div>
+        ) : isError ? (
+          <ErrorState title="Couldn't load to-dos" compact onRetry={refetch} />
         ) : !tasksData?.tasks?.length ? (
           <p className="text-sm text-muted-foreground">Nothing on the list — nice work!</p>
         ) : (

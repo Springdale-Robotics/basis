@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import {
@@ -44,7 +45,7 @@ export function MoviesPage() {
   const [genreFilter, setGenreFilter] = useState<string>('all');
   const [showUnwatched, setShowUnwatched] = useState(false);
 
-  const { data: moviesData, isLoading: moviesLoading } = useQuery({
+  const { data: moviesData, isLoading: moviesLoading, isError: moviesError, error: moviesErrorObj, refetch: refetchMovies } = useQuery({
     queryKey: ['movies', sortBy, genreFilter, showUnwatched],
     queryFn: () =>
       moviesApi.list({
@@ -56,7 +57,7 @@ export function MoviesPage() {
     enabled: contentType === 'movies',
   });
 
-  const { data: tvShowsData, isLoading: tvLoading } = useQuery({
+  const { data: tvShowsData, isLoading: tvLoading, isError: tvError, error: tvErrorObj, refetch: refetchTvShows } = useQuery({
     queryKey: ['tv-shows'],
     queryFn: () => moviesApi.getTvShows(),
     enabled: contentType === 'tv',
@@ -163,6 +164,12 @@ export function MoviesPage() {
                 <MovieCardSkeleton key={i} />
               ))}
             </div>
+          ) : moviesError ? (
+            <ErrorState
+              title="Couldn't load movies"
+              error={moviesErrorObj}
+              onRetry={refetchMovies}
+            />
           ) : movies.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12">
@@ -189,6 +196,12 @@ export function MoviesPage() {
                 <MovieCardSkeleton key={i} />
               ))}
             </div>
+          ) : tvError ? (
+            <ErrorState
+              title="Couldn't load TV shows"
+              error={tvErrorObj}
+              onRetry={refetchTvShows}
+            />
           ) : tvShows.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12">

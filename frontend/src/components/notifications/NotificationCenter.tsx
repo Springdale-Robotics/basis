@@ -24,6 +24,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { Separator } from '@/components/ui/separator';
 import { notificationsApi } from '@/api/notifications';
 import type { Notification } from '@/types/models';
@@ -44,7 +45,7 @@ export function NotificationCenter() {
   const queryClient = useQueryClient();
 
   // Get notifications
-  const { data: notificationsData, isLoading } = useQuery({
+  const { data: notificationsData, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['notifications'],
     queryFn: () => notificationsApi.list(),
   });
@@ -137,6 +138,14 @@ export function NotificationCenter() {
             <div className="flex items-center justify-center h-32">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
+          ) : isError ? (
+            <ErrorState
+              title="Couldn't load notifications"
+              error={error}
+              onRetry={refetch}
+              compact
+              className="px-4"
+            />
           ) : notifications.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
               <Bell className="h-8 w-8 mb-2 opacity-50" />

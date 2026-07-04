@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { ShareButton, EditGate } from '@/components/permissions';
 import { EditListDialog } from '@/components/lists/EditListDialog';
 import { ChecklistView } from '@/components/lists/ChecklistView';
@@ -40,7 +41,7 @@ export function ListDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['lists', id],
     queryFn: () => listsApi.get(id!),
     enabled: !!id,
@@ -78,6 +79,15 @@ export function ListDetailPage() {
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-64 w-full" />
       </div>
+    );
+  }
+  if (isError) {
+    return (
+      <ErrorState
+        title="Couldn't load list"
+        error={error}
+        onRetry={refetch}
+      />
     );
   }
   if (!data) return <div>List not found</div>;

@@ -22,6 +22,7 @@ import { imageParseApi } from '@/api/image-parse';
 import { formatOcrForEditing } from '@/lib/recipe-utils';
 import { inventoryApi } from '@/api/inventory';
 import { cn } from '@/lib/utils';
+import { getErrorMessage } from '@/lib/api-error';
 import { IngredientMatchRow } from './IngredientMatchRow';
 import { BulkIngredientActions } from './BulkIngredientActions';
 import { BulkImportRecipeDialog } from './BulkImportRecipeDialog';
@@ -177,6 +178,8 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
   // URL preview mutation
   const previewUrlMutation = useMutation({
     mutationFn: () => recipesApi.parseUrl(sourceUrl),
+    // Errors render inline below the URL field; skip the global toast.
+    meta: { silenceError: true },
     onSuccess: (data) => {
       setPreviewRecipe(data.parsedRecipe);
       setParseMethod(data.parseMethod);
@@ -762,9 +765,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                       <Alert variant="destructive">
                         <AlertCircle className="h-4 w-4" />
                         <AlertDescription>
-                          {previewUrlMutation.error instanceof Error
-                            ? previewUrlMutation.error.message
-                            : 'Failed to fetch recipe from URL'}
+                          {getErrorMessage(previewUrlMutation.error)}
                         </AlertDescription>
                       </Alert>
                     )}

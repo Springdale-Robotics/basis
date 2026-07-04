@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
+import { getErrorMessage } from '@/lib/api-error';
 import { EventForm } from '@/components/calendar/EventForm';
 import { EventDetail } from '@/components/calendar/EventDetail';
 import { CalendarForm, type CalendarAccessPreset } from '@/components/calendar/CalendarForm';
@@ -66,7 +68,7 @@ export function CalendarPage() {
   const startDate = getStartDate(currentDate, viewMode);
   const endDate = getEndDate(currentDate, viewMode);
 
-  const { data: events, isLoading } = useQuery({
+  const { data: events, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['events', startDate.toISOString(), endDate.toISOString()],
     queryFn: () =>
       calendarsApi.getEvents({
@@ -144,7 +146,7 @@ export function CalendarPage() {
     onError: (error) => {
       toast({
         title: 'Failed to create calendar',
-        description: error instanceof Error ? error.message : 'An error occurred',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     },
@@ -162,7 +164,7 @@ export function CalendarPage() {
     onError: (error) => {
       toast({
         title: 'Failed to update calendar',
-        description: error instanceof Error ? error.message : 'An error occurred',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     },
@@ -181,7 +183,7 @@ export function CalendarPage() {
     onError: (error) => {
       toast({
         title: 'Failed to delete calendar',
-        description: error instanceof Error ? error.message : 'An error occurred',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     },
@@ -361,7 +363,7 @@ export function CalendarPage() {
     onError: (error) => {
       toast({
         title: 'Failed to move event',
-        description: error instanceof Error ? error.message : 'An error occurred',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     },
@@ -883,6 +885,12 @@ export function CalendarPage() {
                 <Skeleton key={i} className="h-24 w-full" />
               ))}
             </div>
+          ) : isError ? (
+            <ErrorState
+              title="Couldn't load events"
+              error={error}
+              onRetry={refetch}
+            />
           ) : viewMode === 'month' ? (
             <MonthView
               currentDate={currentDate}

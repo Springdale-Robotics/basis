@@ -16,6 +16,7 @@ import {
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
 import { formatMultiplier, formatServings } from '@/lib/servings';
@@ -73,7 +74,7 @@ export function MealPlanPage() {
   const weekStartStr = formatLocalDate(weekStart);
   const weekEndStr = formatLocalDate(weekEnd);
 
-  const { data: mealPlans, isLoading } = useQuery({
+  const { data: mealPlans, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['meal-plans', weekStartStr, weekEndStr],
     queryFn: () =>
       recipesApi.getMealPlans({ start: weekStartStr, end: weekEndStr }),
@@ -188,6 +189,15 @@ export function MealPlanPage() {
       </div>
 
       {/* Grid */}
+      {isError ? (
+        <div className="flex-1 min-h-0 rounded-lg border bg-card">
+          <ErrorState
+            title="Couldn't load meal plan"
+            error={error}
+            onRetry={refetch}
+          />
+        </div>
+      ) : (
       <div className="flex-1 min-h-0 min-w-0 overflow-auto rounded-lg border bg-card">
         <div
           className="min-w-[880px] grid h-full"
@@ -314,6 +324,7 @@ export function MealPlanPage() {
           })}
         </div>
       </div>
+      )}
 
       <GenerateShoppingListDialog
         open={shoppingListDialogOpen}

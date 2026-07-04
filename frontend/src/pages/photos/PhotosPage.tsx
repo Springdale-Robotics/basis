@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -36,13 +37,13 @@ export function PhotosPage() {
   const [selectedMonth, setSelectedMonth] = useState<number | undefined>();
   const [previewPhoto, setPreviewPhoto] = useState<Photo | null>(null);
 
-  const { data: photosData, isLoading: photosLoading } = useQuery({
+  const { data: photosData, isLoading: photosLoading, isError: photosError, error: photosErrorObj, refetch: refetchPhotos } = useQuery({
     queryKey: ['photos', selectedYear, selectedMonth],
     queryFn: () => photosApi.list({ limit: 200 }),
     enabled: viewMode === 'grid',
   });
 
-  const { data: timelineData, isLoading: timelineLoading } = useQuery({
+  const { data: timelineData, isLoading: timelineLoading, isError: timelineError, error: timelineErrorObj, refetch: refetchTimeline } = useQuery({
     queryKey: ['photos-timeline', selectedYear, selectedMonth],
     queryFn: () => photosApi.getTimeline({ year: selectedYear, month: selectedMonth }),
     enabled: viewMode === 'timeline',
@@ -147,6 +148,12 @@ export function PhotosPage() {
                 <Skeleton key={i} className="aspect-square" />
               ))}
             </div>
+          ) : photosError ? (
+            <ErrorState
+              title="Couldn't load photos"
+              error={photosErrorObj}
+              onRetry={refetchPhotos}
+            />
           ) : photos.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12">
@@ -185,6 +192,12 @@ export function PhotosPage() {
                 </div>
               </div>
             ))
+          ) : timelineError ? (
+            <ErrorState
+              title="Couldn't load timeline"
+              error={timelineErrorObj}
+              onRetry={refetchTimeline}
+            />
           ) : timeline.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12">

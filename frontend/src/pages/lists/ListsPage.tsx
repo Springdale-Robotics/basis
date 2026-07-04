@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { ErrorState } from '@/components/shared/ErrorState';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -46,7 +47,7 @@ export function ListsPage() {
   const includeArchived = filter === 'archived';
   const onlyTemplates = filter === 'templates';
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['lists', { includeArchived, onlyTemplates, search }],
     queryFn: () =>
       listsApi.list({
@@ -136,6 +137,12 @@ export function ListsPage() {
             <Skeleton key={i} className="h-32" />
           ))}
         </div>
+      ) : isError ? (
+        <ErrorState
+          title="Couldn't load lists"
+          error={error}
+          onRetry={refetch}
+        />
       ) : lists.length === 0 ? (
         <EmptyState
           icon={<ListChecks className="h-12 w-12" />}
