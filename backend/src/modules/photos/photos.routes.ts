@@ -90,28 +90,51 @@ export async function photosRoutes(app: FastifyInstance): Promise<void> {
         })
         .parse(request.query);
 
-      // Get all photos for this household (excluding files marked as excluded from categories)
-      const allPhotoFiles = await db.query.files.findMany({
-        where: and(
-          eq(files.householdId, request.user!.householdId),
-          eq(files.type, 'photo'),
-          eq(files.excludedFromCategories, false)
-        ),
-        orderBy: [desc(files.createdAt)],
-      });
+      const baseWhere = and(
+        eq(files.householdId, request.user!.householdId),
+        eq(files.type, 'photo'),
+        eq(files.excludedFromCategories, false)
+      );
 
-      // Filter out photos in restricted folders that user can't access
       const context: PermissionContext = {
         userId: request.user!.id,
         householdId: request.user!.householdId,
         userRole: request.user!.role,
       };
-      const accessiblePhotos = await filterAccessiblePhotos(context, allPhotoFiles);
 
-      // Apply pagination after filtering
-      const paginatedPhotos = accessiblePhotos.slice(offset, offset + limit + 1);
-      const hasMore = paginatedPhotos.length > limit;
-      const photos = hasMore ? paginatedPhotos.slice(0, limit) : paginatedPhotos;
+      // The metadata-driven filters below (camera/location, and date which
+      // prefers EXIF dateTaken over createdAt) can't be expressed in this base
+      // query, so they force the load-everything-then-filter path. But the
+      // default grid load — no such filters, and an admin who can see every
+      // photo — can paginate directly in SQL instead of pulling the whole
+      // library into memory on every request.
+      const needsInMemoryFilter =
+        !!cameraMake || !!cameraModel || hasLocation !== undefined || !!startDate || !!endDate;
+      const canPaginateInSql = context.userRole === 'admin' && !needsInMemoryFilter;
+
+      let photos;
+      let hasMore: boolean;
+      if (canPaginateInSql) {
+        const rows = await db.query.files.findMany({
+          where: baseWhere,
+          orderBy: [desc(files.createdAt)],
+          limit: limit + 1,
+          offset,
+        });
+        hasMore = rows.length > limit;
+        photos = hasMore ? rows.slice(0, limit) : rows;
+      } else {
+        // Load the household's photos, drop any the (non-admin) user can't see,
+        // then paginate the accessible set.
+        const allPhotoFiles = await db.query.files.findMany({
+          where: baseWhere,
+          orderBy: [desc(files.createdAt)],
+        });
+        const accessiblePhotos = await filterAccessiblePhotos(context, allPhotoFiles);
+        const paginatedPhotos = accessiblePhotos.slice(offset, offset + limit + 1);
+        hasMore = paginatedPhotos.length > limit;
+        photos = hasMore ? paginatedPhotos.slice(0, limit) : paginatedPhotos;
+      }
 
       // Get metadata for these photos
       const photoIds = photos.map((p) => p.id);
