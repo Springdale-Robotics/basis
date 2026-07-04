@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { Camera, Calendar, MapPin, Grid } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent } from '@/components/ui/card';
@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { TimelineSection } from '@/components/media/TimelineSection';
 import { MediaLightbox } from '@/components/media/MediaLightbox';
 import {
@@ -28,9 +29,23 @@ export function PhotosPage() {
   const [selectedMonth, setSelectedMonth] = useState<number | undefined>();
   const [previewPhoto, setPreviewPhoto] = useState<Photo | null>(null);
 
-  const { data: photosData, isLoading: photosLoading, isError: photosError, error: photosErrorObj, refetch: refetchPhotos } = useQuery({
+  const PHOTOS_PAGE_SIZE = 100;
+  const {
+    data: photosData,
+    isLoading: photosLoading,
+    isError: photosError,
+    error: photosErrorObj,
+    refetch: refetchPhotos,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: ['photos', selectedYear, selectedMonth],
-    queryFn: () => photosApi.list({ limit: 200 }),
+    queryFn: ({ pageParam }) =>
+      photosApi.list({ limit: PHOTOS_PAGE_SIZE, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.hasMore ? allPages.length * PHOTOS_PAGE_SIZE : undefined,
     enabled: viewMode === 'grid',
   });
 
@@ -46,7 +61,7 @@ export function PhotosPage() {
     enabled: viewMode === 'map',
   });
 
-  const photos = photosData?.photos || [];
+  const photos = photosData?.pages.flatMap((p) => p.photos) || [];
   const timeline = timelineData?.timeline || [];
   const locations = locationsData?.locations || [];
 
@@ -153,15 +168,28 @@ export function PhotosPage() {
               description="Upload some photos to get started"
             />
           ) : (
-            <div className="grid gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-              {photos.map((photo) => (
-                <PhotoThumbnail
-                  key={photo.id}
-                  photo={photo}
-                  onClick={() => setPreviewPhoto(photo)}
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+                {photos.map((photo) => (
+                  <PhotoThumbnail
+                    key={photo.id}
+                    photo={photo}
+                    onClick={() => setPreviewPhoto(photo)}
+                  />
+                ))}
+              </div>
+              {hasNextPage && (
+                <div className="mt-6 flex justify-center">
+                  <Button
+                    variant="outline"
+                    onClick={() => fetchNextPage()}
+                    disabled={isFetchingNextPage}
+                  >
+                    {isFetchingNextPage ? 'Loading…' : 'Load more'}
+                  </Button>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

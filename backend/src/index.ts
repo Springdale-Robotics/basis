@@ -7,6 +7,7 @@ import { config } from './config/index.js';
 import { db } from './config/database.js';
 import { resumeTunnel, stopTunnel as stopCloudflareTunnel } from './lib/cloudflared.js';
 import { probeSharp } from './lib/sharp.js';
+import { reportServerError } from './lib/error-reporter.js';
 
 const signals = ['SIGINT', 'SIGTERM'];
 let isShuttingDown = false;
@@ -120,7 +121,11 @@ async function main(): Promise<void> {
     // Handle uncaught exceptions
     process.on('uncaughtException', (error) => {
       logger.fatal({ error, message: error?.message, stack: error?.stack }, 'Uncaught exception');
-      shutdown('uncaughtException');
+      // Report before tearing down (best-effort, short timeout), then shut down
+      // regardless of whether delivery succeeded.
+      void reportServerError('uncaughtException', error, {}, 2_000).finally(() =>
+        shutdown('uncaughtException')
+      );
     });
 
     // Handle unhandled promise rejections
@@ -128,7 +133,9 @@ async function main(): Promise<void> {
       const message = reason instanceof Error ? reason.message : String(reason);
       const stack = reason instanceof Error ? reason.stack : undefined;
       logger.fatal({ reason, message, stack }, 'Unhandled promise rejection');
-      shutdown('unhandledRejection');
+      void reportServerError('unhandledRejection', reason, {}, 2_000).finally(() =>
+        shutdown('unhandledRejection')
+      );
     });
   } catch (error) {
     logger.fatal({ error, errorMessage: error instanceof Error ? error.message : String(error), errorStack: error instanceof Error ? error.stack : undefined }, 'Failed to start server');

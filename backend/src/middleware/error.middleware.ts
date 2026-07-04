@@ -2,6 +2,7 @@ import { FastifyError, FastifyRequest, FastifyReply } from 'fastify';
 import { ZodError } from 'zod';
 import { AppError, ErrorCode } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
+import { reportServerError } from '../lib/error-reporter.js';
 
 export function errorHandler(
   error: FastifyError | Error,
@@ -62,6 +63,12 @@ export function errorHandler(
 
   // Handle unknown errors
   logger.error({ error, requestId }, 'Unhandled error');
+  // Fire-and-forget telemetry — an unknown error reaching here is a genuine bug.
+  void reportServerError('http_5xx', error, {
+    requestId,
+    method: request.method,
+    route: request.routeOptions?.url,
+  });
 
   reply.status(500).send({
     success: false,

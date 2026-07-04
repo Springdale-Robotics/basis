@@ -95,6 +95,12 @@ const envSchema = z.object({
   // otherwise get a host shell). Fixed-argv installer commands are unaffected.
   ENABLE_ADMIN_TERMINAL: z.coerce.boolean().default(true),
 
+  // Optional sink for automatic backend error telemetry. When set, unexpected
+  // 5xx errors and uncaught exceptions/rejections are POSTed as compact JSON
+  // (deduped) so operators aren't blind to what breaks in production. Point it
+  // at a webhook, a Sentry-compatible endpoint, a relay, etc.
+  ERROR_WEBHOOK_URL: z.string().url().optional(),
+
   // Ollama connection (used by VLM-LLM service)
   OLLAMA_HOST: z.string().default('http://localhost:11434'),
 
