@@ -202,6 +202,30 @@ export async function createBackup(): Promise<{ filename: string; bytes: number;
 }
 
 /**
+ * Copy a finished backup off-host by running the operator-configured
+ * BACKUP_REMOTE_CMD (rclone/rsync/scp/etc.). The file path is passed via
+ * environment, not string interpolation, so a path never lands unquoted in a
+ * shell. No-op when unconfigured. Returns whether a command ran.
+ */
+export async function copyBackupOffHost(filename: string): Promise<boolean> {
+  const cmd = config.BACKUP_REMOTE_CMD;
+  if (!cmd) return false;
+  const filePath = resolvePath(BACKUP_DIR, safeFilename(filename));
+  await exec(cmd, {
+    timeout: 30 * 60_000, // large libraries / slow uplinks
+    env: {
+      ...process.env,
+      BASIS_BACKUP_FILE: filePath,
+      BASIS_BACKUP_DIR: BACKUP_DIR,
+      // Uploaded media lives here (not in the DB dump). Exposed so an operator's
+      // remote command can sync it too, closing the media-backup gap.
+      BASIS_STORAGE_DIR: resolvePath(config.STORAGE_PATH),
+    },
+  });
+  return true;
+}
+
+/**
  * Delete all but the `keep` newest backups. Returns the filenames removed.
  * A non-positive `keep` is treated as "keep everything" (no pruning).
  */

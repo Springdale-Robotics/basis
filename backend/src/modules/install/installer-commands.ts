@@ -166,6 +166,8 @@ echo "Running database migrations..."
 npm run db:migrate
 
 echo "Swapping current symlink atomically..."
+# Record where current points BEFORE the swap so the watchdog can roll back to it.
+PREV_TARGET=$(readlink /opt/basis/current 2>/dev/null || true)
 ln -sfn "versions/$NEW_VERSION" /opt/basis/current.new
 mv -T /opt/basis/current.new /opt/basis/current
 
@@ -190,10 +192,19 @@ echo "  (Connection to this terminal will drop when the service restarts.)"
 # aborted attempt does not make the restart fail with "start request repeated
 # too quickly"; the true-fallbacks cover older installs whose sudoers predates
 # that rule. Then the parser sidecar best-effort, then the critical units last.
-setsid bash -c 'sleep 3 && { sudo systemctl reset-failed basis basis-worker || true; } && { sudo systemctl restart basis-ingredient-parser || true; } && sudo systemctl restart basis basis-worker' </dev/null >/dev/null 2>&1 &
+# Prefer the health-checking watchdog (restarts, then auto-reverts the symlink
+# to PREV_TARGET if the new version never becomes healthy). Fall back to the
+# plain detached restart if this release predates the watchdog script.
+WATCHDOG="$DEST/backend/deploy/native/post-update-watchdog.sh"
+if [ -f "$WATCHDOG" ]; then
+  setsid bash "$WATCHDOG" "$PREV_TARGET" "$NEW_VERSION" </dev/null >/dev/null 2>&1 &
+else
+  setsid bash -c 'sleep 3 && { sudo systemctl reset-failed basis basis-worker || true; } && { sudo systemctl restart basis-ingredient-parser || true; } && sudo systemctl restart basis basis-worker' </dev/null >/dev/null 2>&1 &
+fi
 echo "Update complete — now at $NEW_VERSION"
-echo "Roll back if needed: point /opt/basis/current at the previous version,"
-echo "restore $SNAPSHOT, then 'sudo systemctl restart basis basis-worker'."
+echo "A health watchdog will auto-roll back the code to the previous version if"
+echo "this one fails to come up. If a bad migration is the cause, also restore"
+echo "$SNAPSHOT, then 'sudo systemctl restart basis basis-worker'."
 `,
     ],
   },
