@@ -106,33 +106,6 @@ export interface AddReminderRequest {
 
 export type PermissionLevel = 'view_busy' | 'view' | 'edit';
 
-export interface ShareCalendarRequest {
-  householdId: string;
-  permissionLevel: PermissionLevel;
-}
-
-export interface CalendarShare {
-  id: string;
-  householdId: string;
-  householdName: string;
-  permissionLevel: PermissionLevel;
-  createdAt?: string;
-}
-
-export interface ConnectedHousehold {
-  id: string;
-  name: string;
-}
-
-export interface SharedCalendar extends Calendar {
-  isShared: boolean;
-  sharedBy: {
-    householdId: string;
-    householdName: string;
-  };
-  permissionLevel: PermissionLevel;
-}
-
 export interface PublicLinkStatus {
   enabled: boolean;
   publicToken?: string;
@@ -296,25 +269,6 @@ export const calendarsApi = {
 
   completeOutlookSync: (data: { outlookCalendarId: string; name: string; color?: string }) =>
     apiPost<{ calendar: Calendar; syncResult?: { created: number; updated: number; deleted: number }; syncError?: string }>('/calendars/sync/outlook/complete', data),
-
-  // Calendar Sharing
-  shareCalendar: (calendarId: string, data: ShareCalendarRequest) =>
-    apiPost<{ share: CalendarShare }>(`/calendars/${calendarId}/share`, data),
-
-  getCalendarShares: (calendarId: string) =>
-    apiGet<{ shares: CalendarShare[] }>(`/calendars/${calendarId}/shares`),
-
-  updateShare: (calendarId: string, shareId: string, permissionLevel: PermissionLevel) =>
-    apiPatch<{ share: CalendarShare }>(`/calendars/${calendarId}/shares/${shareId}`, { permissionLevel }),
-
-  removeShare: (calendarId: string, shareId: string) =>
-    apiDelete<{ message: string }>(`/calendars/${calendarId}/shares/${shareId}`),
-
-  getSharedWithMe: () =>
-    apiGet<{ calendars: SharedCalendar[] }>('/calendars/shared-with-me'),
-
-  getConnectedHouseholds: () =>
-    apiGet<{ households: ConnectedHousehold[] }>('/calendars/sharing/households'),
 
   // Public ICS Links
   getPublicLinkStatus: (calendarId: string) =>

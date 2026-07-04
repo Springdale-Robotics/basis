@@ -11,15 +11,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Backend lint + full typecheck are still skipped (pre-existing):
-  #  - ESLint has no config file (neither .eslintrc nor eslint.config.js)
-  #  - `tsc --noEmit` has a backlog of errors the dev runtime (tsx) tolerates.
-  # The backend job below runs the infra-free unit tests, which are green — a
-  # real gate that catches regressions in the tested libs. Expand toward
-  # typecheck + the DB-backed suites as the error backlog is burned down.
-
+  # Backend lint is still skipped (no ESLint config exists yet). Typecheck is
+  # now green and gated below; the job also runs the infra-free unit tests.
   backend:
-    name: Backend unit tests
+    name: Backend typecheck + unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +28,10 @@ jobs:
 
       - name: Install deps
         run: npm ci --no-audit --no-fund
+        working-directory: backend
+
+      - name: Typecheck
+        run: npx tsc --noEmit
         working-directory: backend
 
       - name: Unit tests (no infra required)

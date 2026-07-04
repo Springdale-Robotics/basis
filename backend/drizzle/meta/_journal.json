@@ -15,6 +15,13 @@
       "when": 1783124356613,
       "tag": "0001_add_users_email_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783128745127,
+      "tag": "0002_drop_federation",
+      "breakpoints": true
     }
   ]
 }

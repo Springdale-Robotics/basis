@@ -1,7 +1,4 @@
-import { emitToHousehold, emitToUser, emitToRoom, broadcastToConnectedHouseholds } from './index.js';
-import { db } from '../config/database.js';
-import { sharedResources } from '../db/schema/index.js';
-import { eq, and } from 'drizzle-orm';
+import { emitToHousehold, emitToUser, emitToRoom } from './index.js';
 
 // Event type definitions
 export interface CalendarEventPayload {
@@ -54,14 +51,6 @@ export interface DeviceEventPayload {
   deviceId: string;
   action: 'registered' | 'updated' | 'removed' | 'status_changed';
   device?: Record<string, unknown>;
-}
-
-export interface SyncEventPayload {
-  syncId: string;
-  resourceType: string;
-  resourceId: string;
-  action: 'pending' | 'completed' | 'failed';
-  fromHouseholdId: string;
 }
 
 export interface InventoryConfidencePayload {
@@ -176,24 +165,8 @@ export function emitTaskDeleted(householdId: string, taskId: string): void {
 }
 
 // Recipe events
-export async function emitRecipeEvent(householdId: string, payload: RecipeEventPayload): Promise<void> {
+export function emitRecipeEvent(householdId: string, payload: RecipeEventPayload): void {
   emitToHousehold(householdId, 'recipe:update', payload);
-
-  // If recipe is shared, notify connected households
-  if (payload.action === 'updated' || payload.action === 'deleted') {
-    const sharedWith = await db.query.sharedResources.findMany({
-      where: and(
-        eq(sharedResources.resourceType, 'recipe'),
-        eq(sharedResources.resourceId, payload.recipeId),
-        eq(sharedResources.householdId, householdId)
-      ),
-    });
-
-    const connectedIds = sharedWith.map(s => s.sharedWithHouseholdId);
-    if (connectedIds.length > 0) {
-      await broadcastToConnectedHouseholds(householdId, 'recipe:shared_update', payload, connectedIds);
-    }
-  }
 }
 
 // File events
@@ -223,11 +196,6 @@ export function emitListEvent(householdId: string, payload: ListEventPayload): v
 // Device events
 export function emitDeviceEvent(householdId: string, payload: DeviceEventPayload): void {
   emitToHousehold(householdId, 'device:update', payload);
-}
-
-// Sync events
-export function emitSyncEvent(householdId: string, payload: SyncEventPayload): void {
-  emitToHousehold(householdId, 'sync:update', payload);
 }
 
 // Household-wide events

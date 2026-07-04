@@ -16,19 +16,6 @@ export const notificationQueue = new Queue('notifications', {
   },
 });
 
-export const syncQueue = new Queue('sync', {
-  connection: redis,
-  defaultJobOptions: {
-    removeOnComplete: 100,
-    removeOnFail: 500,
-    attempts: 5,
-    backoff: {
-      type: 'exponential',
-      delay: 2000,
-    },
-  },
-});
-
 export const cleanupQueue = new Queue('cleanup', {
   connection: redis,
   defaultJobOptions: {
@@ -128,22 +115,15 @@ export interface NotificationJobData {
   data?: Record<string, unknown>;
 }
 
-export interface SyncJobData {
-  fromHouseholdId: string;
-  toHouseholdId: string;
-  resourceType: string;
-  resourceId: string;
-  operation: 'share' | 'update' | 'delete';
-}
-
 export interface CleanupJobData {
   type: 'expired_sessions' | 'old_notifications' | 'old_audit_logs' | 'orphaned_files' | 'old_leftovers';
   householdId?: string;
 }
 
 export interface InventoryJobData {
-  type: 'check_low_stock' | 'check_expiring' | 'check_leftovers_expiring' | 'update_quantities';
-  householdId: string;
+  type: 'check_low_stock' | 'check_expiring' | 'check_leftovers_expiring';
+  // Omitted for the recurring jobs, which run the check for every household.
+  householdId?: string;
 }
 
 export interface CalendarReminderJobData {
@@ -193,24 +173,6 @@ export async function initializeWorkers(): Promise<void> {
 
   notificationWorker.on('failed', (job, error) => {
     logger.error({ jobId: job?.id, type: job?.name, error }, 'Notification job failed');
-  });
-
-  // Sync worker
-  const syncWorker = new Worker(
-    'sync',
-    async (job: Job<SyncJobData>) => {
-      const { processSyncJob } = await import('./sync.worker.js');
-      return processSyncJob(job);
-    },
-    { connection: redis, concurrency: 3 }
-  );
-
-  syncWorker.on('completed', (job) => {
-    logger.debug({ jobId: job.id, type: job.name }, 'Sync job completed');
-  });
-
-  syncWorker.on('failed', (job, error) => {
-    logger.error({ jobId: job?.id, type: job?.name, error }, 'Sync job failed');
   });
 
   // Cleanup worker
@@ -339,7 +301,7 @@ export async function initializeWorkers(): Promise<void> {
     logger.error({ jobId: job?.id, reportId: job?.data.reportId, error }, 'Bug report delivery failed');
   });
 
-  workers = [notificationWorker, syncWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, mediaWorker, imageParseWorker, bugReportWorker];
+  workers = [notificationWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, mediaWorker, imageParseWorker, bugReportWorker];
   logger.info('Background workers initialized');
 }
 
@@ -383,6 +345,24 @@ export async function scheduleRecurringJobs(): Promise<void> {
       repeat: { pattern: '0 5 * * 0' }, // Every Sunday at 5 AM
       jobId: 'cleanup:old_leftovers',
     }
+  );
+
+  // Inventory checks — daily, across all households (the processor iterates
+  // households when no householdId is supplied).
+  await inventoryQueue.add(
+    'check_low_stock',
+    { type: 'check_low_stock' },
+    { repeat: { pattern: '0 8 * * *' }, jobId: 'inventory:low_stock' } // Daily 8 AM
+  );
+  await inventoryQueue.add(
+    'check_expiring',
+    { type: 'check_expiring' },
+    { repeat: { pattern: '0 9 * * *' }, jobId: 'inventory:expiring' } // Daily 9 AM
+  );
+  await inventoryQueue.add(
+    'check_leftovers_expiring',
+    { type: 'check_leftovers_expiring' },
+    { repeat: { pattern: '0 9 * * *' }, jobId: 'inventory:leftovers_expiring' } // Daily 9 AM
   );
 
   // Check calendar reminders every minute
@@ -430,7 +410,6 @@ export async function shutdownWorkers(): Promise<void> {
   await Promise.all(workers.map((worker) => worker.close()));
 
   await notificationQueue.close();
-  await syncQueue.close();
   await cleanupQueue.close();
   await inventoryQueue.close();
   await calendarReminderQueue.close();
@@ -445,13 +424,6 @@ export async function shutdownWorkers(): Promise<void> {
 // Helper to add notification job
 export async function queueNotification(data: NotificationJobData): Promise<void> {
   await notificationQueue.add(data.type, data);
-}
-
-// Helper to add sync job
-export async function queueSync(data: SyncJobData): Promise<void> {
-  await syncQueue.add(data.operation, data, {
-    jobId: `sync:${data.resourceType}:${data.resourceId}:${data.toHouseholdId}`,
-  });
 }
 
 // Helper to add inventory check job

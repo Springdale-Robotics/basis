@@ -95,15 +95,6 @@ export function SettingsPage() {
             />
             <Route path="remote-access" element={<RemoteAccessSettingsPage />} />
             <Route path="backup" element={<BackupSettingsPage />} />
-            <Route
-              path="connections"
-              element={
-                <PlaceholderSettings
-                  title="Connections"
-                  description="Link external accounts the household pulls from — Google Photos, smart-home hubs, music services, recipe sources — and manage their OAuth tokens."
-                />
-              }
-            />
             <Route path="features" element={<FeatureSettingsPage />} />
             <Route
               path="sessions"
