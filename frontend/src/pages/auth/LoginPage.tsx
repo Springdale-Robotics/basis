@@ -1,13 +1,15 @@
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useLocation } from 'react-router-dom';
 import { Home } from 'lucide-react';
 import { LoginForm } from '@/components/auth/LoginForm';
 import { useAuth } from '@/hooks/useAuth';
 
 export function LoginPage() {
   const { isAuthenticated, isLoading } = useAuth();
+  const location = useLocation();
 
   if (isAuthenticated && !isLoading) {
-    return <Navigate to="/dashboard" replace />;
+    const from = (location.state as { from?: string } | null)?.from;
+    return <Navigate to={from || '/dashboard'} replace />;
   }
 
   return (

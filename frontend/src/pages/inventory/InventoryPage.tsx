@@ -851,7 +851,7 @@ export function InventoryPage() {
           )}
           <span className="text-base shrink-0">{getItemIcon(item)}</span>
           <div className="min-w-0">
-            <p className="font-medium truncate flex items-center gap-2">
+            <div className="font-medium truncate flex items-center gap-2">
               <span className="truncate">{item.name}</span>
               {item.needsConversion && (
                 <Badge
@@ -862,7 +862,7 @@ export function InventoryPage() {
                   Needs conversion
                 </Badge>
               )}
-            </p>
+            </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               {item.category && <span>{item.category}</span>}
               {displayExpiry && (() => {

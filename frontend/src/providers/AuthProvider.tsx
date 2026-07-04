@@ -40,7 +40,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   });
 
   // Fetch current user session
-  const { refetch, isLoading: authLoading } = useQuery({
+  const { refetch, isPending: authPending } = useQuery({
     queryKey: ['auth', 'me'],
     queryFn: authApi.me,
     retry: false,
@@ -122,7 +122,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSetupComplete, setupLoading]);
 
-  const isLoading = setupLoading || authLoading;
+  // A disabled query reports isLoading=false, so gate on isPending once setup
+  // is complete — otherwise there's a tick where isLoading is false before the
+  // auth query starts and ProtectedRoute bounces deep links to /login.
+  const isLoading = setupLoading || ((setupStatus?.isSetupComplete ?? false) && authPending);
 
   const value: AuthContextType = {
     user,
