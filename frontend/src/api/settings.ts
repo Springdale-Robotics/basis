@@ -221,6 +221,11 @@ export const settingsApi = {
   deleteSystemBackup: (filename: string) =>
     apiDelete<{ message: string }>(`/system/backups/${encodeURIComponent(filename)}`),
 
+  restoreSystemBackup: (filename: string) =>
+    apiPost<{ filename: string; elapsedMs: number; message: string }>(
+      `/system/backups/${encodeURIComponent(filename)}/restore`
+    ),
+
   getSystemStatus: () =>
     apiGet<{
       version: string;

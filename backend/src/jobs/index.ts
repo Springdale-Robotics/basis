@@ -1,7 +1,6 @@
 import { Queue, Worker, Job } from 'bullmq';
 import { redis } from '../config/redis.js';
 import { logger } from '../lib/logger.js';
-import { config } from '../config/index.js';
 
 // Job queues
 export const notificationQueue = new Queue('notifications', {
@@ -452,6 +451,13 @@ export async function scheduleRecurringJobs(): Promise<void> {
   startTailscaleHealthWorker();
   await scheduleTailscaleHealthJob();
 
+  // Daily full-database backup — no-op (warns) when pg_dump isn't installed.
+  const { scheduleSystemBackupJob, startSystemBackupWorker } = await import(
+    './system-backup.worker.js'
+  );
+  startSystemBackupWorker();
+  await scheduleSystemBackupJob();
+
   logger.info('Recurring jobs scheduled');
 }
 
@@ -484,13 +490,6 @@ export async function queueNotification(data: NotificationJobData): Promise<void
 export async function queueSync(data: SyncJobData): Promise<void> {
   await syncQueue.add(data.operation, data, {
     jobId: `sync:${data.resourceType}:${data.resourceId}:${data.toHouseholdId}`,
-  });
-}
-
-// Helper to add backup job
-export async function queueBackup(data: BackupJobData): Promise<void> {
-  await backupQueue.add('backup', data, {
-    jobId: `backup:${data.householdId}:${Date.now()}`,
   });
 }
 
