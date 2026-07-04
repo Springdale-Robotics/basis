@@ -1,7 +1,7 @@
 import type { CalendarEvent, Calendar as CalendarType } from '@/types/models';
 import { getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
 
-const DEFAULT_COLOR = '#4A90D9';
+export const DEFAULT_COLOR = '#4A90D9';
 
 export function resolveEventColor(
   event: CalendarEvent,

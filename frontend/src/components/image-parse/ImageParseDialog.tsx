@@ -31,6 +31,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
+import { getErrorMessage } from '@/lib/api-error';
 import {
   imageParseApi,
   type ParsedContentType,
@@ -39,6 +40,7 @@ import {
 } from '@/api/image-parse';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
+import { FileSourcePicker } from '@/components/shared/FileSourcePicker';
 import { ListPreview } from './previews/ListPreview';
 import { RecipePreview } from './previews/RecipePreview';
 import { CalendarEventsPreview } from './previews/CalendarEventsPreview';
@@ -102,6 +104,7 @@ export function ImageParseDialog({
   const [editedContent, setEditedContent] = useState<unknown>(null);
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
 
   // Force re-render for progress updates
   const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
@@ -255,6 +258,7 @@ export function ImageParseDialog({
     setEditedContent(null);
     setProcessingStartTime(null);
     setDebugOpen(false);
+    setSourcePickerOpen(false);
     onOpenChange(false);
   }, [sessionId, session?.status, cancelMutation, onOpenChange]);
 
@@ -423,7 +427,7 @@ export function ImageParseDialog({
 
       <div
         className={cn(
-          'relative rounded-lg border-2 border-dashed p-8 text-center transition-colors',
+          'relative rounded-lg border-2 border-dashed p-8 text-center transition-colors cursor-pointer',
           dragActive ? 'border-primary bg-primary/5' : 'border-muted-foreground/25',
           uploadMutation.isPending && 'pointer-events-none opacity-50'
         )}
@@ -434,6 +438,9 @@ export function ImageParseDialog({
         onDragLeave={() => setDragActive(false)}
         onDrop={handleDrop}
         onPaste={handlePaste}
+        // Clicking the dropzone opens the source picker (library or device);
+        // drag-and-drop stays the direct device shortcut.
+        onClick={() => !uploadMutation.isPending && setSourcePickerOpen(true)}
         tabIndex={0}
       >
         {uploadMutation.isPending ? (
@@ -453,14 +460,18 @@ export function ImageParseDialog({
             <div className="mt-6 flex justify-center gap-3">
               <Button
                 variant="outline"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSourcePickerOpen(true);
+                }}
               >
                 <Upload className="mr-2 h-4 w-4" />
                 Select File
               </Button>
               <Button
                 variant="outline"
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   // Trigger camera on mobile
                   if (fileInputRef.current) {
                     fileInputRef.current.accept = 'image/*';
@@ -486,11 +497,16 @@ export function ImageParseDialog({
           </>
         )}
 
+        {/* Hidden input kept for the Camera path (needs the capture attr);
+            regular selection goes through the FileSourcePicker below.
+            stopPropagation so the programmatic click doesn't bubble to the
+            dropzone and open the picker on top of the camera. */}
         <input
           ref={fileInputRef}
           type="file"
           accept="image/*"
           className="hidden"
+          onClick={(e) => e.stopPropagation()}
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file) handleFileSelect(file);
@@ -499,13 +515,22 @@ export function ImageParseDialog({
         />
       </div>
 
+      <FileSourcePicker
+        open={sourcePickerOpen}
+        onOpenChange={setSourcePickerOpen}
+        onSelect={(files) => {
+          if (files[0]) handleFileSelect(files[0]);
+        }}
+        accept="image/*"
+        title="Add an image"
+        description="Scan a photo of a list, recipe, or schedule."
+      />
+
       {uploadMutation.error && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            {uploadMutation.error instanceof Error
-              ? uploadMutation.error.message
-              : 'Upload failed'}
+            {getErrorMessage(uploadMutation.error, 'Upload failed')}
           </AlertDescription>
         </Alert>
       )}
@@ -761,7 +786,7 @@ export function ImageParseDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-h-[90vh] sm:max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {step === 'mode-selection' && 'Choose Processing Mode'}

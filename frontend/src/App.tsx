@@ -37,8 +37,13 @@ import { FilesPage } from './pages/files/FilesPage';
 import { PhotosPage } from './pages/photos/PhotosPage';
 import { VideosPage } from './pages/videos/VideosPage';
 import { MoviesPage } from './pages/movies/MoviesPage';
+import { MovieDetailPage } from './pages/movies/MovieDetailPage';
+import { TvShowDetailPage } from './pages/movies/TvShowDetailPage';
 import { MusicPage } from './pages/music/MusicPage';
+import { AlbumDetailPage } from './pages/music/AlbumDetailPage';
+import { ArtistDetailPage } from './pages/music/ArtistDetailPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
+import { NotFoundPage } from './pages/NotFoundPage';
 
 export function App() {
   return (
@@ -98,18 +103,18 @@ export function App() {
                   <Route path="photos" element={<PhotosPage />} />
                   <Route path="videos" element={<VideosPage />} />
                   <Route path="movies" element={<MoviesPage />} />
-                  <Route path="movies/:id" element={<MoviesPage />} />
-                  <Route path="tv/:id" element={<MoviesPage />} />
+                  <Route path="movies/:id" element={<MovieDetailPage />} />
+                  <Route path="tv/:id" element={<TvShowDetailPage />} />
                   <Route path="music" element={<MusicPage />} />
-                  <Route path="music/albums/:id" element={<MusicPage />} />
-                  <Route path="music/artists/:id" element={<MusicPage />} />
+                  <Route path="music/albums/:id" element={<AlbumDetailPage />} />
+                  <Route path="music/artists/:id" element={<ArtistDetailPage />} />
 
                   {/* Settings */}
                   <Route path="settings/*" element={<SettingsPage />} />
-                </Route>
 
-                {/* Catch-all */}
-                <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                  {/* Catch-all: unknown routes get a proper 404 inside the shell */}
+                  <Route path="*" element={<NotFoundPage />} />
+                </Route>
               </Routes>
               </ErrorBoundary>
               <Toaster />

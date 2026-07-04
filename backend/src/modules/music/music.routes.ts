@@ -177,10 +177,11 @@ export async function musicRoutes(app: FastifyInstance): Promise<void> {
             return (
               new Date(b.releaseDate || 0).getTime() - new Date(a.releaseDate || 0).getTime()
             );
-          case 'artist':
+          case 'artist': {
             const artistA = a.artistId ? artistMap.get(a.artistId) || '' : '';
             const artistB = b.artistId ? artistMap.get(b.artistId) || '' : '';
             return artistA.localeCompare(artistB);
+          }
           default:
             return 0;
         }

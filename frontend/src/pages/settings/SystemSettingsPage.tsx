@@ -14,18 +14,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { settingsApi } from '@/api/settings';
-
-function formatBytes(bytes?: number): string {
-  if (bytes === undefined) return '—';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let v = bytes;
-  let u = 0;
-  while (v >= 1024 && u < units.length - 1) {
-    v /= 1024;
-    u++;
-  }
-  return `${v.toFixed(v < 10 && u > 0 ? 1 : 0)} ${units[u]}`;
-}
+import { formatFileSize } from '@/lib/utils';
 
 function formatDuration(seconds?: number): string {
   if (seconds === undefined) return '—';
@@ -41,7 +30,7 @@ function formatDuration(seconds?: number): string {
 function ServiceStateBadge({ state }: { state: string }) {
   if (state === 'active') {
     return (
-      <Badge variant="default" className="bg-green-600 hover:bg-green-600">
+      <Badge variant="default" className="bg-success text-success-foreground hover:bg-success">
         <CheckCircle2 className="mr-1 h-3 w-3" />
         active
       </Badge>
@@ -173,7 +162,7 @@ export function SystemSettingsPage() {
                 <p className="text-sm font-medium">Disk ({data.storage.path})</p>
                 {data.storage.totalBytes && (
                   <p className="text-xs text-muted-foreground">
-                    {formatBytes(data.storage.usedBytes)} / {formatBytes(data.storage.totalBytes)}
+                    {formatFileSize(data.storage.usedBytes)} / {formatFileSize(data.storage.totalBytes)}
                     {diskPercent !== null && ` · ${diskPercent}%`}
                   </p>
                 )}
@@ -193,7 +182,7 @@ export function SystemSettingsPage() {
               <p className="text-xs text-muted-foreground">
                 {data.database.error
                   ? data.database.error
-                  : `Current size: ${formatBytes(data.database.bytes)}`}
+                  : `Current size: ${formatFileSize(data.database.bytes)}`}
               </p>
             </div>
           </div>
@@ -206,7 +195,7 @@ export function SystemSettingsPage() {
                 <p className="text-xs text-muted-foreground">
                   {data.lastBackup.filename} ·{' '}
                   {new Date(data.lastBackup.mtime!).toLocaleString()} ·{' '}
-                  {formatBytes(data.lastBackup.bytes)}
+                  {formatFileSize(data.lastBackup.bytes)}
                 </p>
               ) : (
                 <p className="text-xs text-muted-foreground">

@@ -511,7 +511,7 @@ export async function confirmSession(
 
   try {
     switch (selectedType) {
-      case 'list':
+      case 'list': {
         const listIds = await createListFromContent(
           parsedContent.data as ParsedListContent,
           householdId,
@@ -520,8 +520,9 @@ export async function confirmSession(
         );
         createdIds.push(...listIds);
         break;
+      }
 
-      case 'recipe':
+      case 'recipe': {
         const recipeId = await createRecipeFromContent(
           parsedContent.data as ParsedRecipeContent,
           householdId,
@@ -530,8 +531,9 @@ export async function confirmSession(
         );
         createdIds.push(recipeId);
         break;
+      }
 
-      case 'calendar_event':
+      case 'calendar_event': {
         const eventIds = await createEventsFromContent(
           parsedContent.data as ParsedCalendarContent,
           householdId,
@@ -540,6 +542,7 @@ export async function confirmSession(
         );
         createdIds.push(...eventIds);
         break;
+      }
 
       default:
         throw Errors.validation(`Cannot create entities from type: ${selectedType}`);

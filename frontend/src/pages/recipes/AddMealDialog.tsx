@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Search,
   Plus,
   Check,
   Loader2,
   UtensilsCrossed,
   Trash2,
-  Minus,
   ChefHat,
   Clock,
   Users,
@@ -21,8 +19,9 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
+import { SearchInput } from '@/components/shared/SearchInput';
+import { ServingsStepper } from '@/components/recipes/ServingsStepper';
 import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
 import {
@@ -143,9 +142,17 @@ export function AddMealDialog({
 
   const mealLabel = mealType.charAt(0).toUpperCase() + mealType.slice(1);
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedRecipe && !addMealMutation.isPending) {
+      addMealMutation.mutate(selectedRecipe);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden">
+      <DialogContent className="sm:max-w-lg p-0 gap-0 overflow-hidden">
+        <form onSubmit={handleSubmit} className="contents">
         <DialogHeader className="px-6 pt-6 pb-4 border-b">
           <DialogTitle className="flex items-center gap-2 text-lg">
             <UtensilsCrossed className="h-5 w-5 text-primary" />
@@ -182,15 +189,11 @@ export function AddMealDialog({
               {existingMeals.length > 0 ? 'Add another recipe' : 'Add a recipe'}
             </div>
 
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-              <Input
-                placeholder="Search recipes..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
+            <SearchInput
+              placeholder="Search recipes..."
+              value={search}
+              onChange={setSearch}
+            />
 
             <div className="min-h-[240px]">
               {isLoading ? (
@@ -229,17 +232,22 @@ export function AddMealDialog({
                 editsServings={editsServings}
                 baseServings={baseServings}
                 computedMultiplier={computedMultiplier}
+                className="bg-muted/30"
               />
             )}
           </div>
         </div>
 
-        <DialogFooter className="px-6 py-4 border-t bg-muted/30 sm:justify-between gap-2">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+        <DialogFooter className="px-6 py-4 border-t bg-muted/30 gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+          >
             Done
           </Button>
           <Button
-            onClick={() => selectedRecipe && addMealMutation.mutate(selectedRecipe)}
+            type="submit"
             disabled={!selectedRecipe || addMealMutation.isPending}
           >
             {addMealMutation.isPending ? (
@@ -250,6 +258,7 @@ export function AddMealDialog({
             Add to {mealLabel}
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -289,6 +298,7 @@ function PlannedMealRow({
         ) : null}
       </div>
       <Button
+        type="button"
         variant="ghost"
         size="icon"
         className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
@@ -360,76 +370,6 @@ function RecipeRow({
         {selected && <Check className="h-3 w-3" />}
       </div>
     </button>
-  );
-}
-
-function ServingsStepper({
-  value,
-  onChange,
-  editsServings,
-  baseServings,
-  computedMultiplier,
-}: {
-  value: number;
-  onChange: (n: number) => void;
-  editsServings: boolean;
-  baseServings: number | null;
-  computedMultiplier: number;
-}) {
-  const step = editsServings ? 1 : 0.5;
-  const minValue = editsServings
-    ? Math.max(1, Math.round((baseServings ?? 1) * 0.5))
-    : 0.5;
-  const maxValue = editsServings ? (baseServings ?? 1) * 10 : 10;
-
-  const adjust = (delta: number) => {
-    const next = Math.max(
-      minValue,
-      Math.min(maxValue, Number((value + delta).toFixed(2)))
-    );
-    onChange(next);
-  };
-
-  const scaled = Math.abs(computedMultiplier - 1) > 1e-4;
-
-  return (
-    <div className="flex items-center justify-between rounded-lg border bg-muted/30 p-3">
-      <div>
-        <div className="text-sm font-medium">
-          {editsServings ? 'Servings' : 'Servings multiplier'}
-        </div>
-        {editsServings && scaled && (
-          <div className="text-xs text-muted-foreground">
-            {formatMultiplier(computedMultiplier)}× recipe
-          </div>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        <Button
-          variant="outline"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => adjust(-step)}
-          disabled={value <= minValue}
-          aria-label="Decrease servings"
-        >
-          <Minus className="h-4 w-4" />
-        </Button>
-        <span className="w-12 text-center font-medium tabular-nums">
-          {editsServings ? formatServings(value) : `${value}×`}
-        </span>
-        <Button
-          variant="outline"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => adjust(step)}
-          disabled={value >= maxValue}
-          aria-label="Increase servings"
-        >
-          <Plus className="h-4 w-4" />
-        </Button>
-      </div>
-    </div>
   );
 }
 

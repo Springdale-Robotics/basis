@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
 import {
   Camera, Link, FileText, FileUp, Upload, Loader2, AlertCircle, Check, X,
@@ -24,6 +24,7 @@ import { recipesApi, type ImportSession, type IngredientMatch, type ParsedRecipe
 import { inventoryApi } from '@/api/inventory';
 import { deduplicateIngredientMatches, normalizeIngredientName } from '@/lib/recipe-utils';
 import { useBatchImageProcessing, type BatchItem } from '@/hooks/useBatchImageProcessing';
+import { FileSourcePicker } from '@/components/shared/FileSourcePicker';
 import { BulkIngredientActions } from './BulkIngredientActions';
 import { IngredientMatchRow } from './IngredientMatchRow';
 
@@ -71,7 +72,8 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
   const [activeRecipeIndex, setActiveRecipeIndex] = useState(0);
   const [urlText, setUrlText] = useState('');
   const [textEntries, setTextEntries] = useState<string[]>(['']);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Shared source picker for both image and .recipe file modes.
+  const [filePickerOpen, setFilePickerOpen] = useState(false);
   const queryClient = useQueryClient();
 
   const activeItems = items.filter(i => !i.excluded);
@@ -109,14 +111,15 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
     setActiveRecipeIndex(0);
     setUrlText('');
     setTextEntries(['']);
+    setFilePickerOpen(false);
     onOpenChange(false);
   }, [onOpenChange, resetBatchItems]);
 
-  const handleImageFiles = useCallback((files: FileList | null) => {
+  const handleImageFiles = useCallback((files: FileList | File[] | null) => {
     addImageBatchFiles(files);
   }, [addImageBatchFiles]);
 
-  const handleRecipeFiles = useCallback((files: FileList | null) => {
+  const handleRecipeFiles = useCallback((files: FileList | File[] | null) => {
     addRecipeBatchFiles(files);
   }, [addRecipeBatchFiles]);
 
@@ -440,13 +443,15 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
                 <>
                   <div className="space-y-2">
                     <Label>Select recipe images</Label>
-                    <Input
-                      ref={fileInputRef}
-                      type="file"
-                      multiple
-                      accept="image/jpeg,image/png,image/gif,image/webp,image/heic"
-                      onChange={(e) => handleImageFiles(e.target.files)}
-                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => setFilePickerOpen(true)}
+                    >
+                      <Camera className="mr-2 h-4 w-4" />
+                      Choose images
+                    </Button>
                   </div>
                   {items.length > 0 && (
                     <div className="space-y-1">
@@ -511,18 +516,21 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
               {mode === 'file' && (
                 <div className="space-y-2">
                   <Label>Select .recipe files</Label>
-                  <Input
-                    type="file"
-                    multiple
-                    accept=".recipe"
-                    onChange={(e) => handleRecipeFiles(e.target.files)}
-                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setFilePickerOpen(true)}
+                  >
+                    <FileUp className="mr-2 h-4 w-4" />
+                    Choose files
+                  </Button>
                   {items.length > 0 && (
                     <div className="space-y-1">
                       <p className="text-sm text-muted-foreground">{items.length} file{items.length !== 1 ? 's' : ''} loaded</p>
                       {items.map(item => (
                         <div key={item.id} className="flex items-center gap-2 text-sm px-2 py-1 rounded bg-muted/30">
-                          <Check className="h-3 w-3 text-green-500" />
+                          <Check className="h-3 w-3 text-success" />
                           <span className="truncate">{item.label}</span>
                         </div>
                       ))}
@@ -560,7 +568,7 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
             <div className="space-y-4 py-4">
               <div className="text-center space-y-2">
                 {!processingComplete && <Loader2 className="h-8 w-8 mx-auto animate-spin text-primary" />}
-                {processingComplete && <Check className="h-8 w-8 mx-auto text-green-500" />}
+                {processingComplete && <Check className="h-8 w-8 mx-auto text-success" />}
                 <p className="font-medium">
                   {processingComplete
                     ? `Done — ${readyCount} recipe${readyCount !== 1 ? 's' : ''} ready`
@@ -576,7 +584,7 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
                   <div key={item.id} className="flex items-center gap-2 text-sm px-3 py-1.5 rounded bg-muted/30">
                     {item.status === 'pending' && <div className="h-3 w-3 rounded-full bg-muted-foreground/30" />}
                     {(item.status === 'uploading' || item.status === 'processing') && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
-                    {item.status === 'ready' && <Check className="h-3 w-3 text-green-500" />}
+                    {item.status === 'ready' && <Check className="h-3 w-3 text-success" />}
                     {item.status === 'failed' && <X className="h-3 w-3 text-destructive" />}
                     <span className="truncate flex-1">{item.label}</span>
                     {item.error && <span className="text-xs text-destructive truncate">{item.error}</span>}
@@ -831,7 +839,7 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
           {step === 'confirm' && (
             <div className="space-y-4 py-4">
               <div className="text-center py-4">
-                <Check className="h-12 w-12 mx-auto text-green-500" />
+                <Check className="h-12 w-12 mx-auto text-success" />
                 <h3 className="mt-3 text-lg font-medium">Ready to Import</h3>
                 <p className="text-sm text-muted-foreground mt-1">
                   {readyItems.filter(i => !i.excluded).length} recipe{readyItems.filter(i => !i.excluded).length !== 1 ? 's' : ''} will be created
@@ -873,6 +881,22 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
             </div>
           )}
         </div>
+
+        {/* Source picker (library or device) shared by image and .recipe modes. */}
+        <FileSourcePicker
+          open={filePickerOpen}
+          onOpenChange={setFilePickerOpen}
+          onSelect={(files) => {
+            if (mode === 'file') {
+              handleRecipeFiles(files);
+            } else {
+              handleImageFiles(files);
+            }
+          }}
+          accept={mode === 'file' ? '.recipe' : 'image/jpeg,image/png,image/gif,image/webp,image/heic'}
+          multiple
+          title={mode === 'file' ? 'Add .recipe files' : 'Add recipe images'}
+        />
     </>
   );
 
@@ -882,7 +906,7 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         {body}
       </DialogContent>
     </Dialog>

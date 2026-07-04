@@ -16,6 +16,7 @@ import { Separator } from '@/components/ui/separator';
 import { recipesApi, type GenerateShoppingListResponse } from '@/api/recipes';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
 import { toast } from '@/hooks/useToast';
+import { getErrorMessage } from '@/lib/api-error';
 
 interface GenerateShoppingListDialogProps {
   open: boolean;
@@ -65,7 +66,7 @@ export function GenerateShoppingListDialog({
     onError: (error) => {
       toast({
         title: 'Could not preview shopping list',
-        description: error instanceof Error ? error.message : 'Failed to build the preview. Please try again.',
+        description: getErrorMessage(error, 'Failed to build the preview. Please try again.'),
         variant: 'destructive',
       });
     },
@@ -86,7 +87,7 @@ export function GenerateShoppingListDialog({
     onError: (error) => {
       toast({
         title: 'Could not generate shopping list',
-        description: error instanceof Error ? error.message : 'Failed to add items. Please try again.',
+        description: getErrorMessage(error, 'Failed to add items. Please try again.'),
         variant: 'destructive',
       });
     },
@@ -114,7 +115,7 @@ export function GenerateShoppingListDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShoppingCart className="h-5 w-5" />
@@ -267,8 +268,8 @@ export function GenerateShoppingListDialog({
         {step === 'success' && previewData && (
           <>
             <div className="flex flex-col items-center justify-center py-8 text-center">
-              <div className="rounded-full bg-green-100 p-3 dark:bg-green-900">
-                <Check className="h-8 w-8 text-green-600 dark:text-green-400" />
+              <div className="rounded-full bg-success-muted p-3">
+                <Check className="h-8 w-8 text-success" />
               </div>
               <h3 className="mt-4 text-lg font-medium">Shopping List Updated</h3>
               <p className="mt-1 text-sm text-muted-foreground">

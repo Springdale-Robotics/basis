@@ -1,12 +1,16 @@
+import { DEFAULT_COLOR } from '@/components/calendar/calendar-utils';
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ChevronLeft, ChevronRight, Keyboard, PanelLeftClose, PanelLeft, Camera, Share2 } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, Keyboard, PanelLeftClose, PanelLeft, Camera, Share2, MoreVertical, MonitorSmartphone } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { getErrorMessage } from '@/lib/api-error';
 import { EventForm } from '@/components/calendar/EventForm';
 import { EventDetail } from '@/components/calendar/EventDetail';
 import { CalendarForm, type CalendarAccessPreset } from '@/components/calendar/CalendarForm';
@@ -33,7 +37,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
+import { cn, hoverAction } from '@/lib/utils';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { toast } from '@/hooks/useToast';
 import { useTheme } from '@/hooks/useTheme';
 import { getColorForIndex } from '@/lib/theme-presets';
@@ -56,6 +66,7 @@ export function CalendarPage() {
   const [defaultEventDate, setDefaultEventDate] = useState<Date | undefined>(undefined);
   const [editRecurringDialogOpen, setEditRecurringDialogOpen] = useState(false);
   const [deleteRecurringDialogOpen, setDeleteRecurringDialogOpen] = useState(false);
+  const [deleteEventConfirmOpen, setDeleteEventConfirmOpen] = useState(false);
   const [pendingFormData, setPendingFormData] = useState<EventFormData | null>(null);
   const [imageParseOpen, setImageParseOpen] = useState(false);
   const queryClient = useQueryClient();
@@ -66,7 +77,7 @@ export function CalendarPage() {
   const startDate = getStartDate(currentDate, viewMode);
   const endDate = getEndDate(currentDate, viewMode);
 
-  const { data: events, isLoading } = useQuery({
+  const { data: events, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['events', startDate.toISOString(), endDate.toISOString()],
     queryFn: () =>
       calendarsApi.getEvents({
@@ -144,7 +155,7 @@ export function CalendarPage() {
     onError: (error) => {
       toast({
         title: 'Failed to create calendar',
-        description: error instanceof Error ? error.message : 'An error occurred',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     },
@@ -162,7 +173,7 @@ export function CalendarPage() {
     onError: (error) => {
       toast({
         title: 'Failed to update calendar',
-        description: error instanceof Error ? error.message : 'An error occurred',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     },
@@ -181,7 +192,7 @@ export function CalendarPage() {
     onError: (error) => {
       toast({
         title: 'Failed to delete calendar',
-        description: error instanceof Error ? error.message : 'An error occurred',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     },
@@ -361,7 +372,7 @@ export function CalendarPage() {
     onError: (error) => {
       toast({
         title: 'Failed to move event',
-        description: error instanceof Error ? error.message : 'An error occurred',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     },
@@ -400,6 +411,7 @@ export function CalendarPage() {
       await queryClient.invalidateQueries({ queryKey: ['events'] });
       setFormOpen(false);
       setDetailOpen(false);
+      setDeleteEventConfirmOpen(false);
       setSelectedEvent(null);
     },
   });
@@ -458,7 +470,7 @@ export function CalendarPage() {
     if (isRecurring) {
       setDeleteRecurringDialogOpen(true);
     } else {
-      deleteMutation.mutate(undefined);
+      setDeleteEventConfirmOpen(true);
     }
   };
 
@@ -498,7 +510,7 @@ export function CalendarPage() {
     if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
       return getColorForIndex(colorPalette, calendar.colorIndex);
     }
-    return calendar.color || '#4A90D9';
+    return calendar.color || DEFAULT_COLOR;
   };
 
   // Filter events by visible calendars
@@ -648,26 +660,29 @@ export function CalendarPage() {
                                 </span>
                               </AccessTooltip>
                             </div>
-                            <div className="flex items-center opacity-0 group-hover:opacity-100 shrink-0">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                onClick={() => handleShareCalendar(calendar)}
-                                title="Share / access"
-                              >
-                                <Share2 className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                onClick={() => handleEditCalendar(calendar)}
-                                title="Edit calendar"
-                              >
-                                <Settings className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
+                            {/* Always-visible kebab so actions are reachable on touch */}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 shrink-0"
+                                  aria-label={`Actions for ${calendar.name}`}
+                                >
+                                  <MoreVertical className="h-3.5 w-3.5" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => handleShareCalendar(calendar)}>
+                                  <Share2 className="mr-2 h-4 w-4" />
+                                  Share / access
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleEditCalendar(calendar)}>
+                                  <Settings className="mr-2 h-4 w-4" />
+                                  Edit calendar
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                           );
                         })
@@ -722,7 +737,8 @@ export function CalendarPage() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7 opacity-0 group-hover:opacity-100 shrink-0"
+                                className={cn('h-7 w-7 shrink-0', hoverAction)}
+                                aria-label={`Edit ${calendar.name}`}
                                 onClick={() => handleEditCalendar(calendar)}
                               >
                                 <Settings className="h-3.5 w-3.5" />
@@ -737,7 +753,18 @@ export function CalendarPage() {
                 </div>
               </ScrollArea>
 
-              <div className="mt-3 border-t pt-3">
+              <div className="mt-3 space-y-1 border-t pt-3">
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start text-muted-foreground"
+                >
+                  <Link to="/calendar/connect">
+                    <MonitorSmartphone className="mr-2 h-3.5 w-3.5" />
+                    Connect a device
+                  </Link>
+                </Button>
                 <Button
                   asChild
                   variant="ghost"
@@ -883,6 +910,12 @@ export function CalendarPage() {
                 <Skeleton key={i} className="h-24 w-full" />
               ))}
             </div>
+          ) : isError ? (
+            <ErrorState
+              title="Couldn't load events"
+              error={error}
+              onRetry={refetch}
+            />
           ) : viewMode === 'month' ? (
             <MonthView
               currentDate={currentDate}
@@ -972,6 +1005,21 @@ export function CalendarPage() {
         onOpenChange={setDeleteRecurringDialogOpen}
         onConfirm={handleDeleteRecurringConfirm}
         eventTitle={selectedEvent?.title}
+      />
+
+      <ConfirmDialog
+        open={deleteEventConfirmOpen}
+        onOpenChange={setDeleteEventConfirmOpen}
+        title={
+          selectedEvent?.title
+            ? `Delete "${selectedEvent.title}"?`
+            : 'Delete event?'
+        }
+        description="This event will be permanently deleted. This action cannot be undone."
+        confirmText="Delete"
+        variant="destructive"
+        isPending={deleteMutation.isPending}
+        onConfirm={() => deleteMutation.mutate(undefined)}
       />
 
       <ImageParseDialog

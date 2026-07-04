@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { UnitCombobox } from '@/components/inventory/fields';
 import { cn } from '@/lib/utils';
 import { unitOptions, getUnitOptionsByCategory } from '@/lib/inventory-constants';
 import { getUnitCategory, resolveUnit } from '@/lib/units';
@@ -61,7 +61,7 @@ export function CheckOffItemDialog({
   // Build the picker options: same-dimension first (most likely the user's
   // pick), then the rest of the registry. Pulled from the canonical units
   // table so this stays in sync with every other unit selector in the app.
-  const unitOptionsList: ComboboxOption[] = useMemo(() => {
+  const orderedUnitKeys: string[] = useMemo(() => {
     const dim = dimensionOf(originalUnit);
     const primary = dim !== 'unknown' ? getUnitOptionsByCategory(dim) : [];
     const seen = new Set<string>();
@@ -72,7 +72,7 @@ export function CheckOffItemDialog({
         ordered.push(u);
       }
     }
-    return ordered.map((u) => ({ value: u, label: u }));
+    return ordered;
   }, [originalUnit]);
 
   // Same-dimension swaps (e.g., fl oz ↔ tbsp) always convert without extra
@@ -115,7 +115,7 @@ export function CheckOffItemDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Check Off Item</DialogTitle>
           <DialogDescription>
@@ -152,13 +152,11 @@ export function CheckOffItemDialog({
               >
                 <Plus className="h-4 w-4" />
               </Button>
-              <Combobox
-                options={unitOptionsList}
+              <UnitCombobox
+                units={orderedUnitKeys}
                 value={unit}
                 onValueChange={setUnit}
                 placeholder="unit"
-                searchPlaceholder="Search units..."
-                emptyText="No unit found"
                 className="w-32"
               />
             </div>
@@ -198,12 +196,11 @@ export function CheckOffItemDialog({
           {crossDimensionHint && (
             <div
               className={cn(
-                'flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2',
-                'dark:border-amber-900/40 dark:bg-amber-950/40'
+                'flex items-start gap-2 rounded-md border border-warning/30 bg-warning-muted p-2'
               )}
             >
-              <Info className="h-4 w-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
-              <span className="text-xs text-amber-900 dark:text-amber-100">
+              <Info className="h-4 w-4 mt-0.5 shrink-0 text-warning" />
+              <span className="text-xs text-warning-muted-foreground">
                 Will store as {quantity} {unit}. Add a density or a conversion on{' '}
                 <span className="font-medium">{item.name}</span> so we can bridge
                 {' '}{unit} ↔ {originalUnit}.

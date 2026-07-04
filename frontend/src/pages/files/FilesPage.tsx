@@ -46,6 +46,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { SearchInput } from '@/components/shared/SearchInput';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { CreateFolderDialog } from '@/components/files/CreateFolderDialog';
@@ -56,7 +57,7 @@ import { RestrictionDialog } from '@/components/files/RestrictionDialog';
 import { filesApi } from '@/api/files';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
-import { cn, formatDate } from '@/lib/utils';
+import { cn, formatDate, formatFileSize, hoverAction } from '@/lib/utils';
 import type { FileItem } from '@/types/models';
 
 type ViewMode = 'grid' | 'list';
@@ -103,14 +104,6 @@ function getFileIcon(file: FileItem) {
   return File;
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
-
 // Get display name - backend uses 'filename' for files, 'name' for folders
 function getFileName(file: FileItem): string {
   return (file as any).filename || file.name || 'Untitled';
@@ -155,7 +148,7 @@ export function FilesPage() {
   // Media preview state
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['files', parentId, search],
     queryFn: () =>
       filesApi.list({ parentId, search: search || undefined }),
@@ -590,6 +583,12 @@ export function FilesPage() {
             <Skeleton key={i} className={viewMode === 'grid' ? 'h-32' : 'h-16'} />
           ))}
         </div>
+      ) : isError ? (
+        <ErrorState
+          title="Couldn't load files"
+          error={error}
+          onRetry={refetch}
+        />
       ) : files.length === 0 ? (
         <EmptyState
           icon={<FolderOpen className="h-12 w-12" />}
@@ -856,9 +855,9 @@ function FileGridItem({ file, thumbnailSize = 'md', onClick, onDownload, onDelet
           )}
           <p className="truncate font-medium">{getFileName(file)}</p>
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
-            <span>{isFolder ? 'Folder' : formatBytes(getFileSize(file))}</span>
+            <span>{isFolder ? 'Folder' : formatFileSize(getFileSize(file))}</span>
             {fileIsRestricted && (
-              <Badge variant="outline" className="ml-1 text-xs border-amber-500 text-amber-600">
+              <Badge variant="outline" className="ml-1 text-xs border-warning text-warning">
                 <Lock className="mr-1 h-3 w-3" />
                 Restricted
               </Badge>
@@ -874,7 +873,7 @@ function FileGridItem({ file, thumbnailSize = 'md', onClick, onDownload, onDelet
       </div>
 
       {/* Context menu */}
-      <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className={cn('absolute right-2 top-2', hoverAction)}>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -983,7 +982,7 @@ function FileListItem({ file, onClick, onDownload, onDelete, onMove, onRestrict,
             <div className="flex items-center gap-2">
               <p className="truncate font-medium">{getFileName(file)}</p>
               {fileIsRestricted && (
-                <Badge variant="outline" className="text-xs shrink-0 border-amber-500 text-amber-600">
+                <Badge variant="outline" className="text-xs shrink-0 border-warning text-warning">
                   <Lock className="mr-1 h-3 w-3" />
                   Restricted
                 </Badge>
@@ -1000,7 +999,7 @@ function FileListItem({ file, onClick, onDownload, onDelete, onMove, onRestrict,
             </p>
           </div>
           <p className="text-sm text-muted-foreground shrink-0">
-            {isFolder ? 'Folder' : formatBytes(getFileSize(file))}
+            {isFolder ? 'Folder' : formatFileSize(getFileSize(file))}
           </p>
         </div>
 
@@ -1010,7 +1009,7 @@ function FileListItem({ file, onClick, onDownload, onDelete, onMove, onRestrict,
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+              className={cn('h-8 w-8 shrink-0', hoverAction)}
               onClick={(e) => e.stopPropagation()}
             >
               <MoreVertical className="h-4 w-4" />
@@ -1117,7 +1116,7 @@ function MediaPreviewModal({ file, files, onClose, onNavigate }: MediaPreviewMod
     >
       {/* Close button */}
       <button
-        className="absolute top-4 right-4 text-white hover:text-gray-300 z-10"
+        className="absolute top-4 right-4 text-white hover:text-white/70 z-10"
         onClick={onClose}
       >
         <span className="sr-only">Close</span>
@@ -1174,8 +1173,8 @@ function MediaPreviewModal({ file, files, onClose, onNavigate }: MediaPreviewMod
         <div className="flex items-center justify-between">
           <div>
             <p className="font-medium">{getFileName(file)}</p>
-            <p className="text-sm text-gray-300">
-              {formatDate(file.createdAt)} &middot; {formatBytes(getFileSize(file))}
+            <p className="text-sm text-white/70">
+              {formatDate(file.createdAt)} &middot; {formatFileSize(getFileSize(file))}
             </p>
           </div>
         </div>

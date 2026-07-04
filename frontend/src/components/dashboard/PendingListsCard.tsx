@@ -12,8 +12,11 @@ import {
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { Badge } from '@/components/ui/badge';
 import { listsApi } from '@/api/lists';
+import { toast } from '@/hooks/useToast';
+import { getErrorMessage } from '@/lib/api-error';
 import { useAuthStore } from '@/stores/authStore';
 import { useFeatureFlags } from '@/hooks/useFeatureFlags';
 import { getListTypeMeta } from '@/lib/listTypes';
@@ -24,13 +27,14 @@ export function PendingListsCard() {
   const currentUser = useAuthStore((s) => s.user);
   const features = useFeatureFlags();
 
-  const { data: listsData, isLoading: listsLoading } = useQuery({
+  const { data: listsData, isLoading: listsLoading, isError: listsError, refetch: refetchLists } = useQuery({
     queryKey: ['lists', { dashboard: true }],
     queryFn: () => listsApi.list({}),
   });
 
-  const { data: itemsData, isLoading: itemsLoading } = useQuery({
-    queryKey: ['lists', 'items-search', 'dashboard'],
+  const itemsKey = ['lists', 'items-search', 'dashboard'] as const;
+  const { data: itemsData, isLoading: itemsLoading, isError: itemsError, refetch: refetchItems } = useQuery({
+    queryKey: itemsKey,
     queryFn: () =>
       listsApi.searchItems({
         assigneeUserId: currentUser?.id,
@@ -40,10 +44,33 @@ export function PendingListsCard() {
     enabled: !!currentUser?.id,
   });
 
+  type ItemsSearchResult = NonNullable<typeof itemsData>;
+
   const toggle = useMutation({
     mutationFn: ({ listId, itemId }: { listId: string; itemId: string }) =>
       listsApi.toggleItem(listId, itemId),
-    onSuccess: () => {
+    // Optimistic: the card only shows unchecked items, so checking one
+    // removes it immediately (prevents double-fires on slow connections).
+    onMutate: async ({ itemId }) => {
+      await queryClient.cancelQueries({ queryKey: itemsKey });
+      const prev = queryClient.getQueryData<ItemsSearchResult>(itemsKey);
+      if (prev) {
+        queryClient.setQueryData<ItemsSearchResult>(itemsKey, {
+          ...prev,
+          items: prev.items.filter((i) => i.id !== itemId),
+        });
+      }
+      return { prev };
+    },
+    onError: (e, _vars, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(itemsKey, ctx.prev);
+      toast({
+        title: "Couldn't check off item",
+        description: getErrorMessage(e),
+        variant: 'destructive',
+      });
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['lists'] });
     },
   });
@@ -85,6 +112,15 @@ export function PendingListsCard() {
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
           </div>
+        ) : listsError || itemsError ? (
+          <ErrorState
+            title="Couldn't load your lists"
+            compact
+            onRetry={() => {
+              if (listsError) void refetchLists();
+              if (itemsError) void refetchItems();
+            }}
+          />
         ) : empty ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <ListChecks className="h-4 w-4" />

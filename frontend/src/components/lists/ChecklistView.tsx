@@ -26,18 +26,18 @@ import {
   ChevronDown,
   CornerDownRight,
 } from 'lucide-react';
-import { format, isPast, isToday, isTomorrow } from 'date-fns';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/shared/UserAvatar';
 import { Badge } from '@/components/ui/badge';
 import { householdsApi } from '@/api/households';
 import { ItemDetailSheet } from './ItemDetailSheet';
-import { BulkAddDialog } from './BulkAddDialog';
+import { BulkAddItemsDialog } from './BulkAddItemsDialog';
 import { useListMutations } from './useListMutations';
-import { cn } from '@/lib/utils';
+import { cn, hoverAction } from '@/lib/utils';
+import { formatDueDate, isDueDateOverdue } from '@/lib/due-date';
 import type { List, ListItem, User } from '@/types/models';
 
 interface ChecklistViewProps {
@@ -47,14 +47,7 @@ interface ChecklistViewProps {
 
 function dueChip(dueDate: string | null | undefined) {
   if (!dueDate) return null;
-  const d = new Date(dueDate);
-  const overdue = isPast(d) && !isToday(d);
-  const label = isToday(d)
-    ? 'Today'
-    : isTomorrow(d)
-    ? 'Tomorrow'
-    : format(d, 'MMM d');
-  return { label, overdue };
+  return { label: formatDueDate(dueDate), overdue: isDueDateOverdue(dueDate) };
 }
 
 function findUser(users: User[], userId: string | null | undefined) {
@@ -113,7 +106,7 @@ function ItemRow({
           type="button"
           {...attributes}
           {...listeners}
-          className="cursor-grab text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 active:cursor-grabbing"
+          className={cn('cursor-grab text-muted-foreground active:cursor-grabbing', hoverAction)}
           aria-label="Drag to reorder"
         >
           <GripVertical className="h-4 w-4" />
@@ -145,19 +138,12 @@ function ItemRow({
           {chip.label}
         </Badge>
       )}
-      {assignee && (
-        <Avatar className="h-5 w-5">
-          <AvatarImage src={assignee.avatarUrl} />
-          <AvatarFallback className="text-[9px]">
-            {assignee.displayName?.[0]?.toUpperCase()}
-          </AvatarFallback>
-        </Avatar>
-      )}
+      {assignee && <UserAvatar user={assignee} size="xs" />}
       {!isSubtask && showAddSubtask && !hasSubtasks && (
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 opacity-0 group-hover:opacity-100"
+          className={cn('h-7 w-7', hoverAction)}
           onClick={onAddSubtask}
           aria-label="Add subtask"
           title="Add subtask"
@@ -168,7 +154,7 @@ function ItemRow({
       <Button
         variant="ghost"
         size="icon"
-        className="h-7 w-7 opacity-0 group-hover:opacity-100"
+        className={cn('h-7 w-7', hoverAction)}
         onClick={onDelete}
         aria-label="Delete"
       >
@@ -428,7 +414,7 @@ export function ChecklistView({ list, items }: ChecklistViewProps) {
         )}
       </div>
 
-      <BulkAddDialog
+      <BulkAddItemsDialog
         open={bulkOpen}
         onOpenChange={setBulkOpen}
         onSubmit={handleBulk}

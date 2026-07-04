@@ -1,6 +1,5 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
 import { Calendar, Repeat, Plus, X, User as UserIcon, Users } from 'lucide-react';
-import { format, isToday, isTomorrow } from 'date-fns';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,6 +11,7 @@ import {
   type AssigneeSuggestion,
   type AssigneeCandidate,
 } from '@/lib/taskParser';
+import { formatDueDate } from '@/lib/due-date';
 import { AssigneePicker, type AssigneeValue } from './AssigneePicker';
 import type { CreateTaskRequest } from '@/api/tasks';
 import type { TaskKind, User } from '@/types/models';
@@ -27,11 +27,6 @@ interface QuickAddInputProps {
   autoFocus?: boolean;
 }
 
-function formatDateChip(d: Date, hasTime: boolean): string {
-  if (isToday(d)) return hasTime ? `Today ${format(d, 'h:mma')}` : 'Today';
-  if (isTomorrow(d)) return hasTime ? `Tomorrow ${format(d, 'h:mma')}` : 'Tomorrow';
-  return hasTime ? format(d, 'MMM d h:mma') : format(d, 'MMM d');
-}
 
 export function QuickAddInput({
   kind,
@@ -203,7 +198,7 @@ export function QuickAddInput({
               className="gap-1 pl-2 pr-1 py-0.5 cursor-default"
             >
               <Calendar className="h-3 w-3" />
-              {formatDateChip(effectiveDate.dueDate, effectiveDate.hasTime)}
+              {formatDueDate(effectiveDate.dueDate, { withTime: effectiveDate.hasTime })}
               <button
                 type="button"
                 onClick={() => setDateDismissed(true)}

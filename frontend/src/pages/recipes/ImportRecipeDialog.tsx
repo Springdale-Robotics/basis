@@ -22,6 +22,8 @@ import { imageParseApi } from '@/api/image-parse';
 import { formatOcrForEditing } from '@/lib/recipe-utils';
 import { inventoryApi } from '@/api/inventory';
 import { cn } from '@/lib/utils';
+import { getErrorMessage } from '@/lib/api-error';
+import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { IngredientMatchRow } from './IngredientMatchRow';
 import { BulkIngredientActions } from './BulkIngredientActions';
 import { BulkImportRecipeDialog } from './BulkImportRecipeDialog';
@@ -30,6 +32,8 @@ import { useCategories } from '@/hooks/useCategories';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { getItemIcon } from '@/lib/inventory-constants';
+import { FileSourcePicker } from '@/components/shared/FileSourcePicker';
+import { useDirtyCloseGuard } from '@/hooks/useDirtyCloseGuard';
 
 type ImportStep = 'source' | 'review' | 'ingredients' | 'quick-catalog' | 'confirm';
 
@@ -125,6 +129,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
   const [imageProcessing, setImageProcessing] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [imageRawText, setImageRawText] = useState<string | null>(null);
+  const [imagePickerOpen, setImagePickerOpen] = useState(false);
   const [pdfFileName, setPdfFileName] = useState<string | null>(null);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [pdfError, setPdfError] = useState<string | null>(null);
@@ -177,6 +182,8 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
   // URL preview mutation
   const previewUrlMutation = useMutation({
     mutationFn: () => recipesApi.parseUrl(sourceUrl),
+    // Errors render inline below the URL field; skip the global toast.
+    meta: { silenceError: true },
     onSuccess: (data) => {
       setPreviewRecipe(data.parsedRecipe);
       setParseMethod(data.parseMethod);
@@ -362,6 +369,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     setImageProcessing(false);
     setImageError(null);
     setImageRawText(null);
+    setImagePickerOpen(false);
     setPdfFileName(null);
     setPdfBase64(null);
     setPdfError(null);
@@ -369,6 +377,26 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     setBatchInitialFiles(undefined);
     onOpenChange(false);
   }, [onOpenChange, defaultTab]);
+
+  // Closing mid-import wipes a whole reviewed multi-step session. Guard the
+  // Escape / outside-click / X paths once the user is past the source step or
+  // has produced preview/OCR/PDF state worth keeping. A pristine source step
+  // still closes freely. Successful imports close via handleClose directly.
+  const hasImportProgress =
+    step !== 'source' ||
+    batchMode ||
+    !!sessionId ||
+    !!previewRecipe ||
+    imageRawText !== null ||
+    imageProcessing ||
+    !!pdfBase64;
+
+  const { requestClose, confirmDialog } = useDirtyCloseGuard({
+    isDirty: hasImportProgress,
+    onDiscard: handleClose,
+    title: 'Discard this import?',
+    description: 'Your progress on this recipe import will be lost.',
+  });
 
   const handlePreview = useCallback(() => {
     if (sourceType === 'url') {
@@ -404,7 +432,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
       setPdfBase64(btoa(binary));
       setPdfFileName(file.name);
     } catch (err) {
-      setPdfError(err instanceof Error ? err.message : 'Failed to read PDF');
+      setPdfError(getErrorMessage(err, 'Failed to read PDF'));
     }
   }, []);
 
@@ -502,7 +530,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
 
       throw new Error('Image processing timed out. Please try again.');
     } catch (e) {
-      setImageError(e instanceof Error ? e.message : 'Failed to process image');
+      setImageError(getErrorMessage(e, 'Failed to process image'));
       setImageProcessing(false);
     }
   }, []);
@@ -630,8 +658,15 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
 
   if (batchMode) {
     return (
-      <Dialog open={open} onOpenChange={handleClose}>
-        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+      <>
+      {confirmDialog}
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (!o) requestClose();
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
           <DialogHeader className="flex-shrink-0">
             <DialogTitle>Import Recipes</DialogTitle>
           </DialogHeader>
@@ -646,12 +681,20 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
           />
         </DialogContent>
       </Dialog>
+      </>
     );
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+    <>
+    {confirmDialog}
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) requestClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle>Import Recipe</DialogTitle>
         </DialogHeader>
@@ -762,9 +805,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                       <Alert variant="destructive">
                         <AlertCircle className="h-4 w-4" />
                         <AlertDescription>
-                          {previewUrlMutation.error instanceof Error
-                            ? previewUrlMutation.error.message
-                            : 'Failed to fetch recipe from URL'}
+                          {getErrorMessage(previewUrlMutation.error)}
                         </AlertDescription>
                       </Alert>
                     )}
@@ -804,7 +845,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                   <div className="space-y-4">
                     {imageProcessing ? (
                       <div className="border-2 border-dashed rounded-lg p-8 text-center space-y-4">
-                        <Loader2 className="h-12 w-12 mx-auto text-primary animate-spin" />
+                        <LoadingSpinner className="h-12 w-12 mx-auto text-primary" />
                         <p className="text-sm font-medium">Processing image...</p>
                         <p className="text-xs text-muted-foreground">
                           Extracting text from image. This may take up to a minute.
@@ -840,13 +881,19 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                     ) : (
                       <div className="space-y-2">
                         <Label>Upload one or more recipe photos</Label>
-                        <Input
-                          type="file"
-                          accept="image/jpeg,image/png,image/gif,image/webp,image/heic"
-                          multiple
-                          onChange={(e) => {
-                            const files = Array.from(e.target.files ?? []);
-                            e.target.value = '';
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full"
+                          onClick={() => setImagePickerOpen(true)}
+                        >
+                          <Camera className="mr-2 h-4 w-4" />
+                          Choose photos
+                        </Button>
+                        <FileSourcePicker
+                          open={imagePickerOpen}
+                          onOpenChange={setImagePickerOpen}
+                          onSelect={(files) => {
                             if (files.length === 0) return;
                             if (files.length > 1) {
                               enterBatchMode(files);
@@ -854,11 +901,13 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                             }
                             handleImageUpload(files[0]);
                           }}
+                          accept="image/jpeg,image/png,image/gif,image/webp,image/heic"
+                          multiple
+                          title="Add recipe photos"
+                          description="Pick one photo for a single recipe, or several to import them all."
                         />
                         <p className="text-xs text-muted-foreground">
-                          {true
-                            ? 'Pick one photo for a single recipe, or several to process them all at once. Supports JPG, PNG, GIF, WebP, HEIC (max 10MB each).'
-                            : 'Take a photo of a handwritten recipe card, printed recipe, or screenshot. Supports JPG, PNG, GIF, WebP, HEIC (max 10MB).'}
+                          Pick one photo for a single recipe, or several to process them all at once. Supports JPG, PNG, GIF, WebP, HEIC (max 10MB each).
                         </p>
                       </div>
                     )}
@@ -907,7 +956,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                             {previewRecipe?.servings && <span>{previewRecipe.servings} servings</span>}
                           </div>
                           {Object.keys(importedCatalogItems).length > 0 && (
-                            <div className="text-sm text-green-600">
+                            <div className="text-sm text-success">
                               {Object.keys(importedCatalogItems).length} ingredients have catalog data for easy linking
                             </div>
                           )}
@@ -987,7 +1036,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
             <div className="space-y-4 py-4">
               {isLoadingSession ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  <LoadingSpinner size="lg" />
                 </div>
               ) : session?.parsedRecipe ? (() => {
                 const recipe = session.parsedRecipe!;
@@ -1347,7 +1396,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Auto-matched</p>
                   {matched.map(m => (
                     <div key={m.parsedName} className="flex items-center gap-2 px-3 py-1.5 rounded bg-muted/30 text-sm">
-                      <Check className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                      <Check className="h-3.5 w-3.5 text-success shrink-0" />
                       <span className="text-muted-foreground truncate">{m.parsedName}</span>
                       <span className="text-muted-foreground shrink-0">→</span>
                       <span className="font-medium truncate">{m.matchedItemName}</span>
@@ -1473,7 +1522,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
           {step === 'confirm' && (
             <div className="space-y-4 py-4">
               <div className="text-center py-6">
-                <Check className="h-16 w-16 mx-auto text-green-500" />
+                <Check className="h-16 w-16 mx-auto text-success" />
                 <h3 className="mt-4 text-lg font-medium">Ready to Import</h3>
                 <p className="text-sm text-muted-foreground mt-1">
                   {session?.parsedRecipe?.title ?? overrides.title}
@@ -1503,5 +1552,6 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
         </div>
       </DialogContent>
     </Dialog>
+    </>
   );
 }

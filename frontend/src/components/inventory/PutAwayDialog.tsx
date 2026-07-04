@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { AreaCombobox } from '@/components/inventory/fields';
 import {
   Dialog,
   DialogContent,
@@ -17,6 +18,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { inventoryApi } from '@/api/inventory';
 import { toast } from '@/hooks/useToast';
+import { getErrorMessage } from '@/lib/api-error';
 import type { StorageArea, InventoryItem, ShoppingListItem } from '@/types/models';
 
 interface PutAwayItem {
@@ -103,16 +105,6 @@ export function PutAwayDialog({
   const itemsWithDefaultArea = putAwayItems.filter(item => item.areaId).length;
   const itemsWithoutDefaultArea = putAwayItems.filter(item => !item.areaId).length;
 
-  const areaOptions: ComboboxOption[] = useMemo(
-    () =>
-      areas.map((area) => ({
-        value: area.id,
-        label: area.name,
-        icon: <span>{area.icon}</span>,
-      })),
-    [areas]
-  );
-
   const inventoryOptions: ComboboxOption[] = useMemo(
     () =>
       inventoryItems.map((item) => ({
@@ -132,7 +124,7 @@ export function PutAwayDialog({
     onError: (error) => {
       toast({
         title: 'Link failed',
-        description: error instanceof Error ? error.message : 'Could not link item',
+        description: getErrorMessage(error, 'Could not link item'),
         variant: 'destructive',
       });
       setResolvingItemId(null);
@@ -160,7 +152,7 @@ export function PutAwayDialog({
     onError: (error) => {
       toast({
         title: 'Create failed',
-        description: error instanceof Error ? error.message : 'Could not create catalog item',
+        description: getErrorMessage(error, 'Could not create catalog item'),
         variant: 'destructive',
       });
       setResolvingItemId(null);
@@ -238,7 +230,7 @@ export function PutAwayDialog({
   if (putAwayItems.length === 0 && itemsWithoutInventoryLink.length === 0) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[450px]">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Package className="h-5 w-5" />
@@ -271,7 +263,7 @@ export function PutAwayDialog({
   if (effectiveMode === 'resolve') {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[520px]">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Link2 className="h-5 w-5" />
@@ -322,7 +314,7 @@ export function PutAwayDialog({
   if (effectiveMode === 'choice') {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[450px]">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Package className="h-5 w-5" />
@@ -352,13 +344,13 @@ export function PutAwayDialog({
                       <p className="text-xs text-muted-foreground mt-2">
                         {itemsWithDefaultArea} item{itemsWithDefaultArea !== 1 ? 's' : ''} will be put away
                         {itemsWithoutDefaultArea > 0 && (
-                          <span className="text-amber-600">
+                          <span className="text-warning">
                             {' '}({itemsWithoutDefaultArea} without default area will be skipped)
                           </span>
                         )}
                       </p>
                     ) : (
-                      <p className="text-xs text-amber-600 mt-2">
+                      <p className="text-xs text-warning mt-2">
                         No items have default areas set
                       </p>
                     )}
@@ -388,13 +380,13 @@ export function PutAwayDialog({
 
             {itemsWithoutInventoryLink.length > 0 && (
               <Card
-                className="cursor-pointer border-amber-300 bg-amber-50/40 transition-colors hover:border-amber-400 dark:bg-amber-950/20"
+                className="cursor-pointer border-warning/40 bg-warning-muted/40 transition-colors hover:border-warning/60"
                 onClick={() => setMode('resolve')}
               >
                 <CardContent className="p-4">
                   <div className="flex items-center gap-3">
-                    <div className="rounded-full bg-amber-100 p-2 dark:bg-amber-900/40">
-                      <Link2 className="h-5 w-5 text-amber-700 dark:text-amber-400" />
+                    <div className="rounded-full bg-warning-muted p-2">
+                      <Link2 className="h-5 w-5 text-warning-muted-foreground" />
                     </div>
                     <div className="flex-1">
                       <h3 className="font-medium">
@@ -405,7 +397,7 @@ export function PutAwayDialog({
                         Link or create catalog entries so they can be put away
                       </p>
                     </div>
-                    <ArrowRight className="h-4 w-4 text-amber-700 dark:text-amber-400" />
+                    <ArrowRight className="h-4 w-4 text-warning-muted-foreground" />
                   </div>
                 </CardContent>
               </Card>
@@ -431,7 +423,7 @@ export function PutAwayDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[450px]">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Package className="h-5 w-5" />
@@ -472,13 +464,11 @@ export function PutAwayDialog({
             <div className="space-y-4">
               <div>
                 <Label>Storage Area *</Label>
-                <Combobox
-                  options={areaOptions}
+                <AreaCombobox
+                  areas={areas}
                   value={currentItem.areaId}
                   onValueChange={(v) => updateCurrentItem({ areaId: v })}
                   placeholder="Select where to store..."
-                  searchPlaceholder="Search areas..."
-                  emptyText="No areas found"
                 />
                 {!currentItem.areaId && (
                   <p className="text-xs text-muted-foreground mt-1">

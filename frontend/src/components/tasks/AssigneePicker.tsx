@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, ChevronDown, Users, User as UserIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/shared/UserAvatar';
 import {
   Command,
   CommandEmpty,
@@ -79,12 +79,7 @@ export function AssigneePicker({
         >
           <span className="flex items-center gap-2 truncate">
             {selectedUser ? (
-              <Avatar className="h-5 w-5">
-                <AvatarImage src={selectedUser.avatarUrl} />
-                <AvatarFallback className="text-[10px]">
-                  {selectedUser.displayName?.[0]?.toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
+              <UserAvatar user={selectedUser} size="xs" />
             ) : selectedGroup ? (
               <Users className="h-3.5 w-3.5" />
             ) : (
@@ -170,12 +165,7 @@ export function AssigneePicker({
                       setOpen(false);
                     }}
                   >
-                    <Avatar className="mr-2 h-5 w-5">
-                      <AvatarImage src={u.avatarUrl} />
-                      <AvatarFallback className="text-[10px]">
-                        {u.displayName?.[0]?.toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
+                    <UserAvatar user={u} size="xs" className="mr-2" />
                     {u.displayName}
                     {value.userId === u.id && (
                       <Check className="ml-auto h-4 w-4" />

@@ -1,5 +1,5 @@
-import { useState, useRef, useMemo } from 'react';
-import { Check, X, ChevronDown, Plus, Loader2, Link2, Unlink, AlertCircle, Search } from 'lucide-react';
+import { useState } from 'react';
+import { Check, X, ChevronDown, Plus, Loader2, Link2, Unlink, AlertCircle } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,14 +8,15 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { UnitCombobox, CategoryCombobox, AreaCombobox } from '@/components/inventory/fields';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SearchInput } from '@/components/shared/SearchInput';
 import { inventoryApi } from '@/api/inventory';
 import { recipesApi, type IngredientMatch, type MatchSuggestion, type MatchReason } from '@/api/recipes';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { unitOptions, categoryOptions, normalizeUnit } from '@/lib/inventory-constants';
+import { normalizeUnit } from '@/lib/inventory-constants';
 import { getUnitCategoryForDensity } from '@/lib/unit-conversions';
 import { isCountUnit as isQuantityUnit } from '@/lib/units';
 
@@ -79,7 +80,6 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [recipeUnit, setRecipeUnit] = useState(() => normalizeUnit(match.parsedUnit));
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // New item form state
   const [newItemName, setNewItemName] = useState('');
@@ -111,22 +111,6 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
   const items = itemsData?.items || [];
   const areas = areasData?.areas || [];
   const suggestions = suggestionsData?.suggestions || match.suggestions || [];
-
-  // Memoized options for comboboxes
-  const unitComboboxOptions: ComboboxOption[] = useMemo(
-    () => unitOptions.map((u) => ({ value: u, label: u })),
-    []
-  );
-
-  const categoryComboboxOptions: ComboboxOption[] = useMemo(
-    () => categoryOptions.map((c) => ({ value: c.toLowerCase(), label: c })),
-    []
-  );
-
-  const areaComboboxOptions: ComboboxOption[] = useMemo(
-    () => areas.map((a) => ({ value: a.id, label: a.name })),
-    [areas]
-  );
 
   const handleSelect = (itemId: string, itemName: string) => {
     // With density-based conversions, just link directly
@@ -183,7 +167,7 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
   return (
     <div className={cn(
       'flex items-center justify-between p-3 rounded-lg border',
-      isLinked ? 'border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950' : 'border-border'
+      isLinked ? 'border-success/30 bg-success-muted' : 'border-border'
     )}>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
@@ -191,16 +175,13 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
             <span className="font-medium text-muted-foreground">{match.parsedQuantity}</span>
           )}
           {/* Inline unit dropdown */}
-          <Combobox
-            options={unitComboboxOptions}
+          <UnitCombobox
             value={recipeUnit}
             onValueChange={(newUnit) => {
               setRecipeUnit(newUnit);
               onUpdate(match.parsedName, match.matchedItemId, match.matchedItemName, newUnit);
             }}
             placeholder="unit"
-            searchPlaceholder="Search units..."
-            emptyText="No unit found"
             allowClear
             clearLabel="None"
             className="h-7 px-2.5 text-sm font-medium text-muted-foreground bg-muted/50 hover:bg-muted border-dashed w-auto min-w-[90px]"
@@ -223,7 +204,7 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
             <Link2 className="h-3 w-3 flex-shrink-0" />
             <span>Linked to: {match.matchedItemName}</span>
             {match.needsQuantityWeight && (
-              <Badge variant="outline" className="ml-2 text-xs text-orange-600 border-orange-300">
+              <Badge variant="outline" className="ml-2 text-xs text-warning border-warning/40">
                 <AlertCircle className="h-3 w-3 mr-1" />
                 needs quantity weight
               </Badge>
@@ -254,25 +235,19 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
             <PopoverContent
               className="w-96 p-0"
               align="end"
-              onOpenAutoFocus={(e) => {
-                e.preventDefault();
-                inputRef.current?.focus();
-              }}
+              onOpenAutoFocus={(e) => e.preventDefault()}
             >
               {!showCreateForm ? (
                 <div className="flex flex-col">
                   {/* Search input */}
                   <div className="p-2 border-b">
-                    <div className="relative">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        ref={inputRef}
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search inventory items..."
-                        className="pl-8 h-9"
-                      />
-                    </div>
+                    <SearchInput
+                      value={searchQuery}
+                      onChange={setSearchQuery}
+                      placeholder="Search inventory items..."
+                      inputClassName="h-9"
+                      autoFocus
+                    />
                   </div>
 
                   <div className="max-h-[300px] overflow-y-auto">
@@ -308,7 +283,7 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
                             </div>
                             <div className="flex items-center gap-1">
                               {suggestion.needsQuantityWeight && (
-                                <Badge variant="outline" className="text-xs text-orange-600">
+                                <Badge variant="outline" className="text-xs text-warning">
                                   needs weight
                                 </Badge>
                               )}
@@ -370,7 +345,7 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
                               </div>
                               <div className="flex items-center gap-1">
                                 {unitsDiffer && !convertible && (
-                                  <Badge variant="outline" className="text-xs text-orange-600">
+                                  <Badge variant="outline" className="text-xs text-warning">
                                     different units
                                   </Badge>
                                 )}
@@ -420,13 +395,10 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
 
                     <div className="space-y-1.5">
                       <Label>Default Unit (Inventory)</Label>
-                      <Combobox
-                        options={unitComboboxOptions}
+                      <UnitCombobox
                         value={newItemUnit}
                         onValueChange={setNewItemUnit}
                         placeholder="How you store this item"
-                        searchPlaceholder="Search units..."
-                        emptyText="No unit found"
                         allowClear
                         clearLabel="None"
                       />
@@ -449,28 +421,23 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
 
                     <div className="space-y-1.5">
                       <Label>Category</Label>
-                      <Combobox
-                        options={categoryComboboxOptions}
+                      <CategoryCombobox
                         value={newItemCategory}
                         onValueChange={setNewItemCategory}
                         placeholder="Select category (optional)"
-                        searchPlaceholder="Search categories..."
-                        emptyText="No category found"
                         allowClear
                         clearLabel="None"
                       />
                     </div>
 
-                    {areaComboboxOptions.length > 0 && (
+                    {areas.length > 0 && (
                       <div className="space-y-1.5">
                         <Label>Default Storage Area</Label>
-                        <Combobox
-                          options={areaComboboxOptions}
+                        <AreaCombobox
+                          areas={areas}
                           value={newItemAreaId}
                           onValueChange={setNewItemAreaId}
                           placeholder="Select area (optional)"
-                          searchPlaceholder="Search areas..."
-                          emptyText="No area found"
                           allowClear
                           clearLabel="None"
                         />

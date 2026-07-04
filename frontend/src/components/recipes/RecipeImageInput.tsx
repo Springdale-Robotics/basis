@@ -1,10 +1,12 @@
-import { useState, useRef, useCallback } from 'react';
-import { Upload, Link2, X, Loader2, ImageIcon, Images } from 'lucide-react';
+import { useState, useCallback } from 'react';
+import { Upload, Link2, X, ImageIcon, Images } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/useToast';
 import { filesMediaApi } from '@/api/media';
+import { FileSourcePicker } from '@/components/shared/FileSourcePicker';
 import { PhotoPickerDialog } from './PhotoPickerDialog';
 
 // Mirror the server's limits (recipe-image.service.ts) so we reject locally
@@ -55,7 +57,7 @@ export function RecipeImageInput({
   const [urlValue, setUrlValue] = useState('');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [showPhotoPicker, setShowPhotoPicker] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showSourcePicker, setShowSourcePicker] = useState(false);
 
   const handlePhotoChosen = (fileId: string) => {
     if (!onPhotoSelect) return;
@@ -102,10 +104,9 @@ export function RecipeImageInput({
     onFileSelect(file);
   }, [disabled, isProcessing, onFileSelect]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    // Reset input first so the same file can be re-selected after a rejection.
-    e.target.value = '';
+  // Receives plain File objects from FileSourcePicker (device or library).
+  const handlePickerSelect = (files: File[]) => {
+    const file = files[0];
     if (!file) return;
     const error = validateImageFile(file);
     if (error) {
@@ -132,8 +133,10 @@ export function RecipeImageInput({
     onRemove();
   };
 
+  // Opens the source picker (library vs. device) instead of jumping straight
+  // to the native file input. Drag-and-drop remains the device shortcut.
   const handleBrowseClick = () => {
-    fileInputRef.current?.click();
+    setShowSourcePicker(true);
   };
 
   return (
@@ -152,7 +155,7 @@ export function RecipeImageInput({
             />
             {isProcessing && (
               <div className="absolute inset-0 flex items-center justify-center bg-background/50">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <LoadingSpinner size="lg" className="text-primary" />
               </div>
             )}
           </div>
@@ -183,7 +186,7 @@ export function RecipeImageInput({
         >
           {isProcessing ? (
             <>
-              <Loader2 className="h-10 w-10 text-muted-foreground animate-spin" />
+              <LoadingSpinner className="h-10 w-10" />
               <p className="text-sm text-muted-foreground">Processing image...</p>
             </>
           ) : (
@@ -198,14 +201,14 @@ export function RecipeImageInput({
         </div>
       )}
 
-      {/* Hidden file input */}
-      <input
-        ref={fileInputRef}
-        type="file"
+      {/* Source picker: library on the home server, or this device */}
+      <FileSourcePicker
+        open={showSourcePicker}
+        onOpenChange={setShowSourcePicker}
+        onSelect={handlePickerSelect}
         accept="image/jpeg,image/png,image/webp,image/gif"
-        className="hidden"
-        onChange={handleFileChange}
-        disabled={disabled || isProcessing}
+        title="Add recipe image"
+        description="JPEG, PNG, WebP, or GIF (max 10MB)."
       />
 
       {/* Action buttons */}

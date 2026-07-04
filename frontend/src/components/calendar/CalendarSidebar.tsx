@@ -1,3 +1,4 @@
+import { DEFAULT_COLOR } from './calendar-utils';
 import { Plus, Settings, Share2, RefreshCw, AlertCircle } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
@@ -5,7 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
+import { cn, hoverAction } from '@/lib/utils';
 import { useTheme } from '@/hooks/useTheme';
 import { getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
 import type { Calendar } from '@/types/models';
@@ -37,7 +38,7 @@ export function CalendarSidebar({
     if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
       return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
     }
-    return calendar.color || '#4A90D9';
+    return calendar.color || DEFAULT_COLOR;
   };
 
   return (
@@ -148,7 +149,7 @@ function CalendarItem({
         return (
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className="h-2 w-2 rounded-full bg-green-500 shrink-0" />
+              <div className="h-2 w-2 rounded-full bg-success shrink-0" />
             </TooltipTrigger>
             <TooltipContent>
               <p>Synced recently</p>
@@ -189,7 +190,7 @@ function CalendarItem({
         </AccessTooltip>
         {isSynced && getSyncStatusIndicator()}
       </div>
-      <div className="flex items-center opacity-0 group-hover:opacity-100">
+      <div className={cn('flex items-center', hoverAction)}>
         {onShare && (
           <Button
             variant="ghost"

@@ -93,7 +93,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
       ]);
 
       // ─── disk usage (storage path) ───────────────────────────────────
-      let storage: {
+      const storage: {
         path: string;
         totalBytes?: number;
         freeBytes?: number;
@@ -110,7 +110,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
       }
 
       // ─── database size ───────────────────────────────────────────────
-      let dbSize: { bytes?: number; error?: string } = {};
+      const dbSize: { bytes?: number; error?: string } = {};
       try {
         const result = await db.execute<{ size: string }>(
           sql`SELECT pg_database_size(current_database())::text AS size`

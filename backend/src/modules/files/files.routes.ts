@@ -25,6 +25,7 @@ import { randomUUID } from 'crypto';
 import { queueMediaProcessing } from '../../jobs/index.js';
 import { thumbnailService } from '../../services/thumbnail.service.js';
 import { mediaScannerService } from '../../services/media-scanner.service.js';
+import { emitFileEvent, emitFileDeleted } from '../../websocket/events.js';
 
 // Helper to get effective storage limit for a household
 async function getEffectiveStorageLimit(householdId: string): Promise<{
@@ -420,6 +421,7 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
       // Set default permissions for the new file
       await setResourceDefaults('file', file.id, request.user!.id, request.user!.householdId);
 
+      emitFileEvent(request.user!.householdId, { fileId: file.id, folderId, action: 'uploaded' });
       return { success: true, data: { file } };
     }
   );
@@ -508,6 +510,7 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
       // Delete from database
       await db.delete(files).where(eq(files.id, request.params.id));
 
+      emitFileDeleted(request.user!.householdId, { fileId: file.id, folderId: file.folderId ?? undefined });
       return { success: true, data: { message: 'File deleted' } };
     }
   );
@@ -534,6 +537,7 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
 
       await setRestriction('file', request.params.id, restricted);
 
+      emitFileEvent(request.user!.householdId, { fileId: file.id, folderId: file.folderId ?? undefined, action: 'updated' });
       return {
         success: true,
         data: {
@@ -603,6 +607,7 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
           })
         : [];
 
+      emitFileEvent(request.user!.householdId, { folderId: request.params.id, action: 'updated' });
       return {
         success: true,
         data: {
@@ -672,6 +677,7 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
         .set({ folderId: targetFolderId, updatedAt: new Date() })
         .where(eq(files.id, request.params.id));
 
+      emitFileEvent(request.user!.householdId, { fileId: file.id, folderId: targetFolderId ?? undefined, action: 'moved' });
       return { success: true, data: { message: 'File moved' } };
     }
   );
@@ -743,6 +749,7 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
           )
         );
 
+      emitFileEvent(request.user!.householdId, { action: 'updated' });
       return {
         success: true,
         data: {
@@ -861,6 +868,7 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      emitFileDeleted(request.user!.householdId, {});
       return {
         success: true,
         data: {
@@ -985,6 +993,7 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
         movedFoldersCount = folderList.length;
       }
 
+      emitFileEvent(request.user!.householdId, { folderId: targetFolderId ?? undefined, action: 'moved' });
       return {
         success: true,
         data: {
@@ -1515,6 +1524,7 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
         })
         .returning();
 
+      emitFileEvent(request.user!.householdId, { folderId: folder.parentId ?? undefined, action: 'updated' });
       return { success: true, data: { folder } };
     }
   );
@@ -1549,6 +1559,7 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
 
       await db.delete(folders).where(eq(folders.id, request.params.id));
 
+      emitFileDeleted(request.user!.householdId, { folderId: folder.parentId ?? undefined });
       return { success: true, data: { message: 'Folder deleted' } };
     }
   );

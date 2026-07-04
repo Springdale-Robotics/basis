@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Card,
@@ -17,14 +18,17 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ExternalLink, RotateCw, Trash2, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
+import { ExternalLink, RotateCw, Trash2, CheckCircle2, AlertCircle, Clock, Bug } from 'lucide-react';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { EmptyState } from '@/components/shared/EmptyState';
+import { getErrorMessage } from '@/lib/api-error';
 import { toast } from '@/hooks/useToast';
 import { bugReportsApi, type BugReportStatus, type BugReportSummary } from '@/api/bug-reports';
 
 function StatusBadge({ status }: { status: BugReportStatus }) {
   if (status === 'sent') {
     return (
-      <Badge variant="default" className="bg-green-600 hover:bg-green-600">
+      <Badge variant="default" className="bg-success text-success-foreground hover:bg-success">
         <CheckCircle2 className="mr-1 h-3 w-3" />
         sent
       </Badge>
@@ -53,6 +57,7 @@ function formatDate(iso: string): string {
 
 export function BugReportsSettingsPage() {
   const qc = useQueryClient();
+  const [deleteTarget, setDeleteTarget] = useState<BugReportSummary | null>(null);
   const { data, isLoading } = useQuery({
     queryKey: ['bug-reports'],
     queryFn: bugReportsApi.list,
@@ -68,7 +73,7 @@ export function BugReportsSettingsPage() {
     onError: (err) =>
       toast({
         title: 'Retry failed',
-        description: err instanceof Error ? err.message : 'Unknown error',
+        description: getErrorMessage(err),
         variant: 'destructive',
       }),
   });
@@ -78,11 +83,12 @@ export function BugReportsSettingsPage() {
     onSuccess: () => {
       toast({ title: 'Report deleted' });
       qc.invalidateQueries({ queryKey: ['bug-reports'] });
+      setDeleteTarget(null);
     },
     onError: (err) =>
       toast({
         title: 'Delete failed',
-        description: err instanceof Error ? err.message : 'Unknown error',
+        description: getErrorMessage(err),
         variant: 'destructive',
       }),
   });
@@ -105,7 +111,12 @@ export function BugReportsSettingsPage() {
             <Skeleton className="h-10 w-full" />
           </div>
         ) : !data || data.reports.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No bug reports yet.</p>
+          <EmptyState
+            size="sm"
+            icon={<Bug className="h-8 w-8" />}
+            title="No bug reports yet"
+            description="Reports you submit from the app will show up here."
+          />
         ) : (
           <Table>
             <TableHeader>
@@ -174,7 +185,7 @@ export function BugReportsSettingsPage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => deleteMutation.mutate(r.id)}
+                        onClick={() => setDeleteTarget(r)}
                         disabled={deleteMutation.isPending}
                         title="Delete"
                       >
@@ -188,6 +199,17 @@ export function BugReportsSettingsPage() {
           </Table>
         )}
       </CardContent>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="Delete bug report?"
+        description="The report and its delivery history will be permanently removed. This action cannot be undone."
+        confirmText="Delete"
+        variant="destructive"
+        isPending={deleteMutation.isPending}
+        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+      />
     </Card>
   );
 }

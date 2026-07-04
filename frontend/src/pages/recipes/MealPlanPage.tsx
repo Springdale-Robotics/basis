@@ -16,6 +16,7 @@ import {
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
 import { formatMultiplier, formatServings } from '@/lib/servings';
@@ -73,7 +74,7 @@ export function MealPlanPage() {
   const weekStartStr = formatLocalDate(weekStart);
   const weekEndStr = formatLocalDate(weekEnd);
 
-  const { data: mealPlans, isLoading } = useQuery({
+  const { data: mealPlans, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['meal-plans', weekStartStr, weekEndStr],
     queryFn: () =>
       recipesApi.getMealPlans({ start: weekStartStr, end: weekEndStr }),
@@ -188,6 +189,15 @@ export function MealPlanPage() {
       </div>
 
       {/* Grid */}
+      {isError ? (
+        <div className="flex-1 min-h-0 rounded-lg border bg-card">
+          <ErrorState
+            title="Couldn't load meal plan"
+            error={error}
+            onRetry={refetch}
+          />
+        </div>
+      ) : (
       <div className="flex-1 min-h-0 min-w-0 overflow-auto rounded-lg border bg-card">
         <div
           className="min-w-[880px] grid h-full"
@@ -283,7 +293,7 @@ export function MealPlanPage() {
                             onClick={() => handleCellClick(day, mealType)}
                             className={cn(
                               'flex items-center gap-1 self-end rounded text-[11px] text-muted-foreground opacity-0 transition-opacity',
-                              'hover:text-primary group-hover:opacity-100',
+                              'hover:text-primary group-hover:opacity-100 pointer-coarse:opacity-100',
                               'focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary/40'
                             )}
                             aria-label="Add another recipe"
@@ -303,7 +313,9 @@ export function MealPlanPage() {
                           )}
                           aria-label={`Add ${mealType} for ${day.toLocaleDateString()}`}
                         >
-                          <Plus className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
+                          {/* group-focus-within (not focus-visible) — focus
+                              lands on the parent button, not this icon */}
+                          <Plus className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100" />
                         </button>
                       )}
                     </div>
@@ -314,6 +326,7 @@ export function MealPlanPage() {
           })}
         </div>
       </div>
+      )}
 
       <GenerateShoppingListDialog
         open={shoppingListDialogOpen}
@@ -430,7 +443,7 @@ function MealChip({
             {servingsLabel}
           </span>
         )}
-        {cooked && <Check className="h-3 w-3 shrink-0 text-emerald-600" />}
+        {cooked && <Check className="h-3 w-3 shrink-0 text-success" />}
       </button>
     );
   }
@@ -460,7 +473,7 @@ function MealChip({
           </div>
         )}
         {cooked && (
-          <div className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm">
+          <div className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-success text-success-foreground shadow-sm">
             <Check className="h-2.5 w-2.5" />
           </div>
         )}

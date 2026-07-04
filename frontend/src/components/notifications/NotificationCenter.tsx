@@ -11,7 +11,6 @@ import {
   AlertTriangle,
   CloudOff,
   HardDrive,
-  Users,
   Info,
   Loader2,
   X,
@@ -24,19 +23,19 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { Separator } from '@/components/ui/separator';
 import { notificationsApi } from '@/api/notifications';
 import type { Notification } from '@/types/models';
 import { cn } from '@/lib/utils';
 
 const notificationIcons: Record<string, React.ReactNode> = {
-  low_stock: <Package className="h-4 w-4 text-orange-500" />,
-  expiring_soon: <AlertTriangle className="h-4 w-4 text-yellow-500" />,
-  task_due: <Calendar className="h-4 w-4 text-blue-500" />,
-  sync_error: <CloudOff className="h-4 w-4 text-red-500" />,
-  backup_complete: <HardDrive className="h-4 w-4 text-green-500" />,
-  connection_request: <Users className="h-4 w-4 text-purple-500" />,
-  general: <Info className="h-4 w-4 text-gray-500" />,
+  low_stock: <Package className="h-4 w-4 text-warning" />,
+  expiring_soon: <AlertTriangle className="h-4 w-4 text-warning" />,
+  task_due: <Calendar className="h-4 w-4 text-info" />,
+  sync_error: <CloudOff className="h-4 w-4 text-destructive" />,
+  backup_complete: <HardDrive className="h-4 w-4 text-success" />,
+  general: <Info className="h-4 w-4 text-muted-foreground" />,
 };
 
 export function NotificationCenter() {
@@ -44,7 +43,7 @@ export function NotificationCenter() {
   const queryClient = useQueryClient();
 
   // Get notifications
-  const { data: notificationsData, isLoading } = useQuery({
+  const { data: notificationsData, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['notifications'],
     queryFn: () => notificationsApi.list(),
   });
@@ -137,6 +136,14 @@ export function NotificationCenter() {
             <div className="flex items-center justify-center h-32">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
+          ) : isError ? (
+            <ErrorState
+              title="Couldn't load notifications"
+              error={error}
+              onRetry={refetch}
+              compact
+              className="px-4"
+            />
           ) : notifications.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
               <Bell className="h-8 w-8 mb-2 opacity-50" />

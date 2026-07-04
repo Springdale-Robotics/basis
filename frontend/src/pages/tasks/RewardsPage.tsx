@@ -8,6 +8,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/shared/EmptyState';
 import { tasksApi } from '@/api/tasks';
 import { useAuth } from '@/hooks/useAuth';
 import { formatDate } from '@/lib/utils';
@@ -83,9 +84,12 @@ export function RewardsPage() {
             </CardHeader>
             <CardContent>
               {history.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No reward history yet. Complete a chore worth points to start.
-                </p>
+                <EmptyState
+                  size="sm"
+                  icon={<Star className="h-8 w-8" />}
+                  title="No reward history yet"
+                  description="Complete a chore worth points to start."
+                />
               ) : (
                 <ul className="divide-y">
                   {history.map((entry) => (

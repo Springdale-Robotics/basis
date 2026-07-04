@@ -5,32 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Archive, Download, Loader2, Plus, Trash2, Info, RotateCcw } from 'lucide-react';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { EmptyState } from '@/components/shared/EmptyState';
 import { settingsApi } from '@/api/settings';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
 import { API_BASE_URL } from '@/lib/constants';
-
-function formatBytes(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let v = bytes;
-  let u = 0;
-  while (v >= 1024 && u < units.length - 1) {
-    v /= 1024;
-    u++;
-  }
-  return `${v.toFixed(v < 10 && u > 0 ? 1 : 0)} ${units[u]}`;
-}
+import { formatFileSize } from '@/lib/utils';
 
 export function BackupSettingsPage() {
   const queryClient = useQueryClient();
@@ -47,7 +28,7 @@ export function BackupSettingsPage() {
     onSuccess: (res) => {
       toast({
         title: 'Backup created',
-        description: `${res.filename} · ${formatBytes(res.bytes)} · ${(res.elapsedMs / 1000).toFixed(1)}s`,
+        description: `${res.filename} · ${formatFileSize(res.bytes)} · ${(res.elapsedMs / 1000).toFixed(1)}s`,
       });
       queryClient.invalidateQueries({ queryKey: ['system', 'backups'] });
     },
@@ -65,6 +46,7 @@ export function BackupSettingsPage() {
     onSuccess: () => {
       toast({ title: 'Backup deleted' });
       queryClient.invalidateQueries({ queryKey: ['system', 'backups'] });
+      setDeleteTarget(null);
     },
     onError: (err) =>
       toast({
@@ -80,6 +62,7 @@ export function BackupSettingsPage() {
       toast({ title: 'Database restored', description: res.message });
       // Everything may have changed under us; refetch all server state.
       queryClient.invalidateQueries();
+      setRestoreTarget(null);
     },
     onError: (err) =>
       toast({
@@ -147,13 +130,13 @@ export function BackupSettingsPage() {
           )}
 
           {data.backups.length === 0 ? (
-            <div className="rounded-md border border-dashed p-8 text-center">
-              <Archive className="mx-auto h-8 w-8 text-muted-foreground" />
-              <p className="mt-2 text-sm font-medium">No backups yet</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Click "Back up now" to create your first backup.
-              </p>
-            </div>
+            <EmptyState
+              size="sm"
+              icon={<Archive className="h-8 w-8" />}
+              title="No backups yet"
+              description={'Click "Back up now" to create your first backup.'}
+              className="rounded-md border border-dashed p-8"
+            />
           ) : (
             <div className="divide-y rounded-md border">
               {data.backups.map((b) => (
@@ -164,7 +147,7 @@ export function BackupSettingsPage() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{b.filename}</p>
                     <p className="text-xs text-muted-foreground">
-                      {new Date(b.mtime).toLocaleString()} · {formatBytes(b.bytes)}
+                      {new Date(b.mtime).toLocaleString()} · {formatFileSize(b.bytes)}
                     </p>
                   </div>
                   <div className="flex gap-1">
@@ -181,79 +164,27 @@ export function BackupSettingsPage() {
                         <Download className="h-4 w-4" />
                       </a>
                     </Button>
-                    <AlertDialog
-                      open={restoreTarget === b.filename}
-                      onOpenChange={(open) => setRestoreTarget(open ? b.filename : null)}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title="Restore"
+                      disabled={restoreMutation.isPending}
+                      onClick={() => setRestoreTarget(b.filename)}
                     >
-                      <AlertDialogTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title="Restore"
-                          disabled={restoreMutation.isPending}
-                        >
-                          {restoreMutation.isPending && restoreTarget === b.filename ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <RotateCcw className="h-4 w-4" />
-                          )}
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Restore this backup?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            This replaces <strong>all current data</strong> with the
-                            contents of <code>{b.filename}</code>. Anything created
-                            since this backup was taken will be lost, and everyone will
-                            be signed out. This can't be undone.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() => {
-                              restoreMutation.mutate(b.filename);
-                              setRestoreTarget(null);
-                            }}
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                          >
-                            Restore
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                    <AlertDialog
-                      open={deleteTarget === b.filename}
-                      onOpenChange={(open) => setDeleteTarget(open ? b.filename : null)}
+                      {restoreMutation.isPending && restoreTarget === b.filename ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-4 w-4" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title="Delete"
+                      onClick={() => setDeleteTarget(b.filename)}
                     >
-                      <AlertDialogTrigger asChild>
-                        <Button variant="ghost" size="icon" title="Delete">
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete this backup?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            <code>{b.filename}</code> will be permanently removed.
-                            This can't be undone.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() => {
-                              deleteMutation.mutate(b.filename);
-                              setDeleteTarget(null);
-                            }}
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                          >
-                            Delete
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -290,6 +221,42 @@ export function BackupSettingsPage() {
           </Alert>
         </CardContent>
       </Card>
+
+      {/* Restore confirmation */}
+      <ConfirmDialog
+        open={!!restoreTarget}
+        onOpenChange={(open) => !open && setRestoreTarget(null)}
+        title="Restore this backup?"
+        description={
+          <>
+            This replaces <strong>all current data</strong> with the contents of{' '}
+            <code>{restoreTarget}</code>. Anything created since this backup was
+            taken will be lost, and everyone will be signed out. This can't be
+            undone.
+          </>
+        }
+        confirmText="Restore"
+        variant="destructive"
+        isPending={restoreMutation.isPending}
+        onConfirm={() => restoreTarget && restoreMutation.mutate(restoreTarget)}
+      />
+
+      {/* Delete confirmation */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title="Delete this backup?"
+        description={
+          <>
+            <code>{deleteTarget}</code> will be permanently removed. This can't
+            be undone.
+          </>
+        }
+        confirmText="Delete"
+        variant="destructive"
+        isPending={deleteMutation.isPending}
+        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget)}
+      />
     </div>
   );
 }

@@ -344,13 +344,14 @@ export function getRecurrenceSummary(options: RecurrenceOptions, startDate: Date
           : `Every ${interval} months on the ${day}${suffix}`);
       }
       break;
-    case 'yearly':
+    case 'yearly': {
       const month = startDate.toLocaleString('default', { month: 'long' });
       const day = startDate.getDate();
       parts.push(interval === 1
         ? `Every year on ${month} ${day}`
         : `Every ${interval} years on ${month} ${day}`);
       break;
+    }
   }
 
   if (options.endType === 'until' && options.until) {
@@ -450,7 +451,7 @@ export function parseRRule(rruleString: string | null | undefined): RecurrenceOp
   for (const part of parts) {
     const [key, value] = part.split('=');
     switch (key) {
-      case 'FREQ':
+      case 'FREQ': {
         const freqMap: Record<string, RecurrenceOptions['frequency']> = {
           'DAILY': 'daily',
           'WEEKLY': 'weekly',
@@ -459,6 +460,7 @@ export function parseRRule(rruleString: string | null | undefined): RecurrenceOp
         };
         result.frequency = freqMap[value] || 'none';
         break;
+      }
       case 'INTERVAL':
         result.interval = parseInt(value) || 1;
         break;
@@ -481,7 +483,7 @@ export function parseRRule(rruleString: string | null | undefined): RecurrenceOp
         result.monthlyType = 'dayOfMonth';
         result.byMonthDay = parseInt(value);
         break;
-      case 'UNTIL':
+      case 'UNTIL': {
         result.endType = 'until';
         // Parse RRULE date format: 20251231T235959Z
         const year = value.substring(0, 4);
@@ -489,6 +491,7 @@ export function parseRRule(rruleString: string | null | undefined): RecurrenceOp
         const day = value.substring(6, 8);
         result.until = `${year}-${month}-${day}`;
         break;
+      }
       case 'COUNT':
         result.endType = 'count';
         result.count = parseInt(value);

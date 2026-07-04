@@ -5,21 +5,22 @@ import {
   Plus,
   Camera,
   ChevronDown,
-  Search,
   Pin,
   Archive,
   Copy,
   ListChecks,
   Layers,
+  MoreVertical,
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
+import { SearchInput } from '@/components/shared/SearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { ErrorState } from '@/components/shared/ErrorState';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,8 +28,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ImageParseDialog } from '@/components/image-parse';
-import { CreateListDialog } from '@/components/lists/CreateListDialog';
+import { ListFormDialog } from '@/components/lists/ListFormDialog';
 import { listsApi } from '@/api/lists';
+import { listsOffline } from '@/lib/offline/listsOffline';
 import { getListTypeMeta } from '@/lib/listTypes';
 import { cn } from '@/lib/utils';
 import type { List } from '@/types/models';
@@ -46,10 +48,12 @@ export function ListsPage() {
   const includeArchived = filter === 'archived';
   const onlyTemplates = filter === 'templates';
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['lists', { includeArchived, onlyTemplates, search }],
+    // Offline-aware read: the default (active) view is snapshotted to
+    // IndexedDB and served from there when the fetch fails while offline.
     queryFn: () =>
-      listsApi.list({
+      listsOffline.list({
         includeArchived,
         onlyTemplates,
         search: search || undefined,
@@ -98,7 +102,7 @@ export function ListsPage() {
         }
       />
 
-      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <Tabs value={filter} onValueChange={(v) => setFilter(v as Filter)}>
           <TabsList>
             <TabsTrigger value="active">Active</TabsTrigger>
@@ -106,15 +110,11 @@ export function ListsPage() {
             <TabsTrigger value="archived">Archived</TabsTrigger>
           </TabsList>
         </Tabs>
-        <div className="relative">
-          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search lists…"
-            className="pl-8 sm:w-64"
-          />
-        </div>
+        <SearchInput
+          onChange={setSearch}
+          placeholder="Search lists…"
+          className="max-w-sm"
+        />
       </div>
 
       <ImageParseDialog
@@ -124,7 +124,7 @@ export function ListsPage() {
         onSuccess={handleImageParseSuccess}
       />
 
-      <CreateListDialog
+      <ListFormDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
         onCreated={(id) => navigate(`/lists/${id}`)}
@@ -136,6 +136,14 @@ export function ListsPage() {
             <Skeleton key={i} className="h-32" />
           ))}
         </div>
+      ) : isError && !data ? (
+        // Only when there's nothing to render — a failed background refetch
+        // (e.g. offline) keeps showing the cached lists.
+        <ErrorState
+          title="Couldn't load lists"
+          error={error}
+          onRetry={refetch}
+        />
       ) : lists.length === 0 ? (
         <EmptyState
           icon={<ListChecks className="h-12 w-12" />}
@@ -237,50 +245,56 @@ function ListsGrid({
                   Updated {new Date(list.updatedAt).toLocaleDateString()}
                 </p>
               </Link>
-              <div className="mt-3 flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  title={list.isPinned ? 'Unpin' : 'Pin'}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    update.mutate({ id: list.id, data: { isPinned: !list.isPinned } });
-                  }}
-                >
-                  <Pin className={cn('h-3.5 w-3.5', list.isPinned && 'fill-current')} />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  title="Duplicate"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    duplicate.mutate(list.id);
-                  }}
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  title={list.archivedAt ? 'Restore' : 'Archive'}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    update.mutate({
-                      id: list.id,
-                      data: { archivedAt: list.archivedAt ? null : new Date().toISOString() },
-                    });
-                  }}
-                >
-                  {list.archivedAt ? (
-                    <Layers className="h-3.5 w-3.5" />
-                  ) : (
-                    <Archive className="h-3.5 w-3.5" />
-                  )}
-                </Button>
+              {/* Always-visible kebab so actions are reachable on touch */}
+              <div className="mt-3 flex justify-end">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      aria-label={`Actions for ${list.name}`}
+                    >
+                      <MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onClick={() =>
+                        update.mutate({ id: list.id, data: { isPinned: !list.isPinned } })
+                      }
+                    >
+                      <Pin className={cn('mr-2 h-4 w-4', list.isPinned && 'fill-current')} />
+                      {list.isPinned ? 'Unpin' : 'Pin'}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => duplicate.mutate(list.id)}>
+                      <Copy className="mr-2 h-4 w-4" />
+                      Duplicate
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        update.mutate({
+                          id: list.id,
+                          data: {
+                            archivedAt: list.archivedAt ? null : new Date().toISOString(),
+                          },
+                        })
+                      }
+                    >
+                      {list.archivedAt ? (
+                        <>
+                          <Layers className="mr-2 h-4 w-4" />
+                          Restore
+                        </>
+                      ) : (
+                        <>
+                          <Archive className="mr-2 h-4 w-4" />
+                          Archive
+                        </>
+                      )}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </CardContent>
           </Card>

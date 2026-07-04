@@ -1,3 +1,4 @@
+import { DEFAULT_COLOR } from './calendar-utils';
 import { useState } from 'react';
 import {
   format,
@@ -127,7 +128,7 @@ export function CalendarView({
                       key={event.id}
                       className="text-xs px-1 py-0.5 rounded truncate cursor-pointer hover:opacity-80"
                       style={{
-                        backgroundColor: event.color || '#3b82f6',
+                        backgroundColor: event.color || DEFAULT_COLOR,
                         color: '#fff',
                       }}
                       onClick={(e) => {
@@ -195,7 +196,7 @@ export function CalendarView({
                     key={event.id}
                     className="text-xs px-2 py-1 rounded mb-1 cursor-pointer hover:opacity-80"
                     style={{
-                      backgroundColor: event.color || '#3b82f6',
+                      backgroundColor: event.color || DEFAULT_COLOR,
                       color: '#fff',
                     }}
                     onClick={(e) => {
@@ -248,7 +249,7 @@ export function CalendarView({
                     key={event.id}
                     className="text-sm px-2 py-1 rounded cursor-pointer hover:opacity-80"
                     style={{
-                      backgroundColor: event.color || '#3b82f6',
+                      backgroundColor: event.color || DEFAULT_COLOR,
                       color: '#fff',
                     }}
                     onClick={(e) => {

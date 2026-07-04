@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
+import { Badge, badgeVariants } from '@/components/ui/badge';
 import { householdsApi } from '@/api/households';
 import { settingsApi } from '@/api/settings';
 import { toast } from '@/hooks/useToast';
@@ -277,10 +277,7 @@ export function HouseholdSettingsPage() {
             </div>
             <div className="flex flex-wrap gap-1.5">
               {defaultCategories.filter(c => !hiddenCategories.includes(c)).map((cat) => (
-                <span
-                  key={cat}
-                  className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs"
-                >
+                <Badge key={cat} variant="outline" className="gap-1 font-normal">
                   {categoryIcons[cat] && <span>{categoryIcons[cat]}</span>}
                   {cat}
                   {cat !== 'Other' && (
@@ -293,12 +290,13 @@ export function HouseholdSettingsPage() {
                       <X className="h-3 w-3" />
                     </button>
                   )}
-                </span>
+                </Badge>
               ))}
               {customCategories.map((cat) => (
-                <span
+                <Badge
                   key={cat}
-                  className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2.5 py-0.5 text-xs"
+                  variant="outline"
+                  className="gap-1 font-normal border-primary/30 bg-primary/5"
                 >
                   {cat}
                   <button
@@ -309,7 +307,7 @@ export function HouseholdSettingsPage() {
                   >
                     <X className="h-3 w-3" />
                   </button>
-                </span>
+                </Badge>
               ))}
             </div>
           </div>
@@ -324,7 +322,10 @@ export function HouseholdSettingsPage() {
                     key={cat}
                     type="button"
                     onClick={() => categoryMutation.mutate({ hiddenCategories: hiddenCategories.filter(c => c !== cat) })}
-                    className="inline-flex items-center gap-1 rounded-full border border-dashed px-2.5 py-0.5 text-xs text-muted-foreground hover:text-foreground hover:border-solid transition-colors"
+                    className={cn(
+                      badgeVariants({ variant: 'outline' }),
+                      'gap-1 font-normal border-dashed text-muted-foreground hover:text-foreground hover:border-solid'
+                    )}
                     disabled={categoryMutation.isPending}
                   >
                     {categoryIcons[cat] && <span>{categoryIcons[cat]}</span>}

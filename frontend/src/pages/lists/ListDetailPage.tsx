@@ -24,12 +24,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { ShareButton, EditGate } from '@/components/permissions';
-import { EditListDialog } from '@/components/lists/EditListDialog';
+import { ListFormDialog } from '@/components/lists/ListFormDialog';
 import { ChecklistView } from '@/components/lists/ChecklistView';
 import { WishlistView } from '@/components/lists/WishlistView';
 import { NotesView } from '@/components/lists/NotesView';
 import { listsApi } from '@/api/lists';
+import { listsOffline } from '@/lib/offline/listsOffline';
 import { getListTypeMeta } from '@/lib/listTypes';
 import { cn } from '@/lib/utils';
 
@@ -40,9 +42,11 @@ export function ListDetailPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['lists', id],
-    queryFn: () => listsApi.get(id!),
+    // Offline-aware read: snapshots successful responses to IndexedDB and
+    // serves the snapshot when the fetch fails while offline.
+    queryFn: () => listsOffline.getList(id!),
     enabled: !!id,
   });
 
@@ -78,6 +82,17 @@ export function ListDetailPage() {
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-64 w-full" />
       </div>
+    );
+  }
+  // Only show the error state when we have nothing to render — a failed
+  // background refetch (e.g. offline) keeps showing the cached list.
+  if (isError && !data) {
+    return (
+      <ErrorState
+        title="Couldn't load list"
+        error={error}
+        onRetry={refetch}
+      />
     );
   }
   if (!data) return <div>List not found</div>;
@@ -186,7 +201,7 @@ export function ListDetailPage() {
         )}
       </div>
 
-      <EditListDialog open={editOpen} onOpenChange={setEditOpen} list={list} />
+      <ListFormDialog open={editOpen} onOpenChange={setEditOpen} list={list} />
 
       <ConfirmDialog
         open={deleteOpen}

@@ -26,7 +26,6 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { format, isToday, isTomorrow } from 'date-fns';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -42,6 +41,8 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { ErrorState } from '@/components/shared/ErrorState';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { EditGate } from '@/components/permissions';
 import { TaskRow } from '@/components/tasks/TaskRow';
 import { QuickAddInput } from '@/components/tasks/QuickAddInput';
@@ -56,6 +57,8 @@ import { groupsApi } from '@/api/groups';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/useToast';
 import { cn } from '@/lib/utils';
+import { getErrorMessage } from '@/lib/api-error';
+import { formatDueDate } from '@/lib/due-date';
 import type { Task, TaskKind } from '@/types/models';
 import type { CreateTaskRequest, UpdateTaskRequest } from '@/api/tasks';
 
@@ -76,13 +79,6 @@ function storedSort(kind: TaskKind): SortBy {
   return 'due';
 }
 
-function nextDueLabel(dueDate: string): string {
-  const d = new Date(dueDate);
-  if (isToday(d)) return 'today';
-  if (isTomorrow(d)) return 'tomorrow';
-  const sameYear = d.getFullYear() === new Date().getFullYear();
-  return sameYear ? format(d, 'MMM d') : format(d, 'MMM d, yyyy');
-}
 
 export function TasksPage() {
   const queryClient = useQueryClient();
@@ -95,6 +91,12 @@ export function TasksPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sortBy, setSortBy] = useState<SortBy>(() => storedSort('task'));
+  // Pending delete confirmation: one task (with its title for the copy) or a
+  // bulk set of selected ids.
+  const [deleteTarget, setDeleteTarget] = useState<{
+    ids: string[];
+    title?: string;
+  } | null>(null);
 
   // Re-read sort preference when switching tabs.
   useEffect(() => {
@@ -112,7 +114,7 @@ export function TasksPage() {
 
   // One query for both tabs — keeps counts in sync regardless of active tab.
   const allTasksQueryKey = ['tasks', 'all', showCompleted] as const;
-  const { data: allTasksData, isLoading } = useQuery({
+  const { data: allTasksData, isLoading, isError, error, refetch } = useQuery({
     queryKey: allTasksQueryKey,
     queryFn: () =>
       tasksApi.list({
@@ -265,11 +267,12 @@ export function TasksPage() {
       }
       return { prev };
     },
-    onError: (_e, _v, ctx) => {
+    onError: (e, _v, ctx) => {
       if (ctx?.prev) queryClient.setQueryData(allTasksQueryKey, ctx.prev);
       toast({
         title: 'Could not create task',
-        description: 'Try again or open More options.',
+        description: getErrorMessage(e),
+        variant: 'destructive',
       });
     },
     onSettled: () => {
@@ -286,8 +289,12 @@ export function TasksPage() {
       setEditorOpen(false);
       setEditing(null);
     },
-    onError: (e: Error) =>
-      toast({ title: 'Could not save task', description: e.message }),
+    onError: (e) =>
+      toast({
+        title: 'Could not save task',
+        description: getErrorMessage(e),
+        variant: 'destructive',
+      }),
   });
 
   const completeMutation = useMutation({
@@ -317,12 +324,17 @@ export function TasksPage() {
       if (completed?.kind === 'chore' && completed?.dueDate) {
         toast({
           title: 'Marked done',
-          description: `Next due ${nextDueLabel(completed.dueDate)}.`,
+          description: `Next due ${formatDueDate(completed.dueDate, { lowercase: true })}.`,
         });
       }
     },
-    onError: (_e, _id, ctx) => {
+    onError: (e, _id, ctx) => {
       if (ctx?.prev) queryClient.setQueryData(allTasksQueryKey, ctx.prev);
+      toast({
+        title: 'Could not complete task',
+        description: getErrorMessage(e),
+        variant: 'destructive',
+      });
     },
     onSettled: invalidate,
   });
@@ -333,8 +345,15 @@ export function TasksPage() {
       invalidate();
       setEditorOpen(false);
       setEditing(null);
+      setDeleteTarget(null);
     },
   });
+
+  const confirmDelete = () => {
+    if (!deleteTarget) return;
+    deleteTarget.ids.forEach((id) => deleteMutation.mutate(id));
+    setSelectedIds(new Set());
+  };
 
   const claimMutation = useMutation({
     mutationFn: (id: string) => tasksApi.claim(id),
@@ -343,7 +362,14 @@ export function TasksPage() {
 
   const reorderMutation = useMutation({
     mutationFn: (taskIds: string[]) => tasksApi.reorder({ taskIds }),
-    onError: invalidate,
+    onError: (e) => {
+      invalidate();
+      toast({
+        title: 'Could not reorder tasks',
+        description: getErrorMessage(e),
+        variant: 'destructive',
+      });
+    },
   });
 
   // ===== Drag-and-drop =====
@@ -399,8 +425,7 @@ export function TasksPage() {
     setSelectedIds(new Set());
   };
   const bulkDelete = () => {
-    selectedIds.forEach((id) => deleteMutation.mutate(id));
-    setSelectedIds(new Set());
+    setDeleteTarget({ ids: Array.from(selectedIds) });
   };
   const bulkAssign = (value: AssigneeValue) => {
     selectedIds.forEach((id) =>
@@ -435,7 +460,7 @@ export function TasksPage() {
   return (
     <div>
       <PageHeader
-        title="Tasks & Chores"
+        title="Tasks"
         description="One-shot tasks live alongside the chores that keep coming back."
         actions={
           <EditGate feature="tasks">
@@ -455,7 +480,7 @@ export function TasksPage() {
       />
 
       <Tabs value={kind} onValueChange={(v) => setKind(v as TaskKind)}>
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <TabsList className="self-start">
             <TabsTrigger value="task">
               Tasks
@@ -581,6 +606,12 @@ export function TasksPage() {
                 <Skeleton key={i} className="h-14" />
               ))}
             </div>
+          ) : isError ? (
+            <ErrorState
+              title={kind === 'chore' ? "Couldn't load chores" : "Couldn't load tasks"}
+              error={error}
+              onRetry={refetch}
+            />
           ) : orderedTasks.length === 0 ? (
             <EmptyState
               icon={<CheckSquare className="h-12 w-12" />}
@@ -622,7 +653,9 @@ export function TasksPage() {
                         setEditing(task);
                         setEditorOpen(true);
                       }}
-                      onDelete={() => deleteMutation.mutate(task.id)}
+                      onDelete={() =>
+                        setDeleteTarget({ ids: [task.id], title: task.title })
+                      }
                       onTogglePin={() =>
                         updateMutation.mutate({
                           id: task.id,
@@ -659,12 +692,36 @@ export function TasksPage() {
         groups={groups}
         onCreate={(data) => createMutation.mutate(data)}
         onUpdate={(id, data) => updateMutation.mutate({ id, data })}
-        onDelete={(id) => deleteMutation.mutate(id)}
+        onDelete={(id) => {
+          const target = allTasks.find((t) => t.id === id) ?? editing;
+          setDeleteTarget({ ids: [id], title: target?.title });
+        }}
         isSubmitting={
           createMutation.isPending ||
           updateMutation.isPending ||
           deleteMutation.isPending
         }
+      />
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={
+          deleteTarget && deleteTarget.ids.length > 1
+            ? `Delete ${deleteTarget.ids.length} tasks?`
+            : deleteTarget?.title
+            ? `Delete "${deleteTarget.title}"?`
+            : 'Delete task?'
+        }
+        description={
+          deleteTarget && deleteTarget.ids.length > 1
+            ? `The ${deleteTarget.ids.length} selected tasks will be permanently deleted. This action cannot be undone.`
+            : 'This task will be permanently deleted. This action cannot be undone.'
+        }
+        confirmText="Delete"
+        variant="destructive"
+        isPending={deleteMutation.isPending}
+        onConfirm={confirmDelete}
       />
     </div>
   );

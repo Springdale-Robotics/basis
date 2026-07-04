@@ -39,7 +39,8 @@ export function AddTimerDialog({ onAdd, trigger }: AddTimerDialogProps) {
     handleClose();
   };
 
-  const handleCustomAdd = () => {
+  const handleCustomAdd = (e?: React.FormEvent) => {
+    e?.preventDefault();
     const mins = parseInt(minutes) || 0;
     const secs = parseInt(seconds) || 0;
     if (mins <= 0 && secs <= 0) return;
@@ -56,8 +57,19 @@ export function AddTimerDialog({ onAdd, trigger }: AddTimerDialogProps) {
     setSeconds('');
   };
 
+  // Reset fields on any close path (Escape / outside-click included) so a
+  // previous timer's values don't leak into the next open.
+  const handleOpenChange = (o: boolean) => {
+    setOpen(o);
+    if (!o) {
+      setName('');
+      setMinutes('');
+      setSeconds('');
+    }
+  };
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         {trigger || (
           <Button size="sm">
@@ -66,7 +78,7 @@ export function AddTimerDialog({ onAdd, trigger }: AddTimerDialogProps) {
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[400px]">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Add Timer</DialogTitle>
           <DialogDescription>
@@ -74,6 +86,7 @@ export function AddTimerDialog({ onAdd, trigger }: AddTimerDialogProps) {
           </DialogDescription>
         </DialogHeader>
 
+        <form onSubmit={handleCustomAdd} className="contents">
         <div className="space-y-4 py-4">
           {/* Timer Name */}
           <div className="space-y-2">
@@ -93,6 +106,7 @@ export function AddTimerDialog({ onAdd, trigger }: AddTimerDialogProps) {
               {QUICK_TIMES.map((time) => (
                 <Button
                   key={time.label}
+                  type="button"
                   variant="outline"
                   size="sm"
                   onClick={() => handleQuickAdd(time.minutes, time.seconds)}
@@ -141,16 +155,14 @@ export function AddTimerDialog({ onAdd, trigger }: AddTimerDialogProps) {
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose}>
+          <Button type="button" variant="outline" onClick={handleClose}>
             Cancel
           </Button>
-          <Button
-            onClick={handleCustomAdd}
-            disabled={!minutes && !seconds}
-          >
+          <Button type="submit" disabled={!minutes && !seconds}>
             Add Timer
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

@@ -32,7 +32,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { SearchInput } from '@/components/shared/SearchInput';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { AreaForm } from '@/components/inventory/AreaForm';
 import { ItemForm } from '@/components/inventory/ItemForm';
 import { BulkAddDialog } from '@/components/inventory/BulkAddDialog';
@@ -43,7 +45,7 @@ import { FixIncompleteItemDialog } from '@/components/inventory/FixIncompleteIte
 import { ReconcileDialog } from '@/components/inventory/ReconcileDialog';
 import { RelinkDialog } from '@/components/inventory/RelinkDialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { CategoryCombobox, AreaCombobox } from '@/components/inventory/fields';
 import { inventoryApi } from '@/api/inventory';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
@@ -157,14 +159,16 @@ export function InventoryPage() {
   const [collapsedAreas, setCollapsedAreas] = useState<Set<string>>(new Set());
   const [reconcileItem, setReconcileItem] = useState<InventoryItem | null>(null);
   const [relinkItem, setRelinkItem] = useState<InventoryItem | null>(null);
+  const [deletingArea, setDeletingArea] = useState<StorageArea | null>(null);
+  const [deletingLeftover, setDeletingLeftover] = useState<Leftover | null>(null);
 
   // Queries
-  const { data: areas, isLoading: areasLoading } = useQuery({
+  const { data: areas, isLoading: areasLoading, isError: areasError, error: areasErrorObj, refetch: refetchAreas } = useQuery({
     queryKey: ['inventory', 'areas'],
     queryFn: inventoryApi.getAreas,
   });
 
-  const { data: items, isLoading: itemsLoading } = useQuery({
+  const { data: items, isLoading: itemsLoading, isError: itemsError, error: itemsErrorObj, refetch: refetchItems } = useQuery({
     queryKey: ['inventory', 'items', selectedCategory],
     queryFn: () =>
       inventoryApi.getItems({
@@ -172,7 +176,7 @@ export function InventoryPage() {
       }),
   });
 
-  const { data: stock, isLoading: stockLoading } = useQuery({
+  const { data: stock, isLoading: stockLoading, isError: stockError, error: stockErrorObj, refetch: refetchStock } = useQuery({
     queryKey: ['inventory', 'stock'],
     queryFn: inventoryApi.getStock,
   });
@@ -182,7 +186,7 @@ export function InventoryPage() {
     queryFn: inventoryApi.getKeepInStockItems,
   });
 
-  const { data: leftoversData, isLoading: leftoversLoading } = useQuery({
+  const { data: leftoversData, isLoading: leftoversLoading, isError: leftoversError, error: leftoversErrorObj, refetch: refetchLeftovers } = useQuery({
     queryKey: ['inventory', 'leftovers'],
     queryFn: inventoryApi.getLeftovers,
   });
@@ -359,26 +363,6 @@ export function InventoryPage() {
     return { groups, unassigned };
   }, [filteredItems, itemStockTotals]);
 
-  // Filter options
-  const categoryFilterOptions: ComboboxOption[] = useMemo(
-    () => categories.map((cat) => ({
-      value: cat,
-      label: cat,
-      icon: categoryIcons[cat] ? <span>{categoryIcons[cat]}</span> : undefined,
-    })),
-    [categories]
-  );
-
-  const areaFilterOptions: ComboboxOption[] = useMemo(
-    () =>
-      (areas?.areas || []).map((area) => ({
-        value: area.id,
-        label: area.name,
-        icon: <span>{area.icon}</span>,
-      })),
-    [areas]
-  );
-
   // Sort function
   const sortItems = useCallback(
     (itemList: InventoryItem[]) => {
@@ -488,6 +472,7 @@ export function InventoryPage() {
     mutationFn: (id: string) => inventoryApi.deleteArea(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      setDeletingArea(null);
       setEditingArea(null);
       setAreaFormOpen(false);
     },
@@ -655,6 +640,9 @@ export function InventoryPage() {
     mutationFn: (id: string) => inventoryApi.deleteLeftover(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory', 'leftovers'] });
+      setDeletingLeftover(null);
+      setEditingLeftover(null);
+      setLeftoverFormOpen(false);
     },
   });
 
@@ -807,6 +795,13 @@ export function InventoryPage() {
   };
 
   const isLoading = areasLoading || itemsLoading || stockLoading;
+  const isError = areasError || itemsError || stockError;
+  const loadError = areasErrorObj ?? itemsErrorObj ?? stockErrorObj;
+  const refetchPrimary = () => {
+    if (areasError) void refetchAreas();
+    if (itemsError) void refetchItems();
+    if (stockError) void refetchStock();
+  };
 
   // Alert counts
   const expiringItemCount = expiringItems?.expiring?.length || 0;
@@ -856,18 +851,18 @@ export function InventoryPage() {
           )}
           <span className="text-base shrink-0">{getItemIcon(item)}</span>
           <div className="min-w-0">
-            <p className="font-medium truncate flex items-center gap-2">
+            <div className="font-medium truncate flex items-center gap-2">
               <span className="truncate">{item.name}</span>
               {item.needsConversion && (
                 <Badge
                   variant="outline"
-                  className="shrink-0 border-amber-500/40 bg-amber-50 text-amber-900 text-[10px] py-0 px-1.5 dark:bg-amber-950/40 dark:text-amber-200"
+                  className="shrink-0 border-warning/40 bg-warning-muted text-warning-muted-foreground text-[10px] py-0 px-1.5"
                   title="This item's stock units can't be converted to the units your recipes use. Edit the item and add a density or a conversion to bridge them."
                 >
                   Needs conversion
                 </Badge>
               )}
-            </p>
+            </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               {item.category && <span>{item.category}</span>}
               {displayExpiry && (() => {
@@ -885,7 +880,7 @@ export function InventoryPage() {
                     <span className={cn(
                       'flex items-center gap-0.5',
                       daysLeft < 0 && 'text-destructive',
-                      daysLeft >= 0 && daysLeft <= 7 && 'text-orange-500'
+                      daysLeft >= 0 && daysLeft <= 7 && 'text-warning'
                     )}>
                       <Clock className="h-3 w-3" />
                       Expires {formatDate(displayExpiry)} {relativeText}
@@ -1205,45 +1200,40 @@ export function InventoryPage() {
           </SelectContent>
         </Select>
         <div className="w-[180px]">
-          <Combobox
-            options={areaFilterOptions}
+          <AreaCombobox
+            areas={areas?.areas || []}
             value={selectedArea || ''}
             onValueChange={(value) => setSelectedArea(value || undefined)}
             placeholder="All Areas"
-            searchPlaceholder="Search areas..."
-            emptyText="No area found."
             allowClear
             clearLabel="All Areas"
           />
         </div>
         <div className="w-[180px]">
-          <Combobox
-            options={categoryFilterOptions}
+          <CategoryCombobox
             value={selectedCategory || ''}
             onValueChange={(value) => setSelectedCategory(value || undefined)}
             placeholder="All Categories"
-            searchPlaceholder="Search categories..."
-            emptyText="No category found."
             allowClear
             clearLabel="All Categories"
           />
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        {(['all', 'in-stock', 'not-in-stock'] as const).map((filter) => (
-          <Button
-            key={filter}
-            variant={stockFilter === filter ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setStockFilter(filter)}
-          >
-            {filter === 'all' ? 'All' : filter === 'in-stock' ? 'In Stock' : 'Not in Stock'}
-          </Button>
-        ))}
-      </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {(['all', 'in-stock', 'not-in-stock'] as const).map((filter) => (
+            <Button
+              key={filter}
+              variant={stockFilter === filter ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setStockFilter(filter)}
+            >
+              {filter === 'all' ? 'All' : filter === 'in-stock' ? 'In Stock' : 'Not in Stock'}
+            </Button>
+          ))}
+        </div>
         {!bulkMode && (
-          <>
+          <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => setBulkMode(true)}>
               <Check className="mr-2 h-4 w-4" />
               Select Multiple
@@ -1256,7 +1246,7 @@ export function InventoryPage() {
               <Plus className="mr-2 h-4 w-4" />
               Bulk Add
             </Button>
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -1420,6 +1410,12 @@ export function InventoryPage() {
                 <Skeleton key={i} className="h-32" />
               ))}
             </div>
+          ) : isError ? (
+            <ErrorState
+              title="Couldn't load inventory"
+              error={loadError}
+              onRetry={refetchPrimary}
+            />
           ) : (areas?.areas?.length || 0) === 0 ? (
             <EmptyState
               icon={<MapPin className="h-12 w-12" />}
@@ -1501,6 +1497,12 @@ export function InventoryPage() {
                 <Skeleton key={i} className="h-16" />
               ))}
             </div>
+          ) : isError ? (
+            <ErrorState
+              title="Couldn't load inventory"
+              error={loadError}
+              onRetry={refetchPrimary}
+            />
           ) : !catalogItems.length ? (
             <EmptyState
               icon={<Package className="h-12 w-12" />}
@@ -1537,6 +1539,12 @@ export function InventoryPage() {
                 <Skeleton key={i} className="h-20" />
               ))}
             </div>
+          ) : leftoversError ? (
+            <ErrorState
+              title="Couldn't load leftovers"
+              error={leftoversErrorObj}
+              onRetry={refetchLeftovers}
+            />
           ) : !leftoversData?.leftovers?.length ? (
             <EmptyState
               icon={<Soup className="h-12 w-12" />}
@@ -1575,7 +1583,7 @@ export function InventoryPage() {
                     setEditingLeftover(leftover);
                     setLeftoverFormOpen(true);
                   }}
-                  onDelete={() => deleteLeftoverMutation.mutate(leftover.id)}
+                  onDelete={() => setDeletingLeftover(leftover)}
                 />
               ))}
             </div>
@@ -1598,7 +1606,7 @@ export function InventoryPage() {
             createAreaMutation.mutate(data);
           }
         }}
-        onDelete={editingArea ? () => deleteAreaMutation.mutate(editingArea.id) : undefined}
+        onDelete={editingArea ? () => setDeletingArea(editingArea) : undefined}
         isSubmitting={createAreaMutation.isPending || updateAreaMutation.isPending || deleteAreaMutation.isPending}
       />
 
@@ -1619,24 +1627,24 @@ export function InventoryPage() {
         isSubmitting={createItemMutation.isPending || updateItemMutation.isPending}
       />
 
-      <AlertDialog
-        open={deleteDialog.open}
-        onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {deleteDialog.isBulk
-                ? `Delete ${deleteDialog.items.length} items?`
-                : `Delete "${deleteDialog.items[0]?.name}"?`}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {isAdvanced
-                ? `Choose how you want to remove ${deleteDialog.isBulk ? 'these items' : 'this item'}:`
-                : `This will permanently remove ${deleteDialog.isBulk ? 'these items' : 'this item'}. This cannot be undone.`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {isAdvanced ? (
+      {/* Advanced mode gets a multi-choice dialog (stock-only vs catalog);
+          basic mode uses the shared ConfirmDialog. */}
+      {isAdvanced ? (
+        <AlertDialog
+          open={deleteDialog.open}
+          onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {deleteDialog.isBulk
+                  ? `Delete ${deleteDialog.items.length} items?`
+                  : `Delete "${deleteDialog.items[0]?.name}"?`}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                Choose how you want to remove {deleteDialog.isBulk ? 'these items' : 'this item'}:
+              </AlertDialogDescription>
+            </AlertDialogHeader>
             <div className="grid gap-4 py-4">
               <Card
                 className="cursor-pointer border-2 hover:border-primary transition-colors"
@@ -1661,21 +1669,55 @@ export function InventoryPage() {
                 </CardContent>
               </Card>
             </div>
-          ) : (
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <Button variant="destructive" onClick={() => handleDeleteItems('catalog')}>
-                Delete
-              </Button>
-            </AlertDialogFooter>
-          )}
-          {isAdvanced && (
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
             </AlertDialogFooter>
-          )}
-        </AlertDialogContent>
-      </AlertDialog>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : (
+        <ConfirmDialog
+          open={deleteDialog.open}
+          onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
+          title={
+            deleteDialog.isBulk
+              ? `Delete ${deleteDialog.items.length} items?`
+              : `Delete "${deleteDialog.items[0]?.name}"?`
+          }
+          description={`This will permanently remove ${deleteDialog.isBulk ? 'these items' : 'this item'}. This cannot be undone.`}
+          confirmText="Delete"
+          variant="destructive"
+          isPending={deleteItemMutation.isPending || batchDeleteMutation.isPending}
+          onConfirm={() => handleDeleteItems('catalog')}
+        />
+      )}
+
+      <ConfirmDialog
+        open={!!deletingArea}
+        onOpenChange={(open) => !open && setDeletingArea(null)}
+        title={deletingArea ? `Delete "${deletingArea.name}"?` : 'Delete area?'}
+        description="Stock recorded in this area will be deleted along with it. Items themselves stay in your catalog, but any that used this as their default area will no longer have one. This action cannot be undone."
+        confirmText="Delete"
+        variant="destructive"
+        isPending={deleteAreaMutation.isPending}
+        onConfirm={() => deletingArea && deleteAreaMutation.mutate(deletingArea.id)}
+      />
+
+      <ConfirmDialog
+        open={!!deletingLeftover}
+        onOpenChange={(open) => !open && setDeletingLeftover(null)}
+        title={
+          deletingLeftover
+            ? `Delete "${deletingLeftover.name}"?`
+            : 'Delete leftover?'
+        }
+        description="This leftover will be permanently deleted. This action cannot be undone."
+        confirmText="Delete"
+        variant="destructive"
+        isPending={deleteLeftoverMutation.isPending}
+        onConfirm={() =>
+          deletingLeftover && deleteLeftoverMutation.mutate(deletingLeftover.id)
+        }
+      />
 
       <BulkAddDialog
         open={bulkAddDialogOpen}
@@ -1712,7 +1754,7 @@ export function InventoryPage() {
             createLeftoverMutation.mutate(data);
           }
         }}
-        onDelete={editingLeftover ? () => deleteLeftoverMutation.mutate(editingLeftover.id) : undefined}
+        onDelete={editingLeftover ? () => setDeletingLeftover(editingLeftover) : undefined}
         isSubmitting={createLeftoverMutation.isPending || updateLeftoverMutation.isPending}
       />
 

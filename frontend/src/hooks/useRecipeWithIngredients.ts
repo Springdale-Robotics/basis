@@ -6,10 +6,13 @@ import type { Recipe, RecipeIngredient } from '@/types/models';
 export interface UseRecipeWithIngredientsResult {
   recipe: Recipe | undefined;
   isLoading: boolean;
+  isError: boolean;
+  error: unknown;
+  refetch: () => void;
 }
 
 export function useRecipeWithIngredients(id: string | undefined): UseRecipeWithIngredientsResult {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['recipes', id],
     queryFn: () => recipesApi.get(id!),
     enabled: !!id,
@@ -45,5 +48,5 @@ export function useRecipeWithIngredients(id: string | undefined): UseRecipeWithI
     return merged;
   }, [data]);
 
-  return { recipe, isLoading };
+  return { recipe, isLoading, isError, error, refetch };
 }

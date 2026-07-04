@@ -48,12 +48,15 @@ export const ERROR_CODES = {
   RATE_LIMITED: 'RATE_LIMITED',
 } as const;
 
-export function getErrorMessage(error: unknown): string {
+export function getErrorMessage(
+  error: unknown,
+  fallback = 'An unexpected error occurred'
+): string {
   if (ApiError.isApiError(error)) {
     return error.message;
   }
   if (error instanceof Error) {
     return error.message;
   }
-  return 'An unexpected error occurred';
+  return fallback;
 }

@@ -63,7 +63,7 @@ export function AreaCard({
               <Badge variant="destructive">{lowStockItems.length} low</Badge>
             )}
             {expiringItems.length > 0 && (
-              <Badge variant="outline" className="border-orange-500 text-orange-500">
+              <Badge variant="outline" className="border-warning text-warning">
                 {expiringItems.length} expiring
               </Badge>
             )}
@@ -149,7 +149,7 @@ function ItemRow({ item, onClick }: ItemRowProps) {
       className={cn(
         'flex items-center justify-between p-2 rounded-md cursor-pointer hover:bg-muted transition-colors',
         isLowStock && 'border-l-2 border-l-destructive',
-        isExpiringSoon && !isLowStock && 'border-l-2 border-l-orange-500'
+        isExpiringSoon && !isLowStock && 'border-l-2 border-l-warning'
       )}
       onClick={onClick}
     >
@@ -164,7 +164,7 @@ function ItemRow({ item, onClick }: ItemRowProps) {
       </div>
       <div className="flex items-center gap-2">
         {isExpiringSoon && daysUntilExpiry !== null && (
-          <Badge variant="outline" className="border-orange-500 text-orange-500">
+          <Badge variant="outline" className="border-warning text-warning">
             {daysUntilExpiry === 0
               ? 'Today'
               : daysUntilExpiry === 1

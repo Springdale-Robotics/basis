@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
 import {
   Dialog,
@@ -11,8 +11,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
-import { unitOptions } from '@/lib/inventory-constants';
+import { UnitCombobox } from '@/components/inventory/fields';
 
 interface ConversionPromptDialogProps {
   open: boolean;
@@ -51,11 +50,6 @@ export function ConversionPromptDialog({
       setSizeUnit(suggestedTargetUnit ?? 'g');
     }
   }, [open, suggestedTargetUnit]);
-
-  const unitComboOptions: ComboboxOption[] = useMemo(
-    () => unitOptions.map((u) => ({ value: u, label: u })),
-    []
-  );
 
   const handleConfirm = async () => {
     const qtyNum = parseFloat(quantity);
@@ -102,13 +96,10 @@ export function ConversionPromptDialog({
                 className="w-28"
                 autoFocus
               />
-              <Combobox
-                options={unitComboOptions}
+              <UnitCombobox
                 value={sizeUnit}
                 onValueChange={setSizeUnit}
                 placeholder="unit"
-                searchPlaceholder="Search units..."
-                emptyText="No unit found"
                 className="w-32"
               />
             </div>

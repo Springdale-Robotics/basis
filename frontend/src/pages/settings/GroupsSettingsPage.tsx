@@ -21,7 +21,8 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/shared/UserAvatar';
+import { EmptyState } from '@/components/shared/EmptyState';
 import {
   Dialog,
   DialogContent,
@@ -37,16 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import {
   Collapsible,
   CollapsibleContent,
@@ -166,21 +158,18 @@ export function GroupsSettingsPage() {
         </CardHeader>
         <CardContent>
           {groups.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No groups created yet</p>
-              <p className="text-sm mt-1">
-                Groups let you share recipes, tasks, and files with multiple people at once.
-              </p>
-              <Button
-                variant="outline"
-                className="mt-4"
-                onClick={() => setCreateDialogOpen(true)}
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                Create your first group
-              </Button>
-            </div>
+            <EmptyState
+              icon={<Users className="h-12 w-12" />}
+              title="No groups created yet"
+              description="Groups let you share recipes, tasks, and files with multiple people at once."
+              className="py-8"
+              action={
+                <Button variant="outline" onClick={() => setCreateDialogOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create your first group
+                </Button>
+              }
+            />
           ) : (
             <div className="space-y-4">
               {groups.map((group) => (
@@ -220,32 +209,16 @@ export function GroupsSettingsPage() {
       />
 
       {/* Delete Confirmation */}
-      <AlertDialog
+      <ConfirmDialog
         open={!!deletingGroup}
         onOpenChange={(open) => !open && setDeletingGroup(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Group</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete "{deletingGroup?.name}"? This will remove all
-              permissions associated with this group. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => deletingGroup && deleteMutation.mutate(deletingGroup.id)}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {deleteMutation.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title="Delete Group"
+        description={`Are you sure you want to delete "${deletingGroup?.name}"? This will remove all permissions associated with this group. This action cannot be undone.`}
+        confirmText="Delete"
+        variant="destructive"
+        isPending={deleteMutation.isPending}
+        onConfirm={() => deletingGroup && deleteMutation.mutate(deletingGroup.id)}
+      />
     </div>
   );
 }
@@ -368,12 +341,7 @@ function GroupCard({
                     className="flex items-center justify-between p-2 rounded-lg bg-muted/50"
                   >
                     <div className="flex items-center gap-3">
-                      <Avatar className="h-8 w-8">
-                        <AvatarImage src={member.user.avatarUrl} />
-                        <AvatarFallback>
-                          {member.user.displayName.slice(0, 2).toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
+                      <UserAvatar user={member.user} size="md" />
                       <div>
                         <p className="text-sm font-medium">{member.user.displayName}</p>
                         <p className="text-xs text-muted-foreground">{member.user.email}</p>
@@ -421,12 +389,7 @@ function GroupCard({
                         {availableMembers.map((member) => (
                           <SelectItem key={member.id} value={member.id}>
                             <div className="flex items-center gap-2">
-                              <Avatar className="h-6 w-6">
-                                <AvatarImage src={member.avatarUrl} />
-                                <AvatarFallback>
-                                  {member.displayName.slice(0, 2).toUpperCase()}
-                                </AvatarFallback>
-                              </Avatar>
+                              <UserAvatar user={member} size="sm" />
                               <span>{member.displayName}</span>
                             </div>
                           </SelectItem>

@@ -1,20 +1,14 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import {
-  Video,
-  Calendar,
-  Grid,
-  ChevronLeft,
-  ChevronRight,
-  Play,
-  ArrowUpDown,
-} from 'lucide-react';
+import { Video, Calendar, Grid, Play, ArrowUpDown } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
+import { ErrorState } from '@/components/shared/ErrorState';
+import { EmptyState } from '@/components/shared/EmptyState';
+import { TimelineSection } from '@/components/media/TimelineSection';
+import { MediaLightbox } from '@/components/media/MediaLightbox';
 import {
   Select,
   SelectContent,
@@ -22,20 +16,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { videosApi, filesMediaApi, type Video as VideoType, type VideoTimelineGroup } from '@/api/media';
-import { cn, formatDate } from '@/lib/utils';
+import { videosApi, filesMediaApi, type Video as VideoType } from '@/api/media';
+import { cn, formatDate, formatFileSize } from '@/lib/utils';
 
 type ViewMode = 'grid' | 'timeline';
 type SortOption = 'date' | 'name' | 'size';
 type SortOrder = 'asc' | 'desc';
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
 
 export function VideosPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
@@ -45,13 +31,13 @@ export function VideosPage() {
   const [selectedMonth, setSelectedMonth] = useState<number | undefined>();
   const [previewVideo, setPreviewVideo] = useState<VideoType | null>(null);
 
-  const { data: videosData, isLoading: videosLoading } = useQuery({
+  const { data: videosData, isLoading: videosLoading, isError: videosError, error: videosErrorObj, refetch: refetchVideos } = useQuery({
     queryKey: ['videos', sort, order],
     queryFn: () => videosApi.list({ limit: 200, sort, order }),
     enabled: viewMode === 'grid',
   });
 
-  const { data: timelineData, isLoading: timelineLoading } = useQuery({
+  const { data: timelineData, isLoading: timelineLoading, isError: timelineError, error: timelineErrorObj, refetch: refetchTimeline } = useQuery({
     queryKey: ['videos-timeline', selectedYear, selectedMonth],
     queryFn: () => videosApi.getTimeline({ year: selectedYear, month: selectedMonth }),
     enabled: viewMode === 'timeline',
@@ -73,6 +59,13 @@ export function VideosPage() {
   const toggleOrder = () => {
     setOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
   };
+
+  // Lightbox navigation within the currently loaded video set
+  const previewIndex = previewVideo
+    ? videos.findIndex((v) => v.id === previewVideo.id)
+    : -1;
+  const hasPrev = previewIndex > 0;
+  const hasNext = previewIndex >= 0 && previewIndex < videos.length - 1;
 
   return (
     <div>
@@ -162,16 +155,18 @@ export function VideosPage() {
                 <Skeleton key={i} className="aspect-video" />
               ))}
             </div>
+          ) : videosError ? (
+            <ErrorState
+              title="Couldn't load videos"
+              error={videosErrorObj}
+              onRetry={refetchVideos}
+            />
           ) : videos.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Video className="mb-4 h-12 w-12 text-muted-foreground" />
-                <p className="text-lg font-medium">No videos yet</p>
-                <p className="text-sm text-muted-foreground">
-                  Upload some videos to get started
-                </p>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={<Video className="h-12 w-12" />}
+              title="No videos yet"
+              description="Upload some videos to get started"
+            />
           ) : (
             <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
               {videos.map((video) => (
@@ -200,33 +195,62 @@ export function VideosPage() {
                 </div>
               </div>
             ))
+          ) : timelineError ? (
+            <ErrorState
+              title="Couldn't load timeline"
+              error={timelineErrorObj}
+              onRetry={refetchTimeline}
+            />
           ) : timeline.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Calendar className="mb-4 h-12 w-12 text-muted-foreground" />
-                <p className="text-lg font-medium">No videos in timeline</p>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={<Calendar className="h-12 w-12" />}
+              title="No videos in timeline"
+            />
           ) : (
             timeline.map((group) => (
-              <TimelineGroupSection
+              <TimelineSection
                 key={group.date}
-                group={group}
-                onVideoClick={setPreviewVideo}
-              />
+                date={group.date}
+                count={group.count}
+                gridClassName="sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
+              >
+                {group.videos.map((video) => (
+                  <VideoThumbnail
+                    key={video.id}
+                    video={video}
+                    onClick={() => setPreviewVideo(video)}
+                  />
+                ))}
+              </TimelineSection>
             ))
           )}
         </div>
       )}
 
-      {/* Video Preview Modal */}
+      {/* Video Lightbox */}
       {previewVideo && (
-        <VideoPreviewModal
-          video={previewVideo}
-          videos={videos}
+        <MediaLightbox
+          title={previewVideo.filename}
           onClose={() => setPreviewVideo(null)}
-          onNavigate={setPreviewVideo}
-        />
+          onPrev={hasPrev ? () => setPreviewVideo(videos[previewIndex - 1]) : undefined}
+          onNext={hasNext ? () => setPreviewVideo(videos[previewIndex + 1]) : undefined}
+          info={
+            <div>
+              <p className="font-medium">{previewVideo.filename}</p>
+              <p className="text-sm text-white/70">
+                {formatDate(previewVideo.createdAt)} &middot;{' '}
+                {formatFileSize(previewVideo.sizeBytes)}
+              </p>
+            </div>
+          }
+        >
+          <video
+            src={filesMediaApi.getStreamUrl(previewVideo.id)}
+            className="max-h-[90vh] max-w-[90vw]"
+            controls
+            autoPlay
+          />
+        </MediaLightbox>
       )}
     </div>
   );
@@ -274,133 +298,7 @@ function VideoThumbnail({ video, onClick }: VideoThumbnailProps) {
       {/* Video info overlay */}
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-2">
         <p className="truncate text-xs text-white">{video.filename}</p>
-        <p className="text-xs text-white/70">{formatBytes(video.sizeBytes)}</p>
-      </div>
-    </div>
-  );
-}
-
-interface TimelineGroupSectionProps {
-  group: VideoTimelineGroup;
-  onVideoClick: (video: VideoType) => void;
-}
-
-function TimelineGroupSection({ group, onVideoClick }: TimelineGroupSectionProps) {
-  const date = new Date(group.date);
-  const formattedDate = date.toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
-
-  return (
-    <div>
-      <div className="mb-3 flex items-center gap-2">
-        <h3 className="text-lg font-semibold">{formattedDate}</h3>
-        <Badge variant="secondary">{group.count}</Badge>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-        {group.videos.map((video) => (
-          <VideoThumbnail
-            key={video.id}
-            video={video}
-            onClick={() => onVideoClick(video)}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-interface VideoPreviewModalProps {
-  video: VideoType;
-  videos: VideoType[];
-  onClose: () => void;
-  onNavigate: (video: VideoType) => void;
-}
-
-function VideoPreviewModal({ video, videos, onClose, onNavigate }: VideoPreviewModalProps) {
-  const currentIndex = videos.findIndex((v) => v.id === video.id);
-  const hasPrev = currentIndex > 0;
-  const hasNext = currentIndex < videos.length - 1;
-
-  const handlePrev = () => {
-    if (hasPrev) onNavigate(videos[currentIndex - 1]);
-  };
-
-  const handleNext = () => {
-    if (hasNext) onNavigate(videos[currentIndex + 1]);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') onClose();
-    if (e.key === 'ArrowLeft') handlePrev();
-    if (e.key === 'ArrowRight') handleNext();
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
-      onClick={onClose}
-      onKeyDown={handleKeyDown}
-      tabIndex={0}
-    >
-      {/* Close button */}
-      <button
-        className="absolute top-4 right-4 text-white hover:text-gray-300 z-10"
-        onClick={onClose}
-      >
-        <span className="sr-only">Close</span>
-        <svg className="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
-
-      {/* Navigation */}
-      {hasPrev && (
-        <button
-          className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70 z-10"
-          onClick={(e) => {
-            e.stopPropagation();
-            handlePrev();
-          }}
-        >
-          <ChevronLeft className="h-8 w-8" />
-        </button>
-      )}
-
-      {hasNext && (
-        <button
-          className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70 z-10"
-          onClick={(e) => {
-            e.stopPropagation();
-            handleNext();
-          }}
-        >
-          <ChevronRight className="h-8 w-8" />
-        </button>
-      )}
-
-      {/* Video player */}
-      <video
-        src={filesMediaApi.getStreamUrl(video.id)}
-        className="max-h-[90vh] max-w-[90vw]"
-        controls
-        autoPlay
-        onClick={(e) => e.stopPropagation()}
-      />
-
-      {/* Info bar */}
-      <div className="absolute bottom-0 left-0 right-0 bg-black/60 p-4 text-white">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="font-medium">{video.filename}</p>
-            <p className="text-sm text-gray-300">
-              {formatDate(video.createdAt)} &middot; {formatBytes(video.sizeBytes)}
-            </p>
-          </div>
-        </div>
+        <p className="text-xs text-white/70">{formatFileSize(video.sizeBytes)}</p>
       </div>
     </div>
   );

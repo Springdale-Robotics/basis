@@ -3,6 +3,8 @@ import { NotificationItem } from './NotificationItem';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { EmptyState } from '@/components/shared/EmptyState';
+import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { Bell, CheckCheck } from 'lucide-react';
 
 interface NotificationPanelProps {
@@ -34,15 +36,15 @@ export function NotificationPanel({ onClose }: NotificationPanelProps) {
       <ScrollArea className="h-80">
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            <LoadingSpinner />
           </div>
         ) : notifications.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-8 text-center">
-            <Bell className="h-10 w-10 text-muted-foreground/50" />
-            <p className="mt-2 text-sm text-muted-foreground">
-              No notifications yet
-            </p>
-          </div>
+          <EmptyState
+            size="sm"
+            icon={<Bell className="h-10 w-10" />}
+            title="No notifications yet"
+            className="py-8"
+          />
         ) : (
           <div className="divide-y">
             {notifications.map((notification) => (

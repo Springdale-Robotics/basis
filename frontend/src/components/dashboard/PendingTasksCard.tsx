@@ -12,20 +12,46 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { tasksApi } from '@/api/tasks';
+import { toast } from '@/hooks/useToast';
+import { getErrorMessage } from '@/lib/api-error';
 import { formatDate } from '@/lib/utils';
+import type { Task } from '@/types/models';
 
 export function PendingTasksCard() {
   const queryClient = useQueryClient();
 
-  const { data: tasksData, isLoading } = useQuery({
-    queryKey: ['tasks', 'pending'],
+  const pendingKey = ['tasks', 'pending'] as const;
+  const { data: tasksData, isLoading, isError, refetch } = useQuery({
+    queryKey: pendingKey,
     queryFn: () => tasksApi.list({ kind: 'task', status: 'pending', limit: 5 }),
   });
 
   const completeTaskMutation = useMutation({
     mutationFn: (taskId: string) => tasksApi.complete(taskId),
-    onSuccess: () => {
+    // Optimistic: drop the task from the pending list immediately so slow
+    // connections can't double-fire the checkbox.
+    onMutate: async (taskId) => {
+      await queryClient.cancelQueries({ queryKey: pendingKey });
+      const prev = queryClient.getQueryData<{ tasks: Task[] }>(pendingKey);
+      if (prev) {
+        queryClient.setQueryData(pendingKey, {
+          ...prev,
+          tasks: prev.tasks.filter((t) => t.id !== taskId),
+        });
+      }
+      return { prev };
+    },
+    onError: (e, _taskId, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(pendingKey, ctx.prev);
+      toast({
+        title: "Couldn't complete to-do",
+        description: getErrorMessage(e),
+        variant: 'destructive',
+      });
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
     },
   });
@@ -50,6 +76,8 @@ export function PendingTasksCard() {
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
           </div>
+        ) : isError ? (
+          <ErrorState title="Couldn't load to-dos" compact onRetry={refetch} />
         ) : !tasksData?.tasks?.length ? (
           <p className="text-sm text-muted-foreground">Nothing on the list — nice work!</p>
         ) : (
@@ -63,7 +91,6 @@ export function PendingTasksCard() {
                   <Checkbox
                     checked={false}
                     onCheckedChange={() => completeTaskMutation.mutate(task.id)}
-                    disabled={completeTaskMutation.isPending}
                     className="h-5 w-5"
                   />
                   <div>

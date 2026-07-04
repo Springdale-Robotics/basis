@@ -28,6 +28,8 @@ import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { getItemIcon } from '@/lib/inventory-constants';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
+import { getErrorMessage } from '@/lib/api-error';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { RecipeImageInput } from '@/components/recipes/RecipeImageInput';
 import type { RecipeImageChange } from '@/components/recipes/RecipeForm';
@@ -37,6 +39,7 @@ import { ShoppingCart } from 'lucide-react';
 import { recipesApi } from '@/api/recipes';
 import { inventoryApi } from '@/api/inventory';
 import { useState, useMemo } from 'react';
+import { useDirtyCloseGuard } from '@/hooks/useDirtyCloseGuard';
 import { toast } from '@/hooks/useToast';
 import { useRecipeWithIngredients } from '@/hooks/useRecipeWithIngredients';
 import {
@@ -107,7 +110,7 @@ export function RecipeDetailPage() {
   // Natural-language "quick add" ingredient line (Enter parses + adds a row).
   const [newIngredientLine, setNewIngredientLine] = useState('');
 
-  const { recipe, isLoading } = useRecipeWithIngredients(id);
+  const { recipe, isLoading, isError, error, refetch } = useRecipeWithIngredients(id);
 
   // Fetch stock data for ingredient availability
   const { data: stockData } = useQuery({
@@ -203,7 +206,7 @@ export function RecipeDetailPage() {
     onError: (error) => {
       toast({
         title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to save changes',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     },
@@ -240,7 +243,18 @@ export function RecipeDetailPage() {
       resetImageState();
     }
   };
-  const cancelEdit = () => resetEditState();
+  const isEditDirty = () =>
+    !!draft &&
+    !!recipe &&
+    (JSON.stringify(draft) !== JSON.stringify(makeDraft(recipe)) ||
+      pendingImageFile !== null ||
+      pendingImageUrl !== null ||
+      pendingImageFileId !== null ||
+      imageRemoved);
+  const { requestClose: cancelEdit, confirmDialog: cancelEditConfirm } = useDirtyCloseGuard({
+    isDirty: isEditDirty,
+    onDiscard: resetEditState,
+  });
   const saveEdit = () => { if (draft) inlineSaveMutation.mutate(draft); };
 
   const patchDraft = (patch: Partial<RecipeDraft>) => {
@@ -315,7 +329,7 @@ export function RecipeDetailPage() {
     onError: (error) => {
       toast({
         title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to add to shopping list',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     },
@@ -376,6 +390,16 @@ export function RecipeDetailPage() {
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-64 w-full" />
       </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <ErrorState
+        title="Couldn't load recipe"
+        error={error}
+        onRetry={refetch}
+      />
     );
   }
 
@@ -787,7 +811,7 @@ export function RecipeDetailPage() {
                           }}
                         />
                         {ing.inventoryItemId && (
-                          <span className="flex items-center gap-1 text-xs text-green-600 shrink-0">
+                          <span className="flex items-center gap-1 text-xs text-success shrink-0">
                             <Link2 className="h-3 w-3" />
                             {ing.linkedItemName || 'linked'}
                           </span>
@@ -821,7 +845,7 @@ export function RecipeDetailPage() {
                   return (
                   <li key={ingredient.id} className="flex items-center gap-2">
                     {hasItem !== null && (
-                      <span className={`h-2 w-2 rounded-full shrink-0 ${hasItem ? 'bg-green-500' : 'bg-red-500'}`} />
+                      <span className={`h-2 w-2 rounded-full shrink-0 ${hasItem ? 'bg-success' : 'bg-destructive'}`} />
                     )}
                     <span className="font-medium shrink-0">
                       {scaledAmount} {ingredient.unit}
@@ -931,6 +955,8 @@ export function RecipeDetailPage() {
           )}
         </div>
       </div>
+
+      {cancelEditConfirm}
 
       <ConfirmDialog
         open={deleteDialogOpen}

@@ -1,3 +1,4 @@
+import { DEFAULT_COLOR } from '@/components/calendar/calendar-utils';
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams, Link } from 'react-router-dom';
@@ -15,6 +16,7 @@ import {
   Palette,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import {
   Card,
   CardContent,
@@ -49,6 +51,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { COLOR_PALETTES, getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
 import { CalendarForm } from '@/components/calendar/CalendarForm';
 import { AppPasswordsCard } from '@/components/profile/AppPasswordsCard';
+import { FileSourcePicker } from '@/components/shared/FileSourcePicker';
 import { cn } from '@/lib/utils';
 
 const colorPaletteEntries = Object.entries(COLOR_PALETTES) as [ColorPalette, (typeof COLOR_PALETTES)[ColorPalette]][];
@@ -63,7 +66,7 @@ export function CalendarSettingsPage() {
     if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
       return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
     }
-    return calendar.color || '#4A90D9';
+    return calendar.color || DEFAULT_COLOR;
   };
 
   // Dialog states
@@ -72,9 +75,10 @@ export function CalendarSettingsPage() {
   const [selectedGoogleCalendar, setSelectedGoogleCalendar] = useState('');
   const [selectedOutlookCalendar, setSelectedOutlookCalendar] = useState('');
   const [calendarName, setCalendarName] = useState('');
-  const [calendarColor, setCalendarColor] = useState('#3B82F6');
+  const [calendarColor, setCalendarColor] = useState(DEFAULT_COLOR);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [importFilePickerOpen, setImportFilePickerOpen] = useState(false);
   const [importCalendarId, setImportCalendarId] = useState('');
   const [editingCalendar, setEditingCalendar] = useState<Calendar | null>(null);
 
@@ -277,7 +281,7 @@ export function CalendarSettingsPage() {
     setSelectedGoogleCalendar('');
     setSelectedOutlookCalendar('');
     setCalendarName('');
-    setCalendarColor('#3B82F6');
+    setCalendarColor(DEFAULT_COLOR);
   };
 
   const calendars = calendarsData?.calendars || [];
@@ -419,7 +423,7 @@ export function CalendarSettingsPage() {
         <CardContent>
           {loadingCalendars ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin" />
+              <LoadingSpinner size="lg" />
             </div>
           ) : syncedCalendars.length === 0 ? (
             <p className="text-muted-foreground text-sm">
@@ -627,7 +631,7 @@ export function CalendarSettingsPage() {
 
           {loadingGoogleCalendars ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin" />
+              <LoadingSpinner size="lg" />
             </div>
           ) : (
             <div className="space-y-4">
@@ -707,7 +711,7 @@ export function CalendarSettingsPage() {
 
           {loadingOutlookCalendars ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin" />
+              <LoadingSpinner size="lg" />
             </div>
           ) : (
             <div className="space-y-4">
@@ -771,6 +775,7 @@ export function CalendarSettingsPage() {
         setImportDialogOpen(open);
         if (!open) {
           setImportFile(null);
+          setImportFilePickerOpen(false);
           setImportCalendarId('');
         }
       }}>
@@ -807,10 +812,22 @@ export function CalendarSettingsPage() {
 
             <div className="space-y-2">
               <Label>ICS File</Label>
-              <Input
-                type="file"
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full justify-start font-normal"
+                onClick={() => setImportFilePickerOpen(true)}
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                {importFile ? importFile.name : 'Choose an ICS file...'}
+              </Button>
+              <FileSourcePicker
+                open={importFilePickerOpen}
+                onOpenChange={setImportFilePickerOpen}
+                onSelect={(files) => setImportFile(files[0] || null)}
                 accept=".ics,text/calendar"
-                onChange={(e) => setImportFile(e.target.files?.[0] || null)}
+                title="Add ICS file"
+                description="Import events from a calendar export."
               />
             </div>
           </div>
@@ -882,7 +899,7 @@ function SyncedCalendarItem({
       const lastSync = new Date(calendar.lastSyncAt);
       const hoursSince = (Date.now() - lastSync.getTime()) / (1000 * 60 * 60);
       if (hoursSince < 2) {
-        return <Badge variant="default" className="bg-green-500">Synced</Badge>;
+        return <Badge variant="default" className="bg-success text-success-foreground">Synced</Badge>;
       }
     }
     return <Badge variant="secondary">Pending</Badge>;
@@ -988,7 +1005,7 @@ function CalendarNameColorInputs({
           <Input
             value={color}
             onChange={(e) => onColorChange(e.target.value)}
-            placeholder="#3B82F6"
+            placeholder={DEFAULT_COLOR}
             className="flex-1"
           />
         </div>

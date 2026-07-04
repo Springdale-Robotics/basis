@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/authStore';
 import { settingsApi } from '@/api/settings';
 
-interface FeatureFlags {
+export interface FeatureFlags {
   calendar: boolean;
   recipes: boolean;
   inventory: boolean;

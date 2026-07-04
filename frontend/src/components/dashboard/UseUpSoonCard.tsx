@@ -4,11 +4,12 @@ import { Sparkles } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { inventoryApi } from '@/api/inventory';
 import { formatDate } from '@/lib/utils';
 
 export function UseUpSoonCard() {
-  const { data: expiringItems, isLoading } = useQuery({
+  const { data: expiringItems, isLoading, isError, refetch } = useQuery({
     queryKey: ['inventory', 'expiring'],
     queryFn: () => inventoryApi.getExpiringItems(7),
   });
@@ -25,6 +26,8 @@ export function UseUpSoonCard() {
             <Skeleton className="h-4 w-full" />
             <Skeleton className="h-4 w-3/4" />
           </div>
+        ) : isError ? (
+          <ErrorState title="Couldn't load expiring items" compact onRetry={refetch} />
         ) : !expiringItems?.expiring?.length ? (
           <p className="text-sm text-muted-foreground">Fridge looks happy — nothing to use up</p>
         ) : (

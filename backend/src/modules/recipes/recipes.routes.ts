@@ -34,7 +34,14 @@ import { parseRecipeFromUrl } from './url-parser.service.js';
 import { processRecipeImage, fetchImageFromUrl } from './recipe-image.service.js';
 import { convertWithDensity, normalizeUnit, type QuantityUnitSizes } from '../../lib/unit-conversions.js';
 import { matchSingleIngredient, matchIngredients } from './ingredient-matching.service.js';
-import { emitCookingDeduction } from '../../websocket/events.js';
+import {
+  emitCookingDeduction,
+  emitRecipeEvent,
+  emitRecipeDeleted,
+  emitMealPlanEvent,
+  emitShoppingListUpdate,
+  emitInventoryEvent,
+} from '../../websocket/events.js';
 
 const createRecipeSchema = z.object({
   title: z.string().min(1).max(255),
@@ -154,6 +161,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
 
       // No per-item permissions for recipes - feature-level only
 
+      emitRecipeEvent(request.user!.householdId, { recipeId: recipe.id, action: 'created' });
       return { success: true, data: { recipe } };
     }
   );
@@ -376,6 +384,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           )
         );
 
+      emitRecipeEvent(request.user!.householdId, { recipeId: request.params.id, action: 'updated' });
       return { success: true, data: { message: 'Ingredient linked' } };
     }
   );
@@ -458,6 +467,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      emitRecipeEvent(request.user!.householdId, { recipeId: updated.id, action: 'updated' });
       return { success: true, data: { recipe: updated } };
     }
   );
@@ -476,6 +486,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           )
         );
 
+      emitRecipeDeleted(request.user!.householdId, request.params.id);
       return { success: true, data: { message: 'Recipe deleted' } };
     }
   );
@@ -539,6 +550,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           .where(eq(recipes.id, request.params.id))
           .returning();
 
+        emitRecipeEvent(request.user!.householdId, { recipeId: request.params.id, action: 'updated' });
         return {
           success: true,
           data: {
@@ -613,6 +625,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           })
           .where(eq(recipes.id, request.params.id));
 
+        emitRecipeEvent(request.user!.householdId, { recipeId: request.params.id, action: 'updated' });
         return {
           success: true,
           data: {
@@ -654,6 +667,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.notFound('Recipe');
       }
 
+      emitRecipeEvent(request.user!.householdId, { recipeId: request.params.id, action: 'updated' });
       return { success: true, data: { message: 'Recipe image deleted' } };
     }
   );
@@ -871,7 +885,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           if (!item) continue;
 
           // Calculate quantity to deduct
-          let quantityToDeduct = adjustment?.actualQuantityUsed
+          const quantityToDeduct = adjustment?.actualQuantityUsed
             ?? (parseFloat(ingredient.quantity || '0') * servingsMultiplier);
 
           if (quantityToDeduct <= 0) continue;
@@ -978,6 +992,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           })),
           warnings: deductionWarnings.length > 0 ? deductionWarnings : undefined,
         });
+        emitInventoryEvent(request.user!.householdId, { action: 'quantity_changed' });
       }
 
       // Mark meal plan entry as cooked
@@ -991,6 +1006,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
               eq(mealPlans.householdId, request.user!.householdId)
             )
           );
+        emitMealPlanEvent(request.user!.householdId, { mealPlanId, action: 'cooked' });
       }
 
       return {
@@ -1272,6 +1288,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         overrides
       );
 
+      emitRecipeEvent(request.user!.householdId, { recipeId, action: 'created' });
       return { success: true, data: { recipeId } };
     }
   );
@@ -1403,6 +1420,9 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         recipeIds.push(recipeId);
       }
 
+      for (const recipeId of recipeIds) {
+        emitRecipeEvent(request.user!.householdId, { recipeId, action: 'created' });
+      }
       return { success: true, data: { recipeIds } };
     }
   );
@@ -1646,6 +1666,10 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      if (addedItems.length > 0 || mergedCount > 0) {
+        emitShoppingListUpdate(request.user!.householdId);
+      }
+
       return {
         success: true,
         data: {
@@ -1785,6 +1809,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         })
         .returning();
 
+      emitMealPlanEvent(request.user!.householdId, { mealPlanId: plan.id, action: 'created' });
       return { success: true, data: { mealPlan: plan } };
     }
   );
@@ -1817,6 +1842,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.notFound('Meal plan not found');
       }
 
+      emitMealPlanEvent(request.user!.householdId, { mealPlanId: updated.id, action: 'updated' });
       return { success: true, data: { mealPlan: updated } };
     }
   );
@@ -1834,6 +1860,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           )
         );
 
+      emitMealPlanEvent(request.user!.householdId, { mealPlanId: request.params.id, action: 'deleted' });
       return { success: true, data: { message: 'Meal plan removed' } };
     }
   );

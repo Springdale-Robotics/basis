@@ -117,7 +117,7 @@ export function parseCalendarFromText(rawText: string): ParsedCalendarContent {
     // If we found a date/time, this might be an event
     if (foundDate || foundTime || currentDate) {
       // Try to extract event title (everything before the date/time or after)
-      let title = extractEventTitle(trimmed);
+      const title = extractEventTitle(trimmed);
 
       if (title && title.length > 2) {
         const startTime = formatDateTime(foundDate || currentDate, foundTime);
@@ -296,7 +296,7 @@ function formatDateTime(date?: string, time?: string): string | undefined {
  */
 function extractEventTitle(line: string): string {
   // Remove date patterns
-  let title = line
+  const title = line
     .replace(/\d{4}-\d{2}-\d{2}/g, '')
     .replace(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g, '')
     .replace(/\d{1,2}:\d{2}\s*(am|pm)?/gi, '')

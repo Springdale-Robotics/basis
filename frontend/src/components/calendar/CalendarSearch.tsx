@@ -1,4 +1,5 @@
-import { useState, useCallback, useImperativeHandle, forwardRef } from 'react';
+import { DEFAULT_COLOR } from './calendar-utils';
+import { useState, useImperativeHandle, forwardRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import {
@@ -11,7 +12,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { SearchInput } from '@/components/shared/SearchInput';
 import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
@@ -67,32 +68,17 @@ export const CalendarSearch = forwardRef<CalendarSearchRef, CalendarSearchProps>
     open: () => setOpen(true),
   }));
 
-  // Debounced search
-  const [debouncedQuery, setDebouncedQuery] = useState('');
-  const debounceTimeout = useCallback(() => {
-    const timeout = setTimeout(() => {
-      setDebouncedQuery(query);
-    }, 300);
-    return () => clearTimeout(timeout);
-  }, [query]);
-
-  // Clear debounce on query change
-  useState(() => {
-    const cleanup = debounceTimeout();
-    return cleanup;
-  });
-
   const { data: searchResults, isLoading } = useQuery({
-    queryKey: ['events', 'search', debouncedQuery, selectedCalendarIds, startDate, endDate],
+    queryKey: ['events', 'search', query, selectedCalendarIds, startDate, endDate],
     queryFn: () =>
       calendarsApi.searchEvents({
-        q: debouncedQuery || undefined,
+        q: query || undefined,
         calendarIds: selectedCalendarIds.length > 0 ? selectedCalendarIds.join(',') : undefined,
         start: startDate?.toISOString(),
         end: endDate?.toISOString(),
         limit: 50,
       }),
-    enabled: open && (debouncedQuery.length >= 2 || selectedCalendarIds.length > 0 || !!startDate || !!endDate),
+    enabled: open && (query.length >= 2 || selectedCalendarIds.length > 0 || !!startDate || !!endDate),
   });
 
   const handleCalendarToggle = (calendarId: string, checked: boolean) => {
@@ -131,7 +117,7 @@ export const CalendarSearch = forwardRef<CalendarSearchRef, CalendarSearchProps>
     if (calendar?.colorIndex !== undefined && calendar.colorIndex >= 0) {
       return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
     }
-    return calendar?.color || '#4A90D9';
+    return calendar?.color || DEFAULT_COLOR;
   };
 
   // Helper for calendar objects
@@ -139,7 +125,7 @@ export const CalendarSearch = forwardRef<CalendarSearchRef, CalendarSearchProps>
     if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
       return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
     }
-    return calendar.color || '#4A90D9';
+    return calendar.color || DEFAULT_COLOR;
   };
 
   return (
@@ -150,7 +136,7 @@ export const CalendarSearch = forwardRef<CalendarSearchRef, CalendarSearchProps>
           Search Events
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl max-h-[80vh]">
+      <DialogContent className="sm:max-w-2xl max-h-[80vh]">
         <DialogHeader>
           <DialogTitle>Search Events</DialogTitle>
         </DialogHeader>
@@ -158,25 +144,12 @@ export const CalendarSearch = forwardRef<CalendarSearchRef, CalendarSearchProps>
         <div className="space-y-4">
           {/* Search input */}
           <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search by title, description, or location..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className="pl-9"
-              />
-              {query && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6"
-                  onClick={() => setQuery('')}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
-              )}
-            </div>
+            <SearchInput
+              placeholder="Search by title, description, or location..."
+              value={query}
+              onChange={setQuery}
+              className="flex-1"
+            />
             <Button
               variant={showFilters ? 'secondary' : 'outline'}
               size="icon"
@@ -337,7 +310,7 @@ export const CalendarSearch = forwardRef<CalendarSearchRef, CalendarSearchProps>
               <div className="flex items-center justify-center h-32">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
-            ) : !debouncedQuery && !hasActiveFilters ? (
+            ) : !query && !hasActiveFilters ? (
               <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
                 <Search className="h-8 w-8 mb-2 opacity-50" />
                 <p className="text-sm">Enter a search term or apply filters</p>

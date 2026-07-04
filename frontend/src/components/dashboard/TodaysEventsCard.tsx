@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Calendar } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/shared/ErrorState';
 import { calendarsApi } from '@/api/calendars';
 import { formatTime } from '@/lib/utils';
 
@@ -12,7 +13,7 @@ export function TodaysEventsCard() {
   const todayEnd = new Date();
   todayEnd.setHours(23, 59, 59, 999);
 
-  const { data: eventsData, isLoading: eventsLoading } = useQuery({
+  const { data: eventsData, isLoading: eventsLoading, isError, refetch } = useQuery({
     queryKey: ['events', 'today', todayStart.toISOString()],
     queryFn: () =>
       calendarsApi.getEvents({
@@ -42,6 +43,8 @@ export function TodaysEventsCard() {
             <Skeleton className="h-4 w-full" />
             <Skeleton className="h-4 w-3/4" />
           </div>
+        ) : isError ? (
+          <ErrorState title="Couldn't load events" compact onRetry={refetch} />
         ) : !eventsData?.events?.length ? (
           <p className="text-sm text-muted-foreground">Nothing on the calendar today</p>
         ) : (

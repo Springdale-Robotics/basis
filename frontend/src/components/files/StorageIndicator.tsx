@@ -1,23 +1,10 @@
-import { cn } from '@/lib/utils';
+import { cn, formatFileSize } from '@/lib/utils';
+import { getStorageMeterClass, getStorageMeterTextClass } from '@/lib/storage';
 import type { StorageUsage } from '@/api/files';
 
 interface StorageIndicatorProps {
   storage: StorageUsage;
   className?: string;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
-
-function getProgressColor(percent: number): string {
-  if (percent >= 95) return 'bg-red-500';
-  if (percent >= 80) return 'bg-yellow-500';
-  return 'bg-primary';
 }
 
 export function StorageIndicator({ storage, className }: StorageIndicatorProps) {
@@ -32,7 +19,7 @@ export function StorageIndicator({ storage, className }: StorageIndicatorProps) 
         <div
           className={cn(
             'h-full transition-all',
-            getProgressColor(percentUsed)
+            getStorageMeterClass(percentUsed)
           )}
           style={{ width: `${hasLimit ? cappedPercent : 0}%` }}
         />
@@ -40,16 +27,13 @@ export function StorageIndicator({ storage, className }: StorageIndicatorProps) 
 
       {/* Text label */}
       <span className="text-sm text-muted-foreground">
-        {formatBytes(usedBytes)}
+        {formatFileSize(usedBytes)}
         {hasLimit ? (
           <>
             {' / '}
-            {formatBytes(effectiveLimit)}
+            {formatFileSize(effectiveLimit)}
             {' '}
-            <span className={cn(
-              percentUsed >= 95 ? 'text-red-500' :
-              percentUsed >= 80 ? 'text-yellow-500' : ''
-            )}>
+            <span className={cn(getStorageMeterTextClass(percentUsed))}>
               ({Math.round(percentUsed)}%)
             </span>
           </>

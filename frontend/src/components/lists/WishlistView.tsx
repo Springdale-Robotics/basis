@@ -12,12 +12,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/shared/UserAvatar';
 import { householdsApi } from '@/api/households';
 import { useAuthStore } from '@/stores/authStore';
 import { useListMutations } from './useListMutations';
 import { ItemDetailSheet } from './ItemDetailSheet';
-import { cn } from '@/lib/utils';
+import { cn, hoverAction } from '@/lib/utils';
 import type { List, ListItem } from '@/types/models';
 
 interface WishlistViewProps {
@@ -108,7 +108,8 @@ export function WishlistView({ list, items }: WishlistViewProps) {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 opacity-0 group-hover:opacity-100"
+                    className={cn('h-7 w-7', hoverAction)}
+                    aria-label="Delete wish"
                     onClick={(e) => {
                       e.stopPropagation();
                       m.deleteItem.mutate(it.id);
@@ -141,12 +142,7 @@ export function WishlistView({ list, items }: WishlistViewProps) {
                   <div className="flex items-center justify-between gap-2 pt-1">
                     {claimer ? (
                       <div className="flex items-center gap-1.5 text-xs">
-                        <Avatar className="h-5 w-5">
-                          <AvatarImage src={claimer.avatarUrl} />
-                          <AvatarFallback className="text-[9px]">
-                            {claimer.displayName?.[0]?.toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
+                        <UserAvatar user={claimer} size="xs" />
                         <span>
                           {claimedByMe ? 'You claimed' : `${claimer.displayName} claimed`}
                         </span>

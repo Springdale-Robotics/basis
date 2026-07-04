@@ -1,81 +1,57 @@
-// Offline-aware wrapper around listsApi. Reads fall back to IndexedDB when
-// the network fails; writes are queued and replayed on reconnect.
+// Offline read path for the lists domain. Drop-in replacements for the
+// listsApi read calls: successful responses are snapshotted to IndexedDB;
+// when the fetch fails because we're offline, the snapshot is served
+// instead. Non-network errors (404, 403, ...) are rethrown so pages still
+// show their real error states, and an offline miss (no snapshot) also
+// rethrows so pages fall back to ErrorState.
 //
-// Conflict policy (decided in the plan):
-//   - Item content: last-write-wins (we replay our latest write).
-//   - Checked state: "any client's checked wins" — we never replay a server-
-//     newer uncheck, but we DO replay our local checks. Implemented by
-//     converting offline 'toggle' calls into explicit checked=true updates
-//     when the local snapshot says checked.
-import { listsApi } from '@/api/lists';
-import { offlineDb, type QueuedMutation } from './db';
-import { drainQueue } from './sync';
+// The write path lives in listsApiResilient.ts; useListMutations keeps the
+// snapshot in sync when offline writes are patched into the query cache.
+import { listsApi, type ListQuery } from '@/api/lists';
+import { offlineDb } from './db';
+import { isNetworkError } from './listsApiResilient';
 import type { List, ListItem } from '@/types/models';
 
-function rid() {
-  return `mut-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-async function enqueue(
-  kind: QueuedMutation['kind'],
-  payload: Record<string, unknown>,
-  listId?: string,
-) {
-  await offlineDb.queue.push({
-    id: rid(),
-    enqueuedAt: Date.now(),
-    listId,
-    kind,
-    payload,
-  });
-  if (navigator.onLine) void drainQueue();
-}
-
 export const listsOffline = {
-  async getList(id: string): Promise<{ list: List; items: ListItem[] } | null> {
+  /** listsApi.get with an IndexedDB fallback while offline. */
+  async getList(id: string): Promise<{ list: List; items: ListItem[] }> {
     try {
       const res = await listsApi.get(id);
-      await offlineDb.putList(id, {
-        list: res.list,
-        items: res.items,
-        cachedAt: Date.now(),
-      });
+      offlineDb
+        .putList(id, { list: res.list, items: res.items, cachedAt: Date.now() })
+        .catch(() => {
+          /* snapshot is best-effort */
+        });
       return res;
-    } catch (_err) {
+    } catch (err) {
+      if (!isNetworkError(err)) throw err;
       const cached = await offlineDb.getList(id);
       if (cached) return { list: cached.list, items: cached.items };
-      return null;
-    }
-  },
-
-  async listAll(): Promise<{ lists: List[] }> {
-    try {
-      const res = await listsApi.list({});
-      await offlineDb.putAllListsIndex(res.lists);
-      return res;
-    } catch (_err) {
-      const cached = await offlineDb.getAllListsIndex();
-      return { lists: cached };
+      throw err;
     }
   },
 
   /**
-   * Optimistic local mutation that updates the cached list + items, then
-   * enqueues for replay. Used by ChecklistView etc. via useListMutations.
+   * listsApi.list with an IndexedDB fallback while offline. Only the default
+   * view (active lists, no search/template/archive filters) is snapshotted
+   * and served offline — filtered views rethrow so the page shows its error
+   * state rather than wrong results.
    */
-  async mutateItem(
-    listId: string,
-    itemId: string,
-    patch: Partial<ListItem>,
-    kind: QueuedMutation['kind'] = 'updateItem',
-  ) {
-    const cached = await offlineDb.getList(listId);
-    if (cached) {
-      cached.items = cached.items.map((i) =>
-        i.id === itemId ? { ...i, ...patch, updatedAt: new Date().toISOString() } : i,
-      );
-      await offlineDb.putList(listId, cached);
+  async list(q: ListQuery = {}): Promise<{ lists: List[] }> {
+    const isDefaultView = !q.search && !q.onlyTemplates && !q.includeArchived;
+    try {
+      const res = await listsApi.list(q);
+      if (isDefaultView) {
+        offlineDb.putAllListsIndex(res.lists).catch(() => {
+          /* snapshot is best-effort */
+        });
+      }
+      return res;
+    } catch (err) {
+      if (!isNetworkError(err) || !isDefaultView) throw err;
+      const cached = await offlineDb.getAllListsIndex();
+      if (cached.length > 0) return { lists: cached };
+      throw err;
     }
-    await enqueue(kind, { listId, itemId, data: patch }, listId);
   },
 };

@@ -16,6 +16,7 @@ import {
   reconcileItem,
   markOutOfStock,
 } from '../../services/inventory-confidence.service.js';
+import { emitInventoryEvent, emitShoppingListUpdate } from '../../websocket/events.js';
 
 /**
  * Calculate total stock quantity for an item, converting all stock entries to the target unit.
@@ -329,6 +330,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         })
         .returning();
 
+      emitInventoryEvent(request.user!.householdId, { areaId: area.id, action: 'created' });
       return { success: true, data: { area } };
     }
   );
@@ -352,6 +354,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
       if (!updated) throw Errors.notFound('Area');
 
+      emitInventoryEvent(request.user!.householdId, { areaId: updated.id, action: 'updated' });
       return { success: true, data: { area: updated } };
     }
   );
@@ -369,6 +372,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           )
         );
 
+      emitInventoryEvent(request.user!.householdId, { areaId: request.params.id, action: 'deleted' });
       return { success: true, data: { message: 'Area deleted' } };
     }
   );
@@ -390,6 +394,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           .where(eq(inventoryAreas.id, item.id));
       }
 
+      emitInventoryEvent(request.user!.householdId, { action: 'updated' });
       return { success: true, data: { message: 'Areas reordered' } };
     }
   );
@@ -462,6 +467,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         })
         .returning();
 
+      emitInventoryEvent(request.user!.householdId, { itemId: item.id, action: 'created' });
       return { success: true, data: { item } };
     }
   );
@@ -535,6 +541,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
       if (!updated) throw Errors.notFound('Item');
 
+      emitInventoryEvent(request.user!.householdId, { itemId: updated.id, action: 'updated' });
       return { success: true, data: { item: updated } };
     }
   );
@@ -595,6 +602,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         .where(eq(inventoryItems.id, request.params.id))
         .returning();
 
+      emitInventoryEvent(request.user!.householdId, { itemId: request.params.id, action: 'updated' });
       return { success: true, data: { item: updated } };
     }
   );
@@ -668,6 +676,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           )
         );
 
+      emitInventoryEvent(request.user!.householdId, { itemId: request.params.id, action: 'deleted' });
       return { success: true, data: { message: 'Item deleted' } };
     }
   );
@@ -694,6 +703,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         })
         .returning();
 
+      emitInventoryEvent(request.user!.householdId, { itemId: item.id, action: 'created' });
       return { success: true, data: { item } };
     }
   );
@@ -742,6 +752,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         createdItems.push(item);
       }
 
+      emitInventoryEvent(request.user!.householdId, { action: 'created' });
       return { success: true, data: { items: createdItems } };
     }
   );
@@ -781,6 +792,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      emitInventoryEvent(request.user!.householdId, { action: 'deleted' });
       return { success: true, data: { message: `${input.itemIds.length} items processed` } };
     }
   );
@@ -852,6 +864,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      emitInventoryEvent(request.user!.householdId, { action: 'updated' });
       return { success: true, data: { items: updatedItems } };
     }
   );
@@ -897,6 +910,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         })
         .returning();
 
+      emitInventoryEvent(request.user!.householdId, { itemId: input.itemId, action: 'quantity_changed' });
       return { success: true, data: { stock } };
     }
   );
@@ -930,6 +944,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
       if (!updated) throw Errors.notFound('Stock entry');
 
+      emitInventoryEvent(request.user!.householdId, { itemId: updated.itemId ?? undefined, action: 'quantity_changed' });
       return { success: true, data: { stock: updated } };
     }
   );
@@ -952,6 +967,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           )
         );
 
+      emitInventoryEvent(request.user!.householdId, { action: 'quantity_changed' });
       return { success: true, data: { message: 'Stock entry deleted' } };
     }
   );
@@ -1147,6 +1163,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         })
         .returning();
 
+      emitShoppingListUpdate(request.user!.householdId);
       return { success: true, data: { item } };
     }
   );
@@ -1209,6 +1226,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         .where(eq(shoppingList.id, request.params.id))
         .returning();
 
+      emitShoppingListUpdate(request.user!.householdId);
       return { success: true, data: { item: updated } };
     }
   );
@@ -1244,6 +1262,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           .set({ isChecked: false, updatedAt: new Date() })
           .where(eq(shoppingList.id, request.params.id))
           .returning();
+        emitShoppingListUpdate(request.user!.householdId);
         return { success: true, data: { item: updated, remainderItem: null, conversion: null } };
       }
 
@@ -1359,6 +1378,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         .where(eq(shoppingList.id, request.params.id))
         .returning();
 
+      emitShoppingListUpdate(request.user!.householdId);
       return { success: true, data: { item: updated, remainderItem, conversion } };
     }
   );
@@ -1417,6 +1437,8 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         .delete(shoppingList)
         .where(eq(shoppingList.id, request.params.id));
 
+      emitShoppingListUpdate(request.user!.householdId);
+      emitInventoryEvent(request.user!.householdId, { itemId: item.itemId, action: 'quantity_changed' });
       return { success: true, data: { message: 'Moved to inventory' } };
     }
   );
@@ -1434,6 +1456,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           )
         );
 
+      emitShoppingListUpdate(request.user!.householdId);
       return { success: true, data: { message: 'Item removed' } };
     }
   );
@@ -1451,6 +1474,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           )
         );
 
+      emitShoppingListUpdate(request.user!.householdId);
       return { success: true, data: { message: 'Checked items cleared' } };
     }
   );
@@ -1509,6 +1533,11 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         await db.delete(shoppingList).where(eq(shoppingList.id, item.id));
 
         movedCount++;
+      }
+
+      if (movedCount > 0) {
+        emitShoppingListUpdate(request.user!.householdId);
+        emitInventoryEvent(request.user!.householdId, { action: 'quantity_changed' });
       }
 
       return {
@@ -1624,6 +1653,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         })
         .returning();
 
+      emitInventoryEvent(request.user!.householdId, { action: 'created' });
       return { success: true, data: { leftover } };
     }
   );
@@ -1660,6 +1690,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
       if (!updated) throw Errors.notFound('Leftover');
 
+      emitInventoryEvent(request.user!.householdId, { action: 'updated' });
       return { success: true, data: { leftover: updated } };
     }
   );
@@ -1678,6 +1709,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           )
         );
 
+      emitInventoryEvent(request.user!.householdId, { action: 'deleted' });
       return { success: true, data: { message: 'Leftover deleted' } };
     }
   );
@@ -1700,6 +1732,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
 
       if (!updated) throw Errors.notFound('Leftover');
 
+      emitInventoryEvent(request.user!.householdId, { action: 'updated' });
       return { success: true, data: { leftover: updated } };
     }
   );
@@ -1743,6 +1776,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
       });
       const { quantity, unit } = schema.parse(request.body);
       const plan = await depleteTranches(request.params.id, quantity, unit);
+      emitInventoryEvent(request.user!.householdId, { itemId: request.params.id, action: 'quantity_changed' });
       return { success: true, data: plan };
     }
   );
@@ -1759,6 +1793,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
       });
       const { quantity, unit, areaId } = schema.parse(request.body);
       await reconcileItem(request.params.id, quantity, unit, areaId, request.user!.id);
+      emitInventoryEvent(request.user!.householdId, { itemId: request.params.id, action: 'quantity_changed' });
       return { success: true, data: { message: 'Item reconciled' } };
     }
   );
@@ -1795,6 +1830,10 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      emitInventoryEvent(request.user!.householdId, { itemId: request.params.id, action: 'quantity_changed' });
+      if (body.addToShoppingList) {
+        emitShoppingListUpdate(request.user!.householdId);
+      }
       return { success: true, data: { message: 'Item marked out of stock' } };
     }
   );

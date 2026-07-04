@@ -1,9 +1,8 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { Plus, Trash2, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import {
   Dialog,
   DialogContent,
@@ -15,8 +14,8 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { UnitCombobox, CategoryCombobox, AreaCombobox } from '@/components/inventory/fields';
 import type { StorageArea } from '@/types/models';
-import { categoryOptions, unitOptions } from '@/lib/inventory-constants';
 
 export interface BulkAddItem {
   id: string;
@@ -51,27 +50,6 @@ export function BulkAddDialog({
   const [defaultCategory, setDefaultCategory] = useState('');
   const [defaultUnit, setDefaultUnit] = useState('pieces');
   const [defaultAreaId, setDefaultAreaId] = useState('');
-
-  // Memoize combobox options
-  const categoryComboboxOptions: ComboboxOption[] = useMemo(
-    () => categoryOptions.map((cat) => ({ value: cat, label: cat })),
-    []
-  );
-
-  const unitComboboxOptions: ComboboxOption[] = useMemo(
-    () => unitOptions.map((u) => ({ value: u, label: u })),
-    []
-  );
-
-  const areaComboboxOptions: ComboboxOption[] = useMemo(
-    () =>
-      areas.map((area) => ({
-        value: area.id,
-        label: area.name,
-        icon: <span>{area.icon}</span>,
-      })),
-    [areas]
-  );
 
   const handleAddRow = useCallback(() => {
     setItems((prev) => [
@@ -163,7 +141,7 @@ export function BulkAddDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[800px] max-h-[90vh] flex flex-col">
+      <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Bulk Add Items</DialogTitle>
           <DialogDescription>
@@ -195,37 +173,29 @@ export function BulkAddDialog({
               <div className="grid grid-cols-3 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Category</Label>
-                  <Combobox
-                    options={categoryComboboxOptions}
+                  <CategoryCombobox
                     value={defaultCategory}
                     onValueChange={setDefaultCategory}
                     placeholder="Category"
-                    searchPlaceholder="Search..."
-                    emptyText="Not found"
                     allowClear
                     clearLabel="None"
                   />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Unit</Label>
-                  <Combobox
-                    options={unitComboboxOptions}
+                  <UnitCombobox
                     value={defaultUnit}
                     onValueChange={(v) => setDefaultUnit(v || 'pieces')}
                     placeholder="Unit"
-                    searchPlaceholder="Search..."
-                    emptyText="Not found"
                   />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Storage Area</Label>
-                  <Combobox
-                    options={areaComboboxOptions}
+                  <AreaCombobox
+                    areas={areas}
                     value={defaultAreaId}
                     onValueChange={setDefaultAreaId}
                     placeholder="Area"
-                    searchPlaceholder="Search..."
-                    emptyText="Not found"
                     allowClear
                     clearLabel="None"
                   />
@@ -261,35 +231,27 @@ export function BulkAddDialog({
                         }}
                       />
                       <div className="w-[140px]">
-                        <Combobox
-                          options={categoryComboboxOptions}
+                        <CategoryCombobox
                           value={item.category}
                           onValueChange={(v) => handleItemChange(item.id, 'category', v)}
                           placeholder="Category"
-                          searchPlaceholder="Search..."
-                          emptyText="Not found"
                           allowClear
                           clearLabel="None"
                         />
                       </div>
                       <div className="w-[100px]">
-                        <Combobox
-                          options={unitComboboxOptions}
+                        <UnitCombobox
                           value={item.unit}
                           onValueChange={(v) => handleItemChange(item.id, 'unit', v || 'pieces')}
                           placeholder="Unit"
-                          searchPlaceholder="Search..."
-                          emptyText="Not found"
                         />
                       </div>
                       <div className="w-[140px]">
-                        <Combobox
-                          options={areaComboboxOptions}
+                        <AreaCombobox
+                          areas={areas}
                           value={item.defaultAreaId}
                           onValueChange={(v) => handleItemChange(item.id, 'defaultAreaId', v)}
                           placeholder="Area"
-                          searchPlaceholder="Search..."
-                          emptyText="Not found"
                           allowClear
                           clearLabel="None"
                         />
@@ -329,37 +291,29 @@ export function BulkAddDialog({
               <div className="grid grid-cols-3 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Category</Label>
-                  <Combobox
-                    options={categoryComboboxOptions}
+                  <CategoryCombobox
                     value={defaultCategory}
                     onValueChange={setDefaultCategory}
                     placeholder="Category"
-                    searchPlaceholder="Search..."
-                    emptyText="Not found"
                     allowClear
                     clearLabel="None"
                   />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Unit</Label>
-                  <Combobox
-                    options={unitComboboxOptions}
+                  <UnitCombobox
                     value={defaultUnit}
                     onValueChange={(v) => setDefaultUnit(v || 'pieces')}
                     placeholder="Unit"
-                    searchPlaceholder="Search..."
-                    emptyText="Not found"
                   />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Storage Area</Label>
-                  <Combobox
-                    options={areaComboboxOptions}
+                  <AreaCombobox
+                    areas={areas}
                     value={defaultAreaId}
                     onValueChange={setDefaultAreaId}
                     placeholder="Area"
-                    searchPlaceholder="Search..."
-                    emptyText="Not found"
                     allowClear
                     clearLabel="None"
                   />

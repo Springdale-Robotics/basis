@@ -175,7 +175,7 @@ export function NaturalIngredientInput({
       {inventoryItemId ? (
         <Popover>
           <PopoverTrigger asChild>
-            <button type="button" className="text-green-600 hover:text-green-700 transition-colors shrink-0">
+            <button type="button" className="text-success hover:text-success/80 transition-colors shrink-0">
               <Link2 className="h-3.5 w-3.5" />
             </button>
           </PopoverTrigger>

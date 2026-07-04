@@ -3,13 +3,33 @@
 // listsApi exactly so callers don't need to branch on online/offline.
 import { listsApi, type CreateListItemRequest, type UpdateListItemRequest, type ReorderItemsRequest } from '@/api/lists';
 import { offlineDb, type QueuedMutation } from './db';
-import { drainQueue } from './sync';
+import { announceQueueSize, drainQueue } from './sync';
 import type { List, ListItem } from '@/types/models';
 
-function isNetworkError(err: unknown): boolean {
+export function isNetworkError(err: unknown): boolean {
   if (!navigator.onLine) return true;
   const msg = err instanceof Error ? err.message : String(err);
   return /NetworkError|Failed to fetch|TypeError/i.test(msg);
+}
+
+/**
+ * Marker for responses that were NOT accepted by the server but queued for
+ * replay instead. Callers (useListMutations) use this to write the ghost
+ * result straight into the React Query cache rather than refetching — a
+ * refetch would fail (or return pre-mutation data) while we're offline.
+ */
+export type QueuedOffline<T extends object> = T & { offline: true };
+
+function markOffline<T extends object>(res: T): QueuedOffline<T> {
+  return { ...res, offline: true };
+}
+
+export function isQueuedOffline(res: unknown): boolean {
+  return (
+    typeof res === 'object' &&
+    res !== null &&
+    (res as { offline?: boolean }).offline === true
+  );
 }
 
 async function enqueue(
@@ -24,6 +44,7 @@ async function enqueue(
     kind,
     payload,
   });
+  void announceQueueSize();
   if (navigator.onLine) void drainQueue();
 }
 
@@ -60,7 +81,7 @@ export const resilientListsApi = {
     } catch (err) {
       if (!isNetworkError(err)) throw err;
       await enqueue('addItem', { listId, data }, listId);
-      return { item: ghostItem(listId, data) };
+      return markOffline({ item: ghostItem(listId, data) });
     }
   },
   async bulkCreateItems(listId: string, items: CreateListItemRequest[]) {
@@ -69,7 +90,7 @@ export const resilientListsApi = {
     } catch (err) {
       if (!isNetworkError(err)) throw err;
       await enqueue('bulkAdd', { listId, items }, listId);
-      return { items: items.map((i) => ghostItem(listId, i)) };
+      return markOffline({ items: items.map((i) => ghostItem(listId, i)) });
     }
   },
   async updateItem(listId: string, itemId: string, data: UpdateListItemRequest) {
@@ -78,8 +99,8 @@ export const resilientListsApi = {
     } catch (err) {
       if (!isNetworkError(err)) throw err;
       await enqueue('updateItem', { listId, itemId, data }, listId);
-      // Return shape compatible with online — caller invalidates cache anyway.
-      return { item: { id: itemId, ...data } as unknown as ListItem };
+      // Partial shape — callers patch the cache from their own variables.
+      return markOffline({ item: { id: itemId, ...data } as unknown as ListItem });
     }
   },
   async deleteItem(listId: string, itemId: string) {
@@ -88,7 +109,7 @@ export const resilientListsApi = {
     } catch (err) {
       if (!isNetworkError(err)) throw err;
       await enqueue('deleteItem', { listId, itemId }, listId);
-      return { message: 'Queued' };
+      return markOffline({ message: 'Queued' });
     }
   },
   async toggleItem(listId: string, itemId: string) {
@@ -97,7 +118,7 @@ export const resilientListsApi = {
     } catch (err) {
       if (!isNetworkError(err)) throw err;
       await enqueue('toggleItem', { listId, itemId }, listId);
-      return { item: { id: itemId } as unknown as ListItem };
+      return markOffline({ item: { id: itemId } as unknown as ListItem });
     }
   },
   async claimItem(listId: string, itemId: string) {
@@ -106,7 +127,7 @@ export const resilientListsApi = {
     } catch (err) {
       if (!isNetworkError(err)) throw err;
       await enqueue('claimItem', { listId, itemId }, listId);
-      return { item: { id: itemId } as unknown as ListItem };
+      return markOffline({ item: { id: itemId } as unknown as ListItem });
     }
   },
   async reorderItems(listId: string, data: ReorderItemsRequest) {
@@ -115,7 +136,7 @@ export const resilientListsApi = {
     } catch (err) {
       if (!isNetworkError(err)) throw err;
       await enqueue('reorder', { listId, order: data.order }, listId);
-      return { message: 'Queued' };
+      return markOffline({ message: 'Queued' });
     }
   },
   async clearCheckedItems(listId: string) {
@@ -124,7 +145,7 @@ export const resilientListsApi = {
     } catch (err) {
       if (!isNetworkError(err)) throw err;
       await enqueue('clearChecked', { listId }, listId);
-      return { message: 'Queued' };
+      return markOffline({ message: 'Queued' });
     }
   },
   async create(data: Parameters<typeof listsApi.create>[0]) {
@@ -149,7 +170,7 @@ export const resilientListsApi = {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      return { list };
+      return markOffline({ list });
     }
   },
   async update(id: string, data: Parameters<typeof listsApi.update>[1]) {
@@ -158,7 +179,7 @@ export const resilientListsApi = {
     } catch (err) {
       if (!isNetworkError(err)) throw err;
       await enqueue('updateList', { id, data }, id);
-      return { list: { id, ...data } as unknown as List };
+      return markOffline({ list: { id, ...data } as unknown as List });
     }
   },
   async delete(id: string) {
@@ -167,7 +188,7 @@ export const resilientListsApi = {
     } catch (err) {
       if (!isNetworkError(err)) throw err;
       await enqueue('deleteList', { id }, id);
-      return { message: 'Queued' };
+      return markOffline({ message: 'Queued' });
     }
   },
 };

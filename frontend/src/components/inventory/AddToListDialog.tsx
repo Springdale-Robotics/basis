@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Plus, Search, Package } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { Plus, Package } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,10 +15,10 @@ import {
 } from '@/components/ui/dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { UnitCombobox, CategoryCombobox, AreaCombobox } from '@/components/inventory/fields';
+import { SearchInput } from '@/components/shared/SearchInput';
 import { inventoryApi } from '@/api/inventory';
 import type { StorageArea, InventoryItem } from '@/types/models';
-import { categoryOptions, unitOptions } from '@/lib/inventory-constants';
 import { lookupDensity } from '@/lib/ingredient-densities';
 
 interface AddToListDialogProps {
@@ -70,6 +70,19 @@ export function AddToListDialog({
   // New item form state
   const [newItem, setNewItem] = useState<NewItemForm>(defaultNewItemForm);
 
+  // Reset all transient state whenever the dialog reopens so a previous add's
+  // mode/search/quantity/unit don't leak into the next one.
+  useEffect(() => {
+    if (open) {
+      setMode('select');
+      setSearch('');
+      setSelectedItemId(null);
+      setQuantity('1');
+      setUnit('');
+      setNewItem(defaultNewItemForm);
+    }
+  }, [open]);
+
   const filteredItems = useMemo(() => {
     if (!search) return inventoryItems;
     const searchLower = search.toLowerCase();
@@ -83,26 +96,6 @@ export function AddToListDialog({
   const selectedItem = useMemo(
     () => inventoryItems.find((item) => item.id === selectedItemId),
     [inventoryItems, selectedItemId]
-  );
-
-  const areaOptions: ComboboxOption[] = useMemo(
-    () =>
-      areas.map((area) => ({
-        value: area.id,
-        label: area.name,
-        icon: <span>{area.icon}</span>,
-      })),
-    [areas]
-  );
-
-  const categoryComboboxOptions: ComboboxOption[] = useMemo(
-    () => categoryOptions.map((cat) => ({ value: cat, label: cat })),
-    []
-  );
-
-  const unitComboboxOptions: ComboboxOption[] = useMemo(
-    () => unitOptions.map((u) => ({ value: u, label: u })),
-    []
   );
 
   // Auto-suggest density for new items
@@ -162,6 +155,16 @@ export function AddToListDialog({
     }
   };
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSubmitting) return;
+    if (mode === 'select') {
+      handleAddToList();
+    } else {
+      handleCreateAndAdd();
+    }
+  };
+
   const handleAddToList = () => {
     if (!selectedItemId) return;
     addToListMutation.mutate({
@@ -177,12 +180,6 @@ export function AddToListDialog({
   };
 
   const handleClose = () => {
-    setMode('select');
-    setSearch('');
-    setSelectedItemId(null);
-    setQuantity('1');
-    setUnit('');
-    setNewItem(defaultNewItemForm);
     onOpenChange(false);
   };
 
@@ -199,7 +196,7 @@ export function AddToListDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px] max-h-[85vh] flex flex-col">
+      <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Plus className="h-5 w-5" />
@@ -212,18 +209,15 @@ export function AddToListDialog({
           </DialogDescription>
         </DialogHeader>
 
+        <form onSubmit={handleSubmit} className="contents">
         {mode === 'select' ? (
           <>
             {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search items..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
+            <SearchInput
+              placeholder="Search items..."
+              value={search}
+              onChange={setSearch}
+            />
 
             {/* Item list */}
             <div className="flex-1 min-h-0 max-h-[250px] overflow-y-auto border rounded-lg">
@@ -233,7 +227,12 @@ export function AddToListDialog({
                   <p className="text-sm text-muted-foreground mb-3">
                     {search ? `No items matching "${search}"` : 'No items in catalog'}
                   </p>
-                  <Button variant="outline" size="sm" onClick={handleSwitchToCreate}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSwitchToCreate}
+                  >
                     <Plus className="h-4 w-4 mr-1" />
                     Create "{search || 'new item'}"
                   </Button>
@@ -294,6 +293,7 @@ export function AddToListDialog({
             {/* Create new option */}
             {filteredItems.length > 0 && (
               <Button
+                type="button"
                 variant="ghost"
                 className="text-muted-foreground"
                 onClick={handleSwitchToCreate}
@@ -317,45 +317,29 @@ export function AddToListDialog({
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Category</Label>
-                <Combobox
-                  options={categoryComboboxOptions}
-                  value={newItem.category}
-                  onValueChange={(v) => updateNewItem({ category: v })}
-                  placeholder="Select category"
-                  searchPlaceholder="Search..."
-                  emptyText="No category found"
-                  allowClear
-                  clearLabel="No category"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Unit</Label>
-                <Combobox
-                  options={unitComboboxOptions}
-                  value={newItem.unit}
-                  onValueChange={(v) => updateNewItem({ unit: v || 'pieces' })}
-                  placeholder="Select unit"
-                  searchPlaceholder="Search..."
-                  emptyText="No unit found"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Default Storage Area</Label>
-              <Combobox
-                options={areaOptions}
-                value={newItem.defaultAreaId}
-                onValueChange={(v) => updateNewItem({ defaultAreaId: v })}
-                placeholder="Select storage area"
-                searchPlaceholder="Search areas..."
-                emptyText="No area found"
+              <CategoryCombobox
+                label="Category"
+                value={newItem.category}
+                onValueChange={(v) => updateNewItem({ category: v })}
                 allowClear
-                clearLabel="No default area"
+                clearLabel="No category"
+              />
+              <UnitCombobox
+                label="Unit"
+                value={newItem.unit}
+                onValueChange={(v) => updateNewItem({ unit: v || 'pieces' })}
               />
             </div>
+
+            <AreaCombobox
+              label="Default Storage Area"
+              areas={areas}
+              value={newItem.defaultAreaId}
+              onValueChange={(v) => updateNewItem({ defaultAreaId: v })}
+              placeholder="Select storage area"
+              allowClear
+              clearLabel="No default area"
+            />
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
@@ -456,6 +440,7 @@ export function AddToListDialog({
             </div>
 
             <Button
+              type="button"
               variant="ghost"
               className="text-muted-foreground"
               onClick={() => setMode('select')}
@@ -466,25 +451,26 @@ export function AddToListDialog({
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose}>
+          <Button type="button" variant="outline" onClick={handleClose}>
             Cancel
           </Button>
           {mode === 'select' ? (
             <Button
-              onClick={handleAddToList}
+              type="submit"
               disabled={!selectedItemId || isSubmitting}
             >
               Add to List
             </Button>
           ) : (
             <Button
-              onClick={handleCreateAndAdd}
+              type="submit"
               disabled={!newItem.name.trim() || isSubmitting}
             >
               Create & Add to List
             </Button>
           )}
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

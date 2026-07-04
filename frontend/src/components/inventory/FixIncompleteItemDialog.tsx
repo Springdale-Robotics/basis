@@ -3,7 +3,6 @@ import { Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import {
   Dialog,
   DialogContent,
@@ -12,7 +11,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { categoryOptions, unitOptions } from '@/lib/inventory-constants';
+import { UnitCombobox, CategoryCombobox, AreaCombobox } from '@/components/inventory/fields';
 import type { InventoryItem, StorageArea } from '@/types/models';
 
 interface FixIncompleteItemDialogProps {
@@ -92,27 +91,6 @@ export function FixIncompleteItemDialog({
     }
   }, [open, remainingCount, isSubmitting, onOpenChange]);
 
-  // Combobox options
-  const categoryComboboxOptions: ComboboxOption[] = useMemo(
-    () => categoryOptions.map((cat) => ({ value: cat, label: cat })),
-    []
-  );
-
-  const unitComboboxOptions: ComboboxOption[] = useMemo(
-    () => unitOptions.map((u) => ({ value: u, label: u })),
-    []
-  );
-
-  const areaComboboxOptions: ComboboxOption[] = useMemo(
-    () =>
-      areas.map((area) => ({
-        value: area.id,
-        label: area.name,
-        icon: <span>{area.icon}</span>,
-      })),
-    [areas]
-  );
-
   const handleSaveAndNext = async () => {
     if (!currentItem) return;
 
@@ -168,10 +146,10 @@ export function FixIncompleteItemDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[450px]">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <AlertCircle className="h-5 w-5 text-amber-500" />
+            <AlertCircle className="h-5 w-5 text-warning" />
             Fix Incomplete Items
           </DialogTitle>
           <DialogDescription>
@@ -190,45 +168,29 @@ export function FixIncompleteItemDialog({
 
           {/* Only show missing fields */}
           {missingFields.category && (
-            <div className="space-y-2">
-              <Label>Category</Label>
-              <Combobox
-                options={categoryComboboxOptions}
-                value={category}
-                onValueChange={(value) => setCategory(value)}
-                placeholder="Select category"
-                searchPlaceholder="Search categories..."
-                emptyText="No category found."
-              />
-            </div>
+            <CategoryCombobox
+              label="Category"
+              value={category}
+              onValueChange={(value) => setCategory(value)}
+            />
           )}
 
           {missingFields.defaultUnit && (
-            <div className="space-y-2">
-              <Label>Default Unit</Label>
-              <Combobox
-                options={unitComboboxOptions}
-                value={defaultUnit}
-                onValueChange={(value) => setDefaultUnit(value || '')}
-                placeholder="Select unit"
-                searchPlaceholder="Search units..."
-                emptyText="No unit found."
-              />
-            </div>
+            <UnitCombobox
+              label="Default Unit"
+              value={defaultUnit}
+              onValueChange={(value) => setDefaultUnit(value || '')}
+            />
           )}
 
           {missingFields.defaultAreaId && (
-            <div className="space-y-2">
-              <Label>Default Storage Area</Label>
-              <Combobox
-                options={areaComboboxOptions}
-                value={defaultAreaId}
-                onValueChange={(value) => setDefaultAreaId(value || '')}
-                placeholder="Select storage area"
-                searchPlaceholder="Search areas..."
-                emptyText="No area found."
-              />
-            </div>
+            <AreaCombobox
+              label="Default Storage Area"
+              areas={areas}
+              value={defaultAreaId}
+              onValueChange={(value) => setDefaultAreaId(value || '')}
+              placeholder="Select storage area"
+            />
           )}
 
           {missingFields.minStockQuantity && (

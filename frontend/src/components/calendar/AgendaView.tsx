@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { format } from 'date-fns';
+import { CalendarDays } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { EmptyState } from '@/components/shared/EmptyState';
 import { resolveEventColor, isSameDay, startOfDay } from './calendar-utils';
 import type { CalendarEvent, Calendar as CalendarType } from '@/types/models';
 
@@ -51,8 +53,11 @@ export function AgendaView({
 
   if (grouped.length === 0) {
     return (
-      <div className="rounded-xl bg-card border border-border p-12 text-center text-muted-foreground">
-        No events in this period
+      <div className="rounded-xl bg-card border border-border">
+        <EmptyState
+          icon={<CalendarDays className="h-10 w-10" />}
+          title="No events in this period"
+        />
       </div>
     );
   }
