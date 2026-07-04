@@ -1,5 +1,6 @@
 import { resolve } from 'path';
 import { promises as fs } from 'fs';
+import { config } from '../../config/index.js';
 
 /**
  * Allowlisted "guided install" commands.
@@ -261,6 +262,10 @@ export async function buildArgv(id: string): Promise<[string, ...string[]]> {
   const cmd = COMMANDS.find((c) => c.id === id);
   if (!cmd) throw new Error(`Unknown installer: ${id}`);
 
+  if (id === 'shell-bash' && !config.ENABLE_ADMIN_TERMINAL) {
+    throw new Error('The admin terminal is disabled (ENABLE_ADMIN_TERMINAL=false)');
+  }
+
   if (id === 'install-cloudflared') {
     await ensureBinDir();
     const asset = cloudflaredAsset(process.platform, process.arch);
@@ -294,7 +299,9 @@ echo "Installed cloudflared to ${target}"
 }
 
 export function listAvailableInstallers(): Array<{ id: string; description: string }> {
-  return COMMANDS.map(({ id, description }) => ({ id, description }));
+  return COMMANDS.filter(
+    (c) => c.id !== 'shell-bash' || config.ENABLE_ADMIN_TERMINAL
+  ).map(({ id, description }) => ({ id, description }));
 }
 
 export async function runPostCheck(id: string): Promise<boolean | undefined> {
