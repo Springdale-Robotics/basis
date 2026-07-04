@@ -31,6 +31,7 @@ import { useCategories } from '@/hooks/useCategories';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { getItemIcon } from '@/lib/inventory-constants';
+import { FileSourcePicker } from '@/components/shared/FileSourcePicker';
 
 type ImportStep = 'source' | 'review' | 'ingredients' | 'quick-catalog' | 'confirm';
 
@@ -126,6 +127,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
   const [imageProcessing, setImageProcessing] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [imageRawText, setImageRawText] = useState<string | null>(null);
+  const [imagePickerOpen, setImagePickerOpen] = useState(false);
   const [pdfFileName, setPdfFileName] = useState<string | null>(null);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [pdfError, setPdfError] = useState<string | null>(null);
@@ -365,6 +367,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     setImageProcessing(false);
     setImageError(null);
     setImageRawText(null);
+    setImagePickerOpen(false);
     setPdfFileName(null);
     setPdfBase64(null);
     setPdfError(null);
@@ -841,13 +844,19 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                     ) : (
                       <div className="space-y-2">
                         <Label>Upload one or more recipe photos</Label>
-                        <Input
-                          type="file"
-                          accept="image/jpeg,image/png,image/gif,image/webp,image/heic"
-                          multiple
-                          onChange={(e) => {
-                            const files = Array.from(e.target.files ?? []);
-                            e.target.value = '';
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full"
+                          onClick={() => setImagePickerOpen(true)}
+                        >
+                          <Camera className="mr-2 h-4 w-4" />
+                          Choose photos
+                        </Button>
+                        <FileSourcePicker
+                          open={imagePickerOpen}
+                          onOpenChange={setImagePickerOpen}
+                          onSelect={(files) => {
                             if (files.length === 0) return;
                             if (files.length > 1) {
                               enterBatchMode(files);
@@ -855,6 +864,10 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                             }
                             handleImageUpload(files[0]);
                           }}
+                          accept="image/jpeg,image/png,image/gif,image/webp,image/heic"
+                          multiple
+                          title="Add recipe photos"
+                          description="Pick one photo for a single recipe, or several to import them all."
                         />
                         <p className="text-xs text-muted-foreground">
                           {true

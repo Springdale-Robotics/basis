@@ -49,6 +49,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { COLOR_PALETTES, getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
 import { CalendarForm } from '@/components/calendar/CalendarForm';
 import { AppPasswordsCard } from '@/components/profile/AppPasswordsCard';
+import { FileSourcePicker } from '@/components/shared/FileSourcePicker';
 import { cn } from '@/lib/utils';
 
 const colorPaletteEntries = Object.entries(COLOR_PALETTES) as [ColorPalette, (typeof COLOR_PALETTES)[ColorPalette]][];
@@ -75,6 +76,7 @@ export function CalendarSettingsPage() {
   const [calendarColor, setCalendarColor] = useState('#3B82F6');
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [importFilePickerOpen, setImportFilePickerOpen] = useState(false);
   const [importCalendarId, setImportCalendarId] = useState('');
   const [editingCalendar, setEditingCalendar] = useState<Calendar | null>(null);
 
@@ -771,6 +773,7 @@ export function CalendarSettingsPage() {
         setImportDialogOpen(open);
         if (!open) {
           setImportFile(null);
+          setImportFilePickerOpen(false);
           setImportCalendarId('');
         }
       }}>
@@ -807,10 +810,22 @@ export function CalendarSettingsPage() {
 
             <div className="space-y-2">
               <Label>ICS File</Label>
-              <Input
-                type="file"
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full justify-start font-normal"
+                onClick={() => setImportFilePickerOpen(true)}
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                {importFile ? importFile.name : 'Choose an ICS file...'}
+              </Button>
+              <FileSourcePicker
+                open={importFilePickerOpen}
+                onOpenChange={setImportFilePickerOpen}
+                onSelect={(files) => setImportFile(files[0] || null)}
                 accept=".ics,text/calendar"
-                onChange={(e) => setImportFile(e.target.files?.[0] || null)}
+                title="Add ICS file"
+                description="Import events from a calendar export."
               />
             </div>
           </div>

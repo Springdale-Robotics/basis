@@ -64,7 +64,7 @@ export const filesApi = {
     apiPut<{ message: string }>(`/files/${id}/move`, { targetFolderId }),
 
   // Download streams file directly - use window.open or fetch blob
-  getDownloadUrl: (id: string) => `/api/files/${id}/download`,
+  getDownloadUrl: (id: string) => `/api/v1/files/${id}/download`,
 
   // Folders
   getFolders: () =>
