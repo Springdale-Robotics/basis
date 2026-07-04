@@ -1,5 +1,19 @@
 import { db } from '../config/database.js';
-import { permissions, groupMembers, users, groups, featurePermissions, files, folders } from '../db/schema/index.js';
+import {
+  permissions,
+  groupMembers,
+  users,
+  groups,
+  featurePermissions,
+  files,
+  folders,
+  recipes,
+  tasks,
+  lists,
+  calendars,
+  inventoryAreas,
+  albums,
+} from '../db/schema/index.js';
 import { eq, and, or, inArray, sql } from 'drizzle-orm';
 import type { PermissionLevel, ResourceType, UserRole, GranteeType, Feature } from '../lib/validators.js';
 
@@ -197,6 +211,70 @@ async function getUserGroupIds(userId: string): Promise<string[]> {
 }
 
 /**
+ * Resolve the owning household of a resource, or undefined for resource types
+ * that are not household-scoped (page, feature), or null when the resource
+ * cannot be found.
+ */
+async function getResourceHouseholdId(
+  resourceType: ResourceType,
+  resourceId: string
+): Promise<string | null | undefined> {
+  switch (resourceType) {
+    case 'recipe': {
+      const [r] = await db.select({ h: recipes.householdId }).from(recipes).where(eq(recipes.id, resourceId)).limit(1);
+      return r ? r.h : null;
+    }
+    case 'task': {
+      const [r] = await db.select({ h: tasks.householdId }).from(tasks).where(eq(tasks.id, resourceId)).limit(1);
+      return r ? r.h : null;
+    }
+    case 'list': {
+      const [r] = await db.select({ h: lists.householdId }).from(lists).where(eq(lists.id, resourceId)).limit(1);
+      return r ? r.h : null;
+    }
+    case 'calendar': {
+      const [r] = await db.select({ h: calendars.householdId }).from(calendars).where(eq(calendars.id, resourceId)).limit(1);
+      return r ? r.h : null;
+    }
+    case 'inventory_area': {
+      const [r] = await db.select({ h: inventoryAreas.householdId }).from(inventoryAreas).where(eq(inventoryAreas.id, resourceId)).limit(1);
+      return r ? r.h : null;
+    }
+    case 'album': {
+      const [r] = await db.select({ h: albums.householdId }).from(albums).where(eq(albums.id, resourceId)).limit(1);
+      return r ? r.h : null;
+    }
+    case 'file': {
+      // A "file" resource id may reference either a file or a folder.
+      const [f] = await db.select({ h: files.householdId }).from(files).where(eq(files.id, resourceId)).limit(1);
+      if (f) return f.h;
+      const [fo] = await db.select({ h: folders.householdId }).from(folders).where(eq(folders.id, resourceId)).limit(1);
+      return fo ? fo.h : null;
+    }
+    default:
+      // 'page', 'feature' and any future non-scoped types.
+      return undefined;
+  }
+}
+
+/**
+ * Cross-household isolation guard. Returns false only when the resource
+ * positively belongs to a different household; unknown/not-found resources and
+ * non-scoped resource types pass through so existing not-found handling applies.
+ */
+async function resourceInSameHousehold(
+  context: PermissionContext,
+  resourceType: ResourceType,
+  resourceId: string
+): Promise<boolean> {
+  const householdId = await getResourceHouseholdId(resourceType, resourceId);
+  if (householdId === undefined || householdId === null) {
+    return true;
+  }
+  return householdId === context.householdId;
+}
+
+/**
  * Check if a user has the required permission level for a resource.
  * Returns true if access is granted, false otherwise.
  */
@@ -206,11 +284,12 @@ export async function canAccess(
   resourceId: string,
   requiredLevel: PermissionLevel
 ): Promise<boolean> {
-  // Admins always have full access
+  // Admins have full access, but only within their own household.
   if (context.userRole === 'admin') {
-    return true;
+    return resourceInSameHousehold(context, resourceType, resourceId);
   }
 
+  // getAccessLevel enforces the same-household check for non-admins.
   const accessLevel = await getAccessLevel(context, resourceType, resourceId);
   if (accessLevel === null) {
     return false;
@@ -228,7 +307,12 @@ export async function getAccessLevel(
   resourceType: ResourceType,
   resourceId: string
 ): Promise<PermissionLevel | null> {
-  // Admins always have admin access
+  // A resource owned by another household is never accessible, regardless of role.
+  if (!(await resourceInSameHousehold(context, resourceType, resourceId))) {
+    return null;
+  }
+
+  // Admins always have admin access (within their household, checked above)
   if (context.userRole === 'admin') {
     return 'admin';
   }
@@ -350,11 +434,11 @@ export async function isOwner(
     return false;
   }
 
-  const result = await db.execute(
+  // postgres-js returns the rows directly as an array-like result.
+  const rows = (await db.execute(
     sql`SELECT created_by FROM ${sql.identifier(tableName)} WHERE id = ${resourceId} LIMIT 1`
-  );
+  )) as unknown as Array<{ created_by: string }>;
 
-  const rows = result.rows as Array<{ created_by: string }>;
   return rows.length > 0 && rows[0].created_by === userId;
 }
 

@@ -4,6 +4,7 @@ import { AuthProvider } from './providers/AuthProvider';
 import { ThemeProvider } from './providers/ThemeProvider';
 import { WebSocketProvider } from './providers/WebSocketProvider';
 import { Toaster } from './components/ui/toaster';
+import { ErrorBoundary } from './components/shared/ErrorBoundary';
 
 import { AppShell } from './components/layout/AppShell';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
@@ -46,6 +47,7 @@ export function App() {
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <AuthProvider>
             <WebSocketProvider>
+              <ErrorBoundary>
               <Routes>
                 {/* Public routes */}
                 <Route path="/login" element={<LoginPage />} />
@@ -109,6 +111,7 @@ export function App() {
                 {/* Catch-all */}
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>
+              </ErrorBoundary>
               <Toaster />
             </WebSocketProvider>
           </AuthProvider>

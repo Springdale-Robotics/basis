@@ -1526,7 +1526,10 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
       const { force } = z.object({ force: z.boolean().default(false) }).parse(request.query);
 
       const folder = await db.query.folders.findFirst({
-        where: eq(folders.id, request.params.id),
+        where: and(
+          eq(folders.id, request.params.id),
+          eq(folders.householdId, request.user!.householdId)
+        ),
       });
 
       if (!folder) throw Errors.notFound('Folder');
@@ -1646,7 +1649,14 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
     '/albums/:id',
     { preHandler: [authMiddleware, requireMember()] },
     async (request) => {
-      await db.delete(albums).where(eq(albums.id, request.params.id));
+      await db
+        .delete(albums)
+        .where(
+          and(
+            eq(albums.id, request.params.id),
+            eq(albums.householdId, request.user!.householdId)
+          )
+        );
 
       return { success: true, data: { message: 'Album deleted' } };
     }
@@ -1713,7 +1723,14 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
     '/playlists/:id',
     { preHandler: [authMiddleware, requireMember()] },
     async (request) => {
-      await db.delete(playlists).where(eq(playlists.id, request.params.id));
+      await db
+        .delete(playlists)
+        .where(
+          and(
+            eq(playlists.id, request.params.id),
+            eq(playlists.householdId, request.user!.householdId)
+          )
+        );
 
       return { success: true, data: { message: 'Playlist deleted' } };
     }

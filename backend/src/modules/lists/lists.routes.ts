@@ -478,7 +478,10 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
     { preHandler: [authMiddleware, requireListAccess('edit')] },
     async (request) => {
       const item = await db.query.listItems.findFirst({
-        where: eq(listItems.id, request.params.itemId),
+        where: and(
+          eq(listItems.id, request.params.itemId),
+          eq(listItems.listId, request.params.id),
+        ),
       });
       if (!item) throw Errors.notFound('List item');
 
@@ -489,7 +492,12 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
           checkedAt: !item.isChecked ? new Date() : null,
           updatedAt: new Date(),
         })
-        .where(eq(listItems.id, request.params.itemId))
+        .where(
+          and(
+            eq(listItems.id, request.params.itemId),
+            eq(listItems.listId, request.params.id),
+          ),
+        )
         .returning();
 
       return { success: true, data: { item: updated } };
@@ -559,7 +567,12 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
         await db
           .update(listItems)
           .set({ sortOrder: item.sortOrder })
-          .where(eq(listItems.id, item.id));
+          .where(
+            and(
+              eq(listItems.id, item.id),
+              eq(listItems.listId, request.params.id),
+            ),
+          );
       }
 
       return { success: true, data: { message: 'Items reordered' } };

@@ -445,7 +445,14 @@ export async function photosRoutes(app: FastifyInstance): Promise<void> {
     '/smart-albums/:id',
     { preHandler: [authMiddleware, requireMember()] },
     async (request) => {
-      await db.delete(smartAlbums).where(eq(smartAlbums.id, request.params.id));
+      await db
+        .delete(smartAlbums)
+        .where(
+          and(
+            eq(smartAlbums.id, request.params.id),
+            eq(smartAlbums.householdId, request.user!.householdId)
+          )
+        );
 
       return { success: true, data: { message: 'Smart album deleted' } };
     }

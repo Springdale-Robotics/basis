@@ -1,6 +1,7 @@
 import { Job } from 'bullmq';
 import { db } from '../config/database.js';
 import { notifications } from '../db/schema/index.js';
+import type { NotificationData } from '../db/schema/notifications.js';
 import { emitNotification } from '../websocket/events.js';
 import { logger } from '../lib/logger.js';
 import type { NotificationJobData } from './index.js';
@@ -12,7 +13,8 @@ export async function processNotificationJob(job: Job<NotificationJobData>): Pro
   log.debug('Processing notification job');
 
   try {
-    // Create notification in database
+    // Create notification in database. The queue payload calls the text
+    // "message"; the column is "body".
     const [notification] = await db
       .insert(notifications)
       .values({
@@ -20,19 +22,19 @@ export async function processNotificationJob(job: Job<NotificationJobData>): Pro
         userId: userId || null,
         type: mapNotificationType(type),
         title,
-        message,
-        data: data || {},
+        body: message,
+        data: (data as NotificationData) || {},
       })
       .returning();
 
-    // Emit real-time notification
+    // Emit real-time notification (shape matches the REST list payload)
     emitNotification(householdId, userId || null, {
       notificationId: notification.id,
       notification: {
         id: notification.id,
         type: notification.type,
         title: notification.title,
-        message: notification.message,
+        body: notification.body,
         data: notification.data,
         createdAt: notification.createdAt,
       },
@@ -45,18 +47,20 @@ export async function processNotificationJob(job: Job<NotificationJobData>): Pro
   }
 }
 
-function mapNotificationType(type: NotificationJobData['type']): string {
+type NotificationTypeValue = (typeof notifications.type.enumValues)[number];
+
+// The queue's notification types line up with the DB enum one-to-one, except
+// the queue's catch-all "custom", which maps to the enum's "general".
+function mapNotificationType(type: NotificationJobData['type']): NotificationTypeValue {
   switch (type) {
     case 'low_stock':
-      return 'inventory_low_stock';
     case 'expiring_soon':
-      return 'inventory_expiring';
+    case 'leftover_expiring':
     case 'task_due':
-      return 'task_due';
     case 'sync_error':
-      return 'sync_error';
+      return type;
     case 'custom':
     default:
-      return 'info';
+      return 'general';
   }
 }

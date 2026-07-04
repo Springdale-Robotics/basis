@@ -6,6 +6,7 @@ import { authApi, type LoginRequest } from '@/api/auth';
 import { householdsApi } from '@/api/households';
 import { setupApi } from '@/api/setup';
 import { ApiError } from '@/lib/api-error';
+import { setUnauthorizedHandler } from '@/api/client';
 import type { User, Household } from '@/types/models';
 
 interface AuthContextType {
@@ -70,6 +71,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
       navigate('/login', { replace: true });
     },
   });
+
+  // Global 401 handling: if an established session expires mid-use, tear it
+  // down and send the user to login instead of leaving them in a shell whose
+  // every request silently fails. Guarded on isAuthenticated so pre-login
+  // probes (which legitimately 401) don't trigger a redirect.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      if (!useAuthStore.getState().isAuthenticated) return;
+      clearAuth();
+      queryClient.clear();
+      navigate('/login', { replace: true });
+    });
+    return () => setUnauthorizedHandler(null);
+  }, [clearAuth, queryClient, navigate]);
 
   // Handle auth state from query
   const isSetupComplete = setupStatus?.isSetupComplete ?? false;

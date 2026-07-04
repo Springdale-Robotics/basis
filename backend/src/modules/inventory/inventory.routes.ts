@@ -863,8 +863,14 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     '/stock',
     { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async (request) => {
-      // Get all stock with item and area info
+      // Get all stock with item and area info, scoped to this household's items.
+      const householdItemIds = db
+        .select({ id: inventoryItems.id })
+        .from(inventoryItems)
+        .where(eq(inventoryItems.householdId, request.user!.householdId));
+
       const stock = await db.query.inventoryStock.findMany({
+        where: inArray(inventoryStock.itemId, householdItemIds),
         with: {
           item: true,
           area: true,
@@ -902,6 +908,11 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     async (request) => {
       const input = addStockSchema.partial().parse(request.body);
 
+      const householdItemIds = db
+        .select({ id: inventoryItems.id })
+        .from(inventoryItems)
+        .where(eq(inventoryItems.householdId, request.user!.householdId));
+
       const [updated] = await db
         .update(inventoryStock)
         .set({
@@ -910,7 +921,12 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           expiryDate: input.expiryDate?.toISOString().split('T')[0],
           updatedAt: new Date(),
         })
-        .where(eq(inventoryStock.id, request.params.id))
+        .where(
+          and(
+            eq(inventoryStock.id, request.params.id),
+            inArray(inventoryStock.itemId, householdItemIds)
+          )
+        )
         .returning();
 
       if (!updated) throw Errors.notFound('Stock entry');
@@ -923,7 +939,19 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     '/stock/:id',
     { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
-      await db.delete(inventoryStock).where(eq(inventoryStock.id, request.params.id));
+      const householdItemIds = db
+        .select({ id: inventoryItems.id })
+        .from(inventoryItems)
+        .where(eq(inventoryItems.householdId, request.user!.householdId));
+
+      await db
+        .delete(inventoryStock)
+        .where(
+          and(
+            eq(inventoryStock.id, request.params.id),
+            inArray(inventoryStock.itemId, householdItemIds)
+          )
+        );
 
       return { success: true, data: { message: 'Stock entry deleted' } };
     }
@@ -1354,7 +1382,10 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         .parse(request.body);
 
       const item = await db.query.shoppingList.findFirst({
-        where: eq(shoppingList.id, request.params.id),
+        where: and(
+          eq(shoppingList.id, request.params.id),
+          eq(shoppingList.householdId, request.user!.householdId)
+        ),
       });
 
       if (!item || !item.itemId) {

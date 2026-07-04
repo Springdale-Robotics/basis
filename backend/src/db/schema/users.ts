@@ -15,7 +15,9 @@ export const users = pgTable('users', {
   householdId: uuid('household_id')
     .notNull()
     .references(() => households.id, { onDelete: 'cascade' }),
-  email: varchar('email', { length: 255 }).notNull(),
+  // Email is globally unique: login resolves a user by email alone (no
+  // household context), so the same address cannot belong to two users.
+  email: varchar('email', { length: 255 }).notNull().unique(),
   passwordHash: text('password_hash').notNull(),
   displayName: varchar('display_name', { length: 255 }).notNull(),
   role: userRoleEnum('role').notNull().default('member'),

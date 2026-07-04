@@ -1,10 +1,9 @@
 import { Job } from 'bullmq';
 import { db } from '../config/database.js';
-import { sessions, notifications, auditLogs, files, leftovers } from '../db/schema/index.js';
+import { sessions, notifications, auditLog, leftovers } from '../db/schema/index.js';
 import { lt, and, isNotNull } from 'drizzle-orm';
 import { redis } from '../config/redis.js';
 import { logger } from '../lib/logger.js';
-import { config } from '../config/index.js';
 import * as fs from 'fs/promises';
 import type { CleanupJobData } from './index.js';
 
@@ -43,18 +42,13 @@ export async function processCleanupJob(job: Job<CleanupJobData>): Promise<void>
 async function cleanupExpiredSessions(): Promise<void> {
   const now = new Date();
 
-  // Delete expired sessions from database
+  // Delete expired sessions from database. Sessions are validated directly
+  // against this table on each request (no Redis session cache exists), so
+  // removing the rows is sufficient.
   const result = await db
     .delete(sessions)
     .where(lt(sessions.expiresAt, now))
-    .returning({ id: sessions.id, token: sessions.token });
-
-  // Also clean up Redis session cache
-  const pipeline = redis.pipeline();
-  for (const session of result) {
-    pipeline.del(`session:${session.token}`);
-  }
-  await pipeline.exec();
+    .returning({ id: sessions.id });
 
   logger.info({ count: result.length }, 'Cleaned up expired sessions');
 }
@@ -96,9 +90,9 @@ async function cleanupOldAuditLogs(): Promise<void> {
   cutoff.setFullYear(cutoff.getFullYear() - 1);
 
   const result = await db
-    .delete(auditLogs)
-    .where(lt(auditLogs.createdAt, cutoff))
-    .returning({ id: auditLogs.id });
+    .delete(auditLog)
+    .where(lt(auditLog.createdAt, cutoff))
+    .returning({ id: auditLog.id });
 
   logger.info({ count: result.length }, 'Cleaned up old audit logs');
 }
@@ -132,7 +126,6 @@ async function cleanupOrphanedFiles(householdId?: string): Promise<void> {
     columns: { id: true, storagePath: true },
   });
 
-  const dbPaths = new Set(dbFiles.map((f) => f.storagePath));
   let orphanedCount = 0;
 
   // Check each file's existence
