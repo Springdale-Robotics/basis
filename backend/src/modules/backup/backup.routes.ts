@@ -9,7 +9,7 @@ import { config } from '../../config/index.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import { encrypt, decrypt } from '../../lib/encryption.js';
+import { encrypt } from '../../lib/encryption.js';
 
 const createBackupSchema = z.object({
   name: z.string().min(1).max(255).optional(),
@@ -23,10 +23,6 @@ const createScheduleSchema = z.object({
   retentionDays: z.number().int().min(1).max(365).default(30),
   includeFiles: z.boolean().default(true),
   isEnabled: z.boolean().default(true),
-});
-
-const restoreBackupSchema = z.object({
-  encryptionKey: z.string().min(16).optional(),
 });
 
 export async function backupRoutes(app: FastifyInstance): Promise<void> {
@@ -173,8 +169,6 @@ export async function backupRoutes(app: FastifyInstance): Promise<void> {
     '/:id/restore',
     { preHandler: [authMiddleware, requireAdmin()] },
     async (request) => {
-      const input = restoreBackupSchema.parse(request.body);
-
       const backup = await db.query.backups.findFirst({
         where: and(
           eq(backups.id, request.params.id),
@@ -184,37 +178,13 @@ export async function backupRoutes(app: FastifyInstance): Promise<void> {
 
       if (!backup) throw Errors.notFound('Backup');
 
-      // Read backup file
-      const fileContent = await fs.readFile(backup.storagePath, 'utf-8');
-      let backupData: any;
-
-      const parsed = JSON.parse(fileContent);
-
-      if (parsed.encrypted) {
-        if (!input.encryptionKey) {
-          throw Errors.validation('Encryption key required for encrypted backup');
-        }
-        const decrypted = await decrypt(parsed.data, input.encryptionKey);
-        backupData = JSON.parse(decrypted);
-      } else {
-        backupData = parsed;
-      }
-
-      // Restore data (in a real implementation, this would restore all tables)
-      // For now, we'll just validate the backup structure
-      if (!backupData.version || !backupData.householdId) {
-        throw Errors.validation('Invalid backup format');
-      }
-
-      // TODO: Implement actual restore logic with transaction
-
-      return {
-        success: true,
-        data: {
-          message: 'Backup restore initiated',
-          tables: Object.keys(backupData.data || {}),
-        },
-      };
+      // This JSON backup format is not restorable. A previous implementation
+      // returned success here without restoring anything, which is dangerous.
+      // The supported, tested backup + restore path is the full-database
+      // pg_dump under /api/v1/system/backups.
+      throw Errors.validation(
+        'Restore is not supported for this backup format. Use System Backups (a full database dump/restore) instead.'
+      );
     }
   );
 

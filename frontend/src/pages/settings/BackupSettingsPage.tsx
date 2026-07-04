@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Archive, Download, Loader2, Plus, Trash2, Info, UploadCloud } from 'lucide-react';
+import { Archive, Download, Loader2, Plus, Trash2, Info, RotateCcw } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,6 +35,7 @@ function formatBytes(bytes: number): string {
 export function BackupSettingsPage() {
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['system', 'backups'],
@@ -68,6 +69,21 @@ export function BackupSettingsPage() {
     onError: (err) =>
       toast({
         title: 'Delete failed',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      }),
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: settingsApi.restoreSystemBackup,
+    onSuccess: (res) => {
+      toast({ title: 'Database restored', description: res.message });
+      // Everything may have changed under us; refetch all server state.
+      queryClient.invalidateQueries();
+    },
+    onError: (err) =>
+      toast({
+        title: 'Restore failed',
         description: getErrorMessage(err),
         variant: 'destructive',
       }),
@@ -166,6 +182,48 @@ export function BackupSettingsPage() {
                       </a>
                     </Button>
                     <AlertDialog
+                      open={restoreTarget === b.filename}
+                      onOpenChange={(open) => setRestoreTarget(open ? b.filename : null)}
+                    >
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Restore"
+                          disabled={restoreMutation.isPending}
+                        >
+                          {restoreMutation.isPending && restoreTarget === b.filename ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RotateCcw className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Restore this backup?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            This replaces <strong>all current data</strong> with the
+                            contents of <code>{b.filename}</code>. Anything created
+                            since this backup was taken will be lost, and everyone will
+                            be signed out. This can't be undone.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={() => {
+                              restoreMutation.mutate(b.filename);
+                              setRestoreTarget(null);
+                            }}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          >
+                            Restore
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                    <AlertDialog
                       open={deleteTarget === b.filename}
                       onOpenChange={(open) => setDeleteTarget(open ? b.filename : null)}
                     >
@@ -207,33 +265,29 @@ export function BackupSettingsPage() {
       {/* Restore */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Restore from a backup</CardTitle>
+          <CardTitle className="text-base">Restoring</CardTitle>
           <CardDescription>
-            Replace the current database with the contents of an uploaded backup file.
+            Use the restore action on any backup above to replace the current database
+            with its contents.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <Alert>
             <Info className="h-4 w-4" />
-            <AlertTitle>Restore is coming in the next release</AlertTitle>
+            <AlertTitle>Restore is destructive and atomic</AlertTitle>
             <AlertDescription className="space-y-2">
               <p>
-                Restore needs to drop all DB connections, replace the database, and
-                restart the backend — a flow that's safest run through the guided
-                installer terminal. We're shipping it as a separate update.
+                Restoring replaces all current data with the backup's contents in a
+                single transaction — if it fails, the existing database is left
+                untouched. Everyone is signed out afterward; sign back in, and restart
+                the app if anything looks stale.
               </p>
               <p>
-                In the meantime, you can restore manually:
-                <code className="ml-1 rounded bg-muted px-1">
-                  gunzip -c backup.sql.gz | psql ...
-                </code>
+                It requires <code className="rounded bg-muted px-1">psql</code> on the
+                host (installed automatically by the production installer).
               </p>
             </AlertDescription>
           </Alert>
-          <Button variant="outline" disabled className="mt-3">
-            <UploadCloud className="mr-2 h-4 w-4" />
-            Upload backup (coming soon)
-          </Button>
         </CardContent>
       </Card>
     </div>
