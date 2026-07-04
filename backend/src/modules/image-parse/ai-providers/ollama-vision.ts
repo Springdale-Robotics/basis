@@ -33,7 +33,7 @@ export class OllamaVisionProvider implements VisionProvider {
 
   constructor() {
     this.host = config.OLLAMA_HOST;
-    this.model = config.OLLAMA_VISION_MODEL;
+    this.model = config.OLLAMA_VLM_MODEL;
   }
 
   getModel(): string {

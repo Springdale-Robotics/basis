@@ -259,20 +259,6 @@ export async function caldavRoutes(app: FastifyInstance): Promise<void> {
     },
   });
 
-  // ─── Stubs for the rest (3e–3g will fill these in) ────────────────────
-  const notImplemented = async (request: FastifyRequest, reply: FastifyReply) => {
-    setDavHeaders(reply);
-    logger.debug(
-      { method: request.method, url: request.url, user: request.user?.email },
-      'CalDAV method stubbed'
-    );
-    reply.code(501).send({
-      error: 'Not Implemented',
-      method: request.method,
-      message: 'This CalDAV method is not yet implemented on this server.',
-    });
-  };
-
   // ─── GET event resource ────────────────────────────────────────────────
   app.route({
     method: 'GET',
@@ -826,7 +812,7 @@ async function handleSyncCollection(
 }
 
 async function handleCalendarMultiget(
-  request: FastifyRequest,
+  _request: FastifyRequest,
   reply: FastifyReply,
   calendarId: string,
   _calHref: string,
@@ -885,7 +871,7 @@ async function handleCalendarMultiget(
 }
 
 async function handleCalendarQuery(
-  request: FastifyRequest,
+  _request: FastifyRequest,
   reply: FastifyReply,
   calendarId: string,
   calHref: string,

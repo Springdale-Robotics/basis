@@ -2,11 +2,11 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../../config/database.js';
 import { users, userSettings } from '../../db/schema/index.js';
+import type { NotificationPreferences } from '../../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
-import { authMiddleware, requireAdmin } from '../../middleware/auth.middleware.js';
+import { authMiddleware } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { changePassword } from '../auth/auth.service.js';
-import argon2 from 'argon2';
 
 const updateUserSchema = z.object({
   displayName: z.string().min(1).max(255).optional(),
@@ -179,7 +179,13 @@ export async function usersRoutes(app: FastifyInstance): Promise<void> {
       if (existing) {
         [settings] = await db
           .update(userSettings)
-          .set({ ...input, updatedAt: new Date() })
+          .set({
+            ...input,
+            notificationPreferences: input.notificationPreferences as
+              | NotificationPreferences
+              | undefined,
+            updatedAt: new Date(),
+          })
           .where(eq(userSettings.userId, request.params.id))
           .returning();
       } else {
@@ -188,6 +194,9 @@ export async function usersRoutes(app: FastifyInstance): Promise<void> {
           .values({
             userId: request.params.id,
             ...input,
+            notificationPreferences: input.notificationPreferences as
+              | NotificationPreferences
+              | undefined,
           })
           .returning();
       }

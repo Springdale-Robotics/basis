@@ -42,7 +42,7 @@ export function sanitizeObject<T extends Record<string, unknown>>(
 // Middleware to sanitize common fields in request body
 export async function sanitizeRequestBody(
   request: FastifyRequest,
-  reply: FastifyReply
+  _reply: FastifyReply
 ): Promise<void> {
   if (!request.body || typeof request.body !== 'object') {
     return;

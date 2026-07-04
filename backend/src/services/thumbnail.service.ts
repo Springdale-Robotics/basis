@@ -3,7 +3,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { config } from '../config/index.js';
 import { db } from '../config/database.js';
-import { thumbnails, files } from '../db/schema/index.js';
+import { thumbnails } from '../db/schema/index.js';
 import { eq } from 'drizzle-orm';
 import { logger } from '../lib/logger.js';
 
@@ -11,12 +11,6 @@ export interface ThumbnailSize {
   name: 'sm' | 'md' | 'lg';
   width: number;
 }
-
-const THUMBNAIL_SIZES: ThumbnailSize[] = [
-  { name: 'sm', width: 150 },
-  { name: 'md', width: 400 },
-  { name: 'lg', width: 800 },
-];
 
 // Parse thumbnail sizes from config
 function getThumbnailSizes(): ThumbnailSize[] {
@@ -128,7 +122,7 @@ export class ThumbnailService {
       // Set ffmpeg path - check config first, then common locations
       const ffmpegPath = config.FFMPEG_PATH ||
         (await this.findExecutable('ffmpeg'));
-      const ffprobePath = config.FFPROBE_PATH ||
+      const ffprobePath = (config as { FFPROBE_PATH?: string }).FFPROBE_PATH ||
         (await this.findExecutable('ffprobe'));
 
       if (ffmpegPath) {

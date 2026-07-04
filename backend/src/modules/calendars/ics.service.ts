@@ -1,7 +1,7 @@
 import ICAL from 'ical.js';
 import { db } from '../../config/database.js';
 import { calendars, calendarEvents, type CalendarEvent } from '../../db/schema/index.js';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { logger } from '../../lib/logger.js';
 
 export interface ParsedEvent {
@@ -39,7 +39,7 @@ export function parseIcsContent(icsContent: string): ParsedEvent[] {
 
       // Check if this is a cancelled instance
       const status = vevent.getFirstPropertyValue('status');
-      const isCancelled = status && status.toLowerCase() === 'cancelled';
+      const isCancelled = status && (status as string).toLowerCase() === 'cancelled';
 
       const startDate = event.startDate;
       const endDate = event.endDate;
@@ -67,7 +67,7 @@ export function parseIcsContent(icsContent: string): ParsedEvent[] {
         for (const exdateProp of exdateProps) {
           const exdateValue = exdateProp.getFirstValue();
           if (exdateValue) {
-            exDates.push(exdateValue.toJSDate().toISOString());
+            exDates.push((exdateValue as ICAL.Time).toJSDate().toISOString());
           }
         }
         if (exDates.length > 0) {
@@ -83,7 +83,7 @@ export function parseIcsContent(icsContent: string): ParsedEvent[] {
         for (const rdateProp of rdateProps) {
           const rdateValue = rdateProp.getFirstValue();
           if (rdateValue) {
-            rDates.push(rdateValue.toJSDate().toISOString());
+            rDates.push((rdateValue as ICAL.Time).toJSDate().toISOString());
           }
         }
         if (rDates.length > 0) {
@@ -103,7 +103,7 @@ export function parseIcsContent(icsContent: string): ParsedEvent[] {
       if (recurrenceIdProp) {
         const recurrenceIdValue = recurrenceIdProp.getFirstValue();
         if (recurrenceIdValue) {
-          originalStartTime = recurrenceIdValue.toJSDate();
+          originalStartTime = (recurrenceIdValue as ICAL.Time).toJSDate();
           // The UID should match the master event's UID
           recurringEventId = uid;
           recurrenceStatus = isCancelled ? 'cancelled' : 'exception';

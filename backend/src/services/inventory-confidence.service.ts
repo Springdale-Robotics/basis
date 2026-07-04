@@ -10,7 +10,6 @@ import { db } from '../config/database.js';
 import { inventoryStock, inventoryItems, inventoryAreas } from '../db/schema/index.js';
 import { eq, and, gt } from 'drizzle-orm';
 import {
-  calculateItemConfidence,
   calculateTrancheConfidence,
   getConfidenceBand,
   planDepletion,
@@ -77,17 +76,6 @@ export async function getItemConfidence(
   }
 
   // Group by area and compute per-tranche confidence, then aggregate
-  const tranches: Tranche[] = stockEntries.map(e => ({
-    id: e.stock.id,
-    quantity: parseFloat(e.stock.quantity),
-    unit: e.stock.unit,
-    confidence: e.stock.confidence,
-    addedAt: e.stock.addedAt,
-    verifiedAt: e.stock.verifiedAt,
-    expiryDate: e.stock.expiryDate ? new Date(e.stock.expiryDate) : null,
-    source: e.stock.source,
-  }));
-
   // Use the first area for confidence calc (if items span areas, we take a weighted approach)
   // For now, compute per-tranche confidence using each tranche's own area
   const now = new Date();
@@ -312,7 +300,6 @@ export async function depleteTranches(
   // Apply the plan to the database
   for (const instruction of plan.instructions) {
     // Convert the depleteBy amount back to the tranche's original unit
-    const trancheInfo = tranches.find(t => t.id === instruction.trancheId);
     const originalEntry = stockEntries.find(e => e.stock.id === instruction.trancheId);
     if (!originalEntry) continue;
 
@@ -353,7 +340,7 @@ export async function reconcileItem(
   actualQuantity: number,
   unit: string,
   areaId: string,
-  userId: string,
+  _userId: string,
 ): Promise<void> {
   const now = new Date();
 

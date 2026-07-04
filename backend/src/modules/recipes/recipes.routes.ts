@@ -4,6 +4,7 @@ import { db } from '../../config/database.js';
 import {
   recipes,
   recipeIngredients,
+  recipeImportSessions,
   mealPlans,
   activeCookingSessions,
   inventoryStock,
@@ -26,14 +27,13 @@ import {
   updateIngredientMatches,
   confirmImportSession,
   cancelImportSession,
-  parseRecipeText,
   parseRecipeTextWithConfidence,
   rematchIngredients,
 } from './recipe-import.service.js';
 import { parseRecipeFromUrl } from './url-parser.service.js';
 import { processRecipeImage, fetchImageFromUrl } from './recipe-image.service.js';
 import { convertWithDensity, normalizeUnit, type QuantityUnitSizes } from '../../lib/unit-conversions.js';
-import { matchSingleIngredient } from './ingredient-matching.service.js';
+import { matchSingleIngredient, matchIngredients } from './ingredient-matching.service.js';
 import { emitCookingDeduction } from '../../websocket/events.js';
 
 const createRecipeSchema = z.object({
@@ -505,7 +505,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         // Handle file upload
         const data = await request.file();
         if (!data) {
-          throw Errors.badRequest('No file uploaded');
+          throw Errors.validation('No file uploaded');
         }
         imageBuffer = await data.toBuffer();
       } else {
@@ -518,7 +518,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         try {
           imageBuffer = await fetchImageFromUrl(imageUrl);
         } catch (error) {
-          throw Errors.badRequest(error instanceof Error ? error.message : 'Failed to fetch image from URL');
+          throw Errors.validation(error instanceof Error ? error.message : 'Failed to fetch image from URL');
         }
       }
 
@@ -527,7 +527,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         const processed = await processRecipeImage(imageBuffer);
 
         // Update the recipe with the processed image
-        const [updated] = await db
+        await db
           .update(recipes)
           .set({
             imageData: processed.data,
@@ -549,7 +549,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           },
         };
       } catch (error) {
-        throw Errors.badRequest(error instanceof Error ? error.message : 'Failed to process image');
+        throw Errors.validation(error instanceof Error ? error.message : 'Failed to process image');
       }
     }
   );
@@ -588,14 +588,14 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.notFound('File');
       }
       if (!file.mimeType.startsWith('image/')) {
-        throw Errors.badRequest('That file is not an image.');
+        throw Errors.validation('That file is not an image.');
       }
 
       let imageBuffer: Buffer;
       try {
         imageBuffer = await fs.readFile(file.storagePath);
       } catch {
-        throw Errors.badRequest('The selected file could not be read from storage.');
+        throw Errors.validation('The selected file could not be read from storage.');
       }
 
       try {
@@ -623,7 +623,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           },
         };
       } catch (error) {
-        throw Errors.badRequest(error instanceof Error ? error.message : 'Failed to process image');
+        throw Errors.validation(error instanceof Error ? error.message : 'Failed to process image');
       }
     }
   );
@@ -1063,7 +1063,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           },
         };
       } catch (error) {
-        throw Errors.badRequest(error instanceof Error ? error.message : 'Failed to parse URL');
+        throw Errors.validation(error instanceof Error ? error.message : 'Failed to parse URL');
       }
     }
   );
@@ -1771,7 +1771,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       });
 
       if (existing) {
-        throw Errors.badRequest('This recipe is already planned for this meal');
+        throw Errors.validation('This recipe is already planned for this meal');
       }
 
       const [plan] = await db
@@ -1925,7 +1925,7 @@ async function generateShoppingListFromMealPlans(
 
   // Subtract current inventory if requested
   if (checkInventory) {
-    for (const [key, item] of aggregated.entries()) {
+    for (const [, item] of aggregated.entries()) {
       if (item.inventoryItemId) {
         // Get current stock + item metadata in one round-trip; we need the
         // item's density and sizes to convert stock entries to the recipe

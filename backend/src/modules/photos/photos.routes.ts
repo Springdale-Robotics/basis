@@ -4,12 +4,10 @@ import { db } from '../../config/database.js';
 import {
   files,
   photoMetadata,
-  albums,
-  albumFiles,
   smartAlbums,
   favorites,
 } from '../../db/schema/index.js';
-import { eq, and, desc, asc, sql, gte, lte, isNotNull } from 'drizzle-orm';
+import { eq, and, desc, sql, isNotNull } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { exifService } from '../../services/exif.service.js';

@@ -6,8 +6,6 @@ import {
   movies,
   tvShows,
   tvEpisodes,
-  artists,
-  musicAlbums,
   tracks,
   mediaSettings,
 } from '../db/schema/index.js';
@@ -237,7 +235,7 @@ export class MediaScannerService {
       .onConflictDoNothing();
   }
 
-  private async autoMatchAudio(fileId: string, householdId: string, filename: string): Promise<void> {
+  private async autoMatchAudio(fileId: string, _householdId: string, filename: string): Promise<void> {
     // For now, just create a track with the filename as title
     // Music metadata service will fill in the details later
     const title = this.cleanTitle(path.parse(filename).name);

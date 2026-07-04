@@ -145,7 +145,7 @@ export async function setupRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Create household during setup
-  app.post('/household', async (request, reply) => {
+  app.post('/household', async (request, _reply) => {
     // Check if any household already exists
     const existingHouseholds = await db
       .select({ id: households.id })

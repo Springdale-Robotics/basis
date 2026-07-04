@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../../config/database.js';
 import { households, extensions, ddnsConfig, musicIntegrations, files } from '../../db/schema/index.js';
+import type { HouseholdSettings } from '../../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
 import { authMiddleware, requireAdmin } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
@@ -22,6 +23,8 @@ import {
 } from '../../lib/cloudflared.js';
 
 const PUBLIC_ICS_PATH = '/api/v1/calendars/public';
+
+type RemoteAccessSettings = NonNullable<HouseholdSettings['remoteAccess']>;
 
 const updateThemeSchema = z.object({
   mode: z.enum(['light', 'dark', 'system']).optional(),
@@ -361,7 +364,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       await db
         .update(households)
         .set({
-          settings: { ...settings, remoteAccess: newRemoteAccess },
+          settings: { ...settings, remoteAccess: newRemoteAccess as RemoteAccessSettings },
           updatedAt: new Date(),
         })
         .where(eq(households.id, request.user!.householdId));
@@ -440,7 +443,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       await db
         .update(households)
         .set({
-          settings: { ...existing, remoteAccess: newRemote },
+          settings: { ...existing, remoteAccess: newRemote as RemoteAccessSettings },
           updatedAt: new Date(),
         })
         .where(eq(households.id, request.user!.householdId));
@@ -480,7 +483,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       await db
         .update(households)
         .set({
-          settings: { ...existing, remoteAccess: rest },
+          settings: { ...existing, remoteAccess: rest as RemoteAccessSettings },
           updatedAt: new Date(),
         })
         .where(eq(households.id, request.user!.householdId));
@@ -597,7 +600,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       };
       await db
         .update(households)
-        .set({ settings: { ...existing, remoteAccess: newRemote }, updatedAt: new Date() })
+        .set({ settings: { ...existing, remoteAccess: newRemote as RemoteAccessSettings }, updatedAt: new Date() })
         .where(eq(households.id, request.user!.householdId));
 
       return { success: true, data: { status, publicUrl } };
@@ -620,7 +623,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       const { cloudflare: _drop, publicUrl: _drop2, ...rest } = existingRemote;
       await db
         .update(households)
-        .set({ settings: { ...existing, remoteAccess: rest }, updatedAt: new Date() })
+        .set({ settings: { ...existing, remoteAccess: rest as RemoteAccessSettings }, updatedAt: new Date() })
         .where(eq(households.id, request.user!.householdId));
 
       return { success: true, data: { message: 'Cloudflare tunnel stopped' } };

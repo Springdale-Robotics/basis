@@ -1,5 +1,5 @@
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { authMiddleware, requireAuthenticated } from '../../middleware/auth.middleware.js';
+import { FastifyInstance } from 'fastify';
+import { authMiddleware } from '../../middleware/auth.middleware.js';
 import { authRateLimiter } from '../../middleware/rate-limit.middleware.js';
 import {
   loginSchema,
@@ -7,13 +7,11 @@ import {
   registerWithInviteSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
-  changePasswordSchema,
   type LoginInput,
   type RegisterInput,
   type RegisterWithInviteInput,
   type ForgotPasswordInput,
   type ResetPasswordInput,
-  type ChangePasswordInput,
 } from './auth.schema.js';
 import * as authService from './auth.service.js';
 import { config } from '../../config/index.js';
@@ -334,7 +332,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     {
       preHandler: [authMiddleware],
     },
-    async (request, reply) => {
+    async (request, _reply) => {
       await authService.logoutAllSessions(
         request.user!.id,
         request.user!.sessionId

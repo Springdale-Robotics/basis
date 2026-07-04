@@ -29,7 +29,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Readiness probe (Kubernetes)
-  app.get('/ready', async (request, reply) => {
+  app.get('/ready', async (_request, reply) => {
     const checks: Record<string, { status: string; latency_ms?: number }> = {};
 
     // Check database
@@ -121,7 +121,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
 
   // Prometheus metrics
   if (config.ENABLE_METRICS) {
-    app.get('/metrics', async (request, reply) => {
+    app.get('/metrics', async (_request, reply) => {
       const metrics = await getMetrics();
       reply.header('Content-Type', 'text/plain');
       return metrics;

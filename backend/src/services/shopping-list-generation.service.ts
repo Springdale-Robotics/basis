@@ -14,13 +14,11 @@ import {
   recipes,
   recipeIngredients,
   inventoryItems,
-  shoppingList,
 } from '../db/schema/index.js';
 import { eq, and, gte, lte, inArray } from 'drizzle-orm';
 import { getInventoryConfidenceMap, type ItemConfidenceResult } from './inventory-confidence.service.js';
 import { convert, resolveUnit, isNegligible } from '../lib/units.js';
-import { getConfidenceBand, DEFAULT_THRESHOLDS, type ConfidenceThresholds } from '../lib/confidence.js';
-import type { HouseholdSettings } from '../db/schema/households.js';
+import { DEFAULT_THRESHOLDS, type ConfidenceThresholds } from '../lib/confidence.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -375,7 +373,7 @@ function aggregateIngredients(
 async function applyInventorySubtraction(
   aggregated: AggregatedIngredient[],
   confidenceMap: Map<string, ItemConfidenceResult>,
-  thresholds: ConfidenceThresholds,
+  _thresholds: ConfidenceThresholds,
   householdId: string,
 ): Promise<ShoppingListPreviewItem[]> {
   const results: ShoppingListPreviewItem[] = [];

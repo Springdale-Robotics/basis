@@ -7,7 +7,6 @@ import { authMiddleware, requireMember } from '../../middleware/auth.middleware.
 import { requireInventoryAccess, requireShoppingListAccess } from '../../middleware/permission.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { randomBytes } from 'crypto';
-import { shoppingListSourceSchema } from '../../lib/validators.js';
 import { convertWithDensity, normalizeUnit, getUnitCategory, isNegligible, type QuantityUnitSizes } from '../../lib/unit-conversions.js';
 import { inArray } from 'drizzle-orm';
 import {
@@ -635,7 +634,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         .set({ inventoryItemId: newItemId })
         .where(eq(recipeIngredients.inventoryItemId, request.params.id));
 
-      return { success: true, data: { message: 'Relinked', updatedCount: result.rowCount } };
+      return { success: true, data: { message: 'Relinked', updatedCount: result.count } };
     }
   );
 
@@ -973,7 +972,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         ),
         with: {
           item: {
-            columns: { id: true, name: true, icon: true, householdId: true },
+            columns: { id: true, name: true, householdId: true },
           },
           area: {
             columns: { id: true, name: true, icon: true },
@@ -1116,8 +1115,8 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         ...entry,
         // Use customName if set, otherwise use linked inventory item name
         customName: entry.customName || entry.item?.name || null,
-        // Use category from linked item if not set on shopping list entry
-        category: entry.category || entry.item?.category || null,
+        // Use category from linked item (shopping_list rows have no category of their own)
+        category: entry.item?.category || null,
       }));
 
       return { success: true, data: { shoppingList: transformedList } };

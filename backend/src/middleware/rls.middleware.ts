@@ -4,7 +4,7 @@ import { logger } from '../lib/logger.js';
 
 export async function setRlsContext(
   request: FastifyRequest,
-  reply: FastifyReply
+  _reply: FastifyReply
 ): Promise<void> {
   if (!request.user) {
     return;

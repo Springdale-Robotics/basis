@@ -17,6 +17,7 @@ interface PermissionCheck {
 }
 
 const permissionHierarchy: Record<PermissionLevel, number> = {
+  none: 0,
   view_busy: 1,
   view: 2,
   edit: 3,

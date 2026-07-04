@@ -66,8 +66,8 @@ export class OcrLlmProvider implements VisionProvider {
   private healthCacheTtl = 30000; // 30 seconds
 
   constructor() {
-    this.serviceUrl = config.OCR_LLM_SERVICE_URL;
-    this.timeout = config.OCR_LLM_TIMEOUT_MS;
+    this.serviceUrl = config.VLM_LLM_SERVICE_URL;
+    this.timeout = config.VLM_LLM_TIMEOUT_MS;
   }
 
   getModel(): string {
