@@ -175,3 +175,25 @@ Run one manually: `sudo systemctl start basis-cloud-backup.service`.
   checked against the release's `frp_sha256_checksums.txt`); keep the pin in
   sync with the box-side installer (`backend/src/modules/install/
   installer-commands.ts`) and `cloud/dev.sh`.
+
+## Pre-launch checklist (before the first paying customer)
+
+- [ ] **Swap the full Stripe secret key for a restricted key, then roll the
+  sk_live key.** Create it in Dashboard → Developers → API keys → "Create
+  restricted key" with only: Checkout Sessions (write), Customers (write),
+  Subscriptions (read), Billing portal sessions (write). Put the `rk_live_...`
+  in `/opt/basis-cloud/.env` (the code accepts either key type), verify
+  checkout still works, then roll the original secret key. Rationale: the full
+  key has passed through chat/dev machines during setup, and a restricted key
+  caps the blast radius of a compromised VPS (no refunds, no full account
+  read).
+- [ ] **Live Stripe keys never go in `cloud/server/.env.local`** (the local
+  dev env). Dev + `./dev.sh stripe` must use test-mode keys only — a live key
+  in dev means local testing creates real customers and real charges.
+- [ ] Customer portal configuration saved in the dashboard (Settings →
+  Billing → Customer portal) — the "Manage billing" button errors until then.
+- [ ] Revenue recovery set to cancel subscriptions after ~2 weeks of failed
+  retries, matching `GRACE_PERIOD_DAYS=14` (see "Provisioning" above).
+- [ ] Decide the PSL / separate-tenant-domain question before scale (tenants
+  currently share the registrable domain with the marketing site).
+- [ ] SMTP email for the cloud accounts (password reset) before strangers pay.
