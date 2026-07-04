@@ -11,6 +11,9 @@ interface SearchInputProps {
   placeholder?: string;
   debounceMs?: number;
   className?: string;
+  /** Extra classes for the inner input (e.g. a custom height). */
+  inputClassName?: string;
+  autoFocus?: boolean;
 }
 
 export function SearchInput({
@@ -19,6 +22,8 @@ export function SearchInput({
   placeholder = 'Search...',
   debounceMs = 300,
   className,
+  inputClassName,
+  autoFocus,
 }: SearchInputProps) {
   const [value, setValue] = useState(controlledValue ?? '');
   const debouncedValue = useDebounce(value, debounceMs);
@@ -45,14 +50,17 @@ export function SearchInput({
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder={placeholder}
-        className="pl-9 pr-9"
+        className={cn('pl-9 pr-9', inputClassName)}
+        autoFocus={autoFocus}
       />
       {value && (
         <Button
+          type="button"
           variant="ghost"
           size="icon"
           className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2"
           onClick={handleClear}
+          aria-label="Clear search"
         >
           <X className="h-4 w-4" />
         </Button>

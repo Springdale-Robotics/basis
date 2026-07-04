@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/shared/UserAvatar';
 import {
   Dialog,
   DialogContent,
@@ -60,13 +60,6 @@ export function ProfileSettingsPage() {
     updateMutation.mutate(data);
   };
 
-  const userInitials = user?.displayName
-    ?.split(' ')
-    .map((n) => n[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
-
   return (
     <div className="space-y-6">
       <Card>
@@ -76,10 +69,7 @@ export function ProfileSettingsPage() {
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-4">
-            <Avatar className="h-20 w-20">
-              <AvatarImage src={user?.avatarUrl} alt={user?.displayName} />
-              <AvatarFallback className="text-lg">{userInitials}</AvatarFallback>
-            </Avatar>
+            <UserAvatar user={user} size="xl" />
             <p className="text-sm text-muted-foreground">
               Avatar upload coming soon
             </p>

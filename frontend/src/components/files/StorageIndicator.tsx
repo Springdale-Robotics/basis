@@ -1,17 +1,9 @@
-import { cn } from '@/lib/utils';
+import { cn, formatFileSize } from '@/lib/utils';
 import type { StorageUsage } from '@/api/files';
 
 interface StorageIndicatorProps {
   storage: StorageUsage;
   className?: string;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
 function getProgressColor(percent: number): string {
@@ -40,11 +32,11 @@ export function StorageIndicator({ storage, className }: StorageIndicatorProps) 
 
       {/* Text label */}
       <span className="text-sm text-muted-foreground">
-        {formatBytes(usedBytes)}
+        {formatFileSize(usedBytes)}
         {hasLimit ? (
           <>
             {' / '}
-            {formatBytes(effectiveLimit)}
+            {formatFileSize(effectiveLimit)}
             {' '}
             <span className={cn(
               percentUsed >= 95 ? 'text-red-500' :

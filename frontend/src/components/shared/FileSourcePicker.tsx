@@ -31,7 +31,8 @@ import { filesApi } from '@/api/files';
 import { filesMediaApi } from '@/api/media';
 import { API_BASE_URL } from '@/lib/constants';
 import { toast } from '@/hooks/useToast';
-import { cn } from '@/lib/utils';
+import { cn, formatFileSize } from '@/lib/utils';
+import { getErrorMessage } from '@/lib/api-error';
 import type { FileItem } from '@/types/models';
 
 /**
@@ -112,14 +113,6 @@ function matchesAccept(file: LibraryFile, tokens: string[]): boolean {
 function acceptToMimeParam(tokens: string[]): string | undefined {
   const mimeToken = tokens.find((t) => t.includes('/'));
   return mimeToken?.replace('/*', '/');
-}
-
-function formatBytes(bytes: number): string {
-  if (!bytes) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
 function fileTypeIcon(mimeType?: string) {
@@ -290,7 +283,7 @@ export function FileSourcePicker({
     } catch (err) {
       toast({
         title: "Couldn't fetch file",
-        description: err instanceof Error ? err.message : 'Download failed',
+        description: getErrorMessage(err, 'Download failed'),
         variant: 'destructive',
       });
     } finally {
@@ -478,7 +471,7 @@ export function FileSourcePicker({
                             <div className="w-full px-2 py-1.5">
                               <p className="truncate text-xs font-medium">{file.name}</p>
                               <p className="text-[10px] text-muted-foreground">
-                                {formatBytes(file.sizeBytes)}
+                                {formatFileSize(file.sizeBytes)}
                               </p>
                             </div>
                             {isSelected && (

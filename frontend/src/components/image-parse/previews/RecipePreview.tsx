@@ -220,9 +220,12 @@ export function RecipePreview({ content, onContentChange }: RecipePreviewProps) 
             ) : (
               localContent.instructions.map((instruction, index) => (
                 <div key={index} className="flex items-start gap-2 rounded-md bg-muted/50 p-2">
-                  <span className="shrink-0 rounded-full bg-primary/10 px-2 py-1 text-xs font-medium">
+                  <Badge
+                    variant="secondary"
+                    className="shrink-0 bg-primary/10 px-2 py-1 font-medium text-foreground hover:bg-primary/10"
+                  >
                     {index + 1}
-                  </span>
+                  </Badge>
                   <Textarea
                     value={instruction}
                     onChange={(e) => updateInstruction(index, e.target.value)}

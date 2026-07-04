@@ -10,7 +10,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Upload, X, File, CheckCircle2, AlertCircle } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, formatFileSize } from '@/lib/utils';
+import { getErrorMessage } from '@/lib/api-error';
 
 interface UploadFile {
   id: string;
@@ -29,14 +30,6 @@ interface UploadDialogProps {
 }
 
 let fileIdCounter = 0;
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
 
 export function UploadDialog({
   open,
@@ -130,7 +123,7 @@ export function UploadDialog({
               ? {
                   ...f,
                   status: 'error',
-                  error: err instanceof Error ? err.message : 'Upload failed',
+                  error: getErrorMessage(err, 'Upload failed'),
                 }
               : f
           )
@@ -214,7 +207,7 @@ export function UploadDialog({
                     {uploadFile.file.name}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {formatBytes(uploadFile.file.size)}
+                    {formatFileSize(uploadFile.file.size)}
                     {uploadFile.error && (
                       <span className="text-destructive ml-2">
                         {uploadFile.error}

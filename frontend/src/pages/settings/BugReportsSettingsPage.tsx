@@ -18,8 +18,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ExternalLink, RotateCw, Trash2, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
+import { ExternalLink, RotateCw, Trash2, CheckCircle2, AlertCircle, Clock, Bug } from 'lucide-react';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { EmptyState } from '@/components/shared/EmptyState';
+import { getErrorMessage } from '@/lib/api-error';
 import { toast } from '@/hooks/useToast';
 import { bugReportsApi, type BugReportStatus, type BugReportSummary } from '@/api/bug-reports';
 
@@ -71,7 +73,7 @@ export function BugReportsSettingsPage() {
     onError: (err) =>
       toast({
         title: 'Retry failed',
-        description: err instanceof Error ? err.message : 'Unknown error',
+        description: getErrorMessage(err),
         variant: 'destructive',
       }),
   });
@@ -86,7 +88,7 @@ export function BugReportsSettingsPage() {
     onError: (err) =>
       toast({
         title: 'Delete failed',
-        description: err instanceof Error ? err.message : 'Unknown error',
+        description: getErrorMessage(err),
         variant: 'destructive',
       }),
   });
@@ -109,7 +111,12 @@ export function BugReportsSettingsPage() {
             <Skeleton className="h-10 w-full" />
           </div>
         ) : !data || data.reports.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No bug reports yet.</p>
+          <EmptyState
+            size="sm"
+            icon={<Bug className="h-8 w-8" />}
+            title="No bug reports yet"
+            description="Reports you submit from the app will show up here."
+          />
         ) : (
           <Table>
             <TableHeader>

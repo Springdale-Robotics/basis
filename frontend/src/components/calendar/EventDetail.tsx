@@ -27,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/shared/UserAvatar';
 import { Badge } from '@/components/ui/badge';
 import { calendarsApi } from '@/api/calendars';
 import type { CalendarEvent, Calendar as CalendarType, RsvpStatus, EventAttendee } from '@/types/models';
@@ -148,19 +148,6 @@ export function EventDetail({
     }
   };
 
-  const getAttendeeInitials = (attendee: EventAttendee) => {
-    if (attendee.user?.displayName) {
-      return attendee.user.displayName.charAt(0).toUpperCase();
-    }
-    if (attendee.displayName) {
-      return attendee.displayName.charAt(0).toUpperCase();
-    }
-    if (attendee.email) {
-      return attendee.email.charAt(0).toUpperCase();
-    }
-    return '?';
-  };
-
   const getAttendeeName = (attendee: EventAttendee) => {
     return attendee.user?.displayName || attendee.displayName || attendee.email || 'Unknown';
   };
@@ -279,12 +266,13 @@ export function EventDetail({
                 <div className="space-y-2 max-h-32 overflow-y-auto">
                   {attendees.map((attendee: EventAttendee) => (
                     <div key={attendee.id} className="flex items-center gap-2">
-                      <Avatar className="h-6 w-6">
-                        <AvatarImage src={attendee.user?.avatarUrl} />
-                        <AvatarFallback className="text-xs">
-                          {getAttendeeInitials(attendee)}
-                        </AvatarFallback>
-                      </Avatar>
+                      <UserAvatar
+                        user={{
+                          displayName: getAttendeeName(attendee),
+                          avatarUrl: attendee.user?.avatarUrl,
+                        }}
+                        size="sm"
+                      />
                       <span className="text-sm flex-1 truncate">
                         {getAttendeeName(attendee)}
                         {attendee.isOrganizer && (

@@ -13,7 +13,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/shared/UserAvatar';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
@@ -30,15 +30,6 @@ export function Header() {
   const { setMobileNavOpen } = useUIStore();
   const { isMobile } = useDevice();
   const [notificationOpen, setNotificationOpen] = useState(false);
-
-  const userInitials = user?.displayName
-    ? user.displayName
-        .split(' ')
-        .map((n) => n[0])
-        .join('')
-        .toUpperCase()
-        .slice(0, 2)
-    : 'U';
 
   const handleLogout = async () => {
     await logout();
@@ -85,10 +76,7 @@ export function Header() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="relative h-9 w-9 rounded-full">
-              <Avatar className="h-9 w-9">
-                <AvatarImage src={user?.avatarUrl} alt={user?.displayName} />
-                <AvatarFallback>{userInitials}</AvatarFallback>
-              </Avatar>
+              <UserAvatar user={user} size="lg" className="h-9 w-9" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">

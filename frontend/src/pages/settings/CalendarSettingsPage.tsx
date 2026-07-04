@@ -15,6 +15,7 @@ import {
   Palette,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import {
   Card,
   CardContent,
@@ -421,7 +422,7 @@ export function CalendarSettingsPage() {
         <CardContent>
           {loadingCalendars ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin" />
+              <LoadingSpinner size="lg" />
             </div>
           ) : syncedCalendars.length === 0 ? (
             <p className="text-muted-foreground text-sm">
@@ -629,7 +630,7 @@ export function CalendarSettingsPage() {
 
           {loadingGoogleCalendars ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin" />
+              <LoadingSpinner size="lg" />
             </div>
           ) : (
             <div className="space-y-4">
@@ -709,7 +710,7 @@ export function CalendarSettingsPage() {
 
           {loadingOutlookCalendars ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin" />
+              <LoadingSpinner size="lg" />
             </div>
           ) : (
             <div className="space-y-4">

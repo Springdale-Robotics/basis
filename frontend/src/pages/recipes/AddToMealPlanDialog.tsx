@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/select';
 import { recipesApi } from '@/api/recipes';
 import { toast } from '@/hooks/useToast';
+import { getErrorMessage } from '@/lib/api-error';
 
 type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
 
@@ -60,7 +61,7 @@ export function AddToMealPlanDialog({
     onError: (error) => {
       toast({
         title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to add to meal plan',
+        description: getErrorMessage(error, 'Failed to add to meal plan'),
         variant: 'destructive',
       });
     },

@@ -10,6 +10,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import {
   Card,
   CardContent,
@@ -321,7 +322,7 @@ export function CalendarSyncSettings({ calendars }: CalendarSyncSettingsProps) {
 
           {loadingGoogleCalendars ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin" />
+              <LoadingSpinner size="lg" />
             </div>
           ) : (
             <div className="space-y-4">

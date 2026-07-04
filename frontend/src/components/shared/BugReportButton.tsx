@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { useBottomStack } from '@/hooks/useBottomStack';
 import { toast } from '@/hooks/useToast';
+import { getErrorMessage } from '@/lib/api-error';
 import { bugReportsApi } from '@/api/bug-reports';
 import {
   clearConsoleBuffer,
@@ -175,7 +176,7 @@ export function BugReportButton() {
     } catch (err) {
       toast({
         title: 'Could not submit bug report',
-        description: err instanceof Error ? err.message : 'Unknown error',
+        description: getErrorMessage(err),
         variant: 'destructive',
       });
     } finally {

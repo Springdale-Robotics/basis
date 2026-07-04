@@ -13,15 +13,7 @@ import { settingsApi } from '@/api/settings';
 import { filesApi, type StorageUsage } from '@/api/files';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
-import { cn } from '@/lib/utils';
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
+import { cn, formatFileSize } from '@/lib/utils';
 
 function getProgressColor(percent: number): string {
   if (percent >= 95) return 'bg-red-500';
@@ -146,10 +138,10 @@ export function StorageSettingsPage() {
               {/* Progress bar */}
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span>{formatBytes(usage.usedBytes)} used</span>
+                  <span>{formatFileSize(usage.usedBytes)} used</span>
                   <span>
                     {usage.effectiveLimit > 0
-                      ? `${formatBytes(usage.effectiveLimit)} limit`
+                      ? `${formatFileSize(usage.effectiveLimit)} limit`
                       : 'No limit set'}
                   </span>
                 </div>
@@ -174,7 +166,7 @@ export function StorageSettingsPage() {
                 <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                   {Object.entries(usage.breakdown).map(([type, bytes]) => (
                     <div key={type} className="text-center p-3 rounded-lg bg-muted/50">
-                      <div className="text-lg font-semibold">{formatBytes(bytes)}</div>
+                      <div className="text-lg font-semibold">{formatFileSize(bytes)}</div>
                       <div className="text-xs text-muted-foreground capitalize">{type}</div>
                     </div>
                   ))}
@@ -186,8 +178,8 @@ export function StorageSettingsPage() {
                 <div className="pt-4 border-t">
                   <h4 className="text-sm font-medium mb-2">Disk Information</h4>
                   <div className="text-sm text-muted-foreground space-y-1">
-                    <div>Total disk space: {formatBytes(usage.filesystem.totalBytes)}</div>
-                    <div>Available: {formatBytes(usage.filesystem.availableBytes)}</div>
+                    <div>Total disk space: {formatFileSize(usage.filesystem.totalBytes)}</div>
+                    <div>Available: {formatFileSize(usage.filesystem.availableBytes)}</div>
                   </div>
                 </div>
               )}

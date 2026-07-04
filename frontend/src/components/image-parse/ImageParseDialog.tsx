@@ -31,6 +31,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
+import { getErrorMessage } from '@/lib/api-error';
 import {
   imageParseApi,
   type ParsedContentType,
@@ -529,9 +530,7 @@ export function ImageParseDialog({
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            {uploadMutation.error instanceof Error
-              ? uploadMutation.error.message
-              : 'Upload failed'}
+            {getErrorMessage(uploadMutation.error, 'Upload failed')}
           </AlertDescription>
         </Alert>
       )}

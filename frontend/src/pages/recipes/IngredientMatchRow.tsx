@@ -1,5 +1,5 @@
-import { useState, useRef, useMemo } from 'react';
-import { Check, X, ChevronDown, Plus, Loader2, Link2, Unlink, AlertCircle, Search } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Check, X, ChevronDown, Plus, Loader2, Link2, Unlink, AlertCircle } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +11,7 @@ import {
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SearchInput } from '@/components/shared/SearchInput';
 import { inventoryApi } from '@/api/inventory';
 import { recipesApi, type IngredientMatch, type MatchSuggestion, type MatchReason } from '@/api/recipes';
 import { cn } from '@/lib/utils';
@@ -79,7 +80,6 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [recipeUnit, setRecipeUnit] = useState(() => normalizeUnit(match.parsedUnit));
-  const inputRef = useRef<HTMLInputElement>(null);
 
   // New item form state
   const [newItemName, setNewItemName] = useState('');
@@ -254,25 +254,19 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
             <PopoverContent
               className="w-96 p-0"
               align="end"
-              onOpenAutoFocus={(e) => {
-                e.preventDefault();
-                inputRef.current?.focus();
-              }}
+              onOpenAutoFocus={(e) => e.preventDefault()}
             >
               {!showCreateForm ? (
                 <div className="flex flex-col">
                   {/* Search input */}
                   <div className="p-2 border-b">
-                    <div className="relative">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        ref={inputRef}
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search inventory items..."
-                        className="pl-8 h-9"
-                      />
-                    </div>
+                    <SearchInput
+                      value={searchQuery}
+                      onChange={setSearchQuery}
+                      placeholder="Search inventory items..."
+                      inputClassName="h-9"
+                      autoFocus
+                    />
                   </div>
 
                   <div className="max-h-[300px] overflow-y-auto">

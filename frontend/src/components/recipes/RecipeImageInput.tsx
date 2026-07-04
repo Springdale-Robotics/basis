@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react';
-import { Upload, Link2, X, Loader2, ImageIcon, Images } from 'lucide-react';
+import { Upload, Link2, X, ImageIcon, Images } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/useToast';
 import { filesMediaApi } from '@/api/media';
@@ -154,7 +155,7 @@ export function RecipeImageInput({
             />
             {isProcessing && (
               <div className="absolute inset-0 flex items-center justify-center bg-background/50">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <LoadingSpinner size="lg" className="text-primary" />
               </div>
             )}
           </div>
@@ -185,7 +186,7 @@ export function RecipeImageInput({
         >
           {isProcessing ? (
             <>
-              <Loader2 className="h-10 w-10 text-muted-foreground animate-spin" />
+              <LoadingSpinner className="h-10 w-10" />
               <p className="text-sm text-muted-foreground">Processing image...</p>
             </>
           ) : (

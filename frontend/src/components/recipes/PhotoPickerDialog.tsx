@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ImageIcon, Loader2 } from 'lucide-react';
+import { ImageIcon } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -7,6 +7,8 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
+import { EmptyState } from '@/components/shared/EmptyState';
+import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { photosApi, filesMediaApi } from '@/api/media';
 import { cn } from '@/lib/utils';
 
@@ -43,15 +45,17 @@ export function PhotoPickerDialog({ open, onOpenChange, onSelect }: PhotoPickerD
 
         <div className="max-h-[60vh] overflow-y-auto">
           {isLoading ? (
-            <div className="flex items-center justify-center py-12 text-muted-foreground">
-              <Loader2 className="h-6 w-6 animate-spin" />
+            <div className="flex items-center justify-center py-12">
+              <LoadingSpinner />
             </div>
           ) : photos.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
-              <ImageIcon className="mb-2 h-10 w-10 opacity-50" />
-              <p className="text-sm">No photos yet</p>
-              <p className="text-xs">Upload photos in the Photos section first.</p>
-            </div>
+            <EmptyState
+              size="sm"
+              icon={<ImageIcon className="h-10 w-10" />}
+              title="No photos yet"
+              description="Upload photos in the Photos section first."
+              className="py-12"
+            />
           ) : (
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
               {photos.map((photo) => (

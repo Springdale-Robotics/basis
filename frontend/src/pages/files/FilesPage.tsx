@@ -57,7 +57,7 @@ import { RestrictionDialog } from '@/components/files/RestrictionDialog';
 import { filesApi } from '@/api/files';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
-import { cn, formatDate, hoverAction } from '@/lib/utils';
+import { cn, formatDate, formatFileSize, hoverAction } from '@/lib/utils';
 import type { FileItem } from '@/types/models';
 
 type ViewMode = 'grid' | 'list';
@@ -102,14 +102,6 @@ function getFileIcon(file: FileItem) {
   if (file.mimeType?.startsWith('video/')) return Video;
   if (file.mimeType?.startsWith('audio/')) return Music;
   return File;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
 // Get display name - backend uses 'filename' for files, 'name' for folders
@@ -863,7 +855,7 @@ function FileGridItem({ file, thumbnailSize = 'md', onClick, onDownload, onDelet
           )}
           <p className="truncate font-medium">{getFileName(file)}</p>
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
-            <span>{isFolder ? 'Folder' : formatBytes(getFileSize(file))}</span>
+            <span>{isFolder ? 'Folder' : formatFileSize(getFileSize(file))}</span>
             {fileIsRestricted && (
               <Badge variant="outline" className="ml-1 text-xs border-amber-500 text-amber-600">
                 <Lock className="mr-1 h-3 w-3" />
@@ -1007,7 +999,7 @@ function FileListItem({ file, onClick, onDownload, onDelete, onMove, onRestrict,
             </p>
           </div>
           <p className="text-sm text-muted-foreground shrink-0">
-            {isFolder ? 'Folder' : formatBytes(getFileSize(file))}
+            {isFolder ? 'Folder' : formatFileSize(getFileSize(file))}
           </p>
         </div>
 
@@ -1182,7 +1174,7 @@ function MediaPreviewModal({ file, files, onClose, onNavigate }: MediaPreviewMod
           <div>
             <p className="font-medium">{getFileName(file)}</p>
             <p className="text-sm text-gray-300">
-              {formatDate(file.createdAt)} &middot; {formatBytes(getFileSize(file))}
+              {formatDate(file.createdAt)} &middot; {formatFileSize(getFileSize(file))}
             </p>
           </div>
         </div>

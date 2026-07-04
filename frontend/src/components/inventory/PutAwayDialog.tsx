@@ -17,6 +17,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { inventoryApi } from '@/api/inventory';
 import { toast } from '@/hooks/useToast';
+import { getErrorMessage } from '@/lib/api-error';
 import type { StorageArea, InventoryItem, ShoppingListItem } from '@/types/models';
 
 interface PutAwayItem {
@@ -132,7 +133,7 @@ export function PutAwayDialog({
     onError: (error) => {
       toast({
         title: 'Link failed',
-        description: error instanceof Error ? error.message : 'Could not link item',
+        description: getErrorMessage(error, 'Could not link item'),
         variant: 'destructive',
       });
       setResolvingItemId(null);
@@ -160,7 +161,7 @@ export function PutAwayDialog({
     onError: (error) => {
       toast({
         title: 'Create failed',
-        description: error instanceof Error ? error.message : 'Could not create catalog item',
+        description: getErrorMessage(error, 'Could not create catalog item'),
         variant: 'destructive',
       });
       setResolvingItemId(null);

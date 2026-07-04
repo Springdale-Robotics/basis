@@ -26,7 +26,6 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { format, isToday, isTomorrow } from 'date-fns';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -59,6 +58,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/useToast';
 import { cn } from '@/lib/utils';
 import { getErrorMessage } from '@/lib/api-error';
+import { formatDueDate } from '@/lib/due-date';
 import type { Task, TaskKind } from '@/types/models';
 import type { CreateTaskRequest, UpdateTaskRequest } from '@/api/tasks';
 
@@ -79,13 +79,6 @@ function storedSort(kind: TaskKind): SortBy {
   return 'due';
 }
 
-function nextDueLabel(dueDate: string): string {
-  const d = new Date(dueDate);
-  if (isToday(d)) return 'today';
-  if (isTomorrow(d)) return 'tomorrow';
-  const sameYear = d.getFullYear() === new Date().getFullYear();
-  return sameYear ? format(d, 'MMM d') : format(d, 'MMM d, yyyy');
-}
 
 export function TasksPage() {
   const queryClient = useQueryClient();
@@ -331,7 +324,7 @@ export function TasksPage() {
       if (completed?.kind === 'chore' && completed?.dueDate) {
         toast({
           title: 'Marked done',
-          description: `Next due ${nextDueLabel(completed.dueDate)}.`,
+          description: `Next due ${formatDueDate(completed.dueDate, { lowercase: true })}.`,
         });
       }
     },

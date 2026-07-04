@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Disc, User, Play, Clock, Search } from 'lucide-react';
+import { Disc, User, Play, Clock } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { MediaCard, MediaCardSkeleton } from '@/components/media/MediaCard';
-import { Input } from '@/components/ui/input';
+import { SearchInput } from '@/components/shared/SearchInput';
 import {
   Table,
   TableBody,
@@ -80,15 +80,11 @@ export function MusicPage() {
           </TabsList>
 
           {activeTab === 'artists' && (
-            <div className="relative max-w-sm">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search artists..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
+            <SearchInput
+              placeholder="Search artists..."
+              onChange={setSearch}
+              className="max-w-sm"
+            />
           )}
         </div>
 

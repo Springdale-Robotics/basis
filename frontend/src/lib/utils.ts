@@ -114,7 +114,8 @@ export function formatDuration(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-export function formatFileSize(bytes: number): string {
+export function formatFileSize(bytes?: number): string {
+  if (bytes === undefined) return '—';
   if (bytes === 0) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];

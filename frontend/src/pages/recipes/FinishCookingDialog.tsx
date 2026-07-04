@@ -18,10 +18,7 @@ import { inventoryApi } from '@/api/inventory';
 import type { RecipeIngredient } from '@/types/models';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
 import { toast } from '@/hooks/useToast';
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
-}
+import { getErrorMessage } from '@/lib/api-error';
 
 interface FinishCookingDialogProps {
   open: boolean;
@@ -87,7 +84,7 @@ export function FinishCookingDialog({
     } catch (error) {
       toast({
         title: 'Could not update inventory',
-        description: errorMessage(error, 'Failed to deduct ingredients. Your inventory was not changed.'),
+        description: getErrorMessage(error, 'Failed to deduct ingredients. Your inventory was not changed.'),
         variant: 'destructive',
       });
     } finally {
@@ -130,7 +127,7 @@ export function FinishCookingDialog({
     } catch (error) {
       toast({
         title: 'Could not update inventory',
-        description: errorMessage(error, 'Failed to deduct ingredients. Your inventory was not changed.'),
+        description: getErrorMessage(error, 'Failed to deduct ingredients. Your inventory was not changed.'),
         variant: 'destructive',
       });
     } finally {
@@ -164,7 +161,7 @@ export function FinishCookingDialog({
     } catch (error) {
       toast({
         title: 'Could not finish cooking',
-        description: errorMessage(error, 'Something went wrong. Please try again.'),
+        description: getErrorMessage(error, 'Something went wrong. Please try again.'),
         variant: 'destructive',
       });
     } finally {
@@ -232,7 +229,7 @@ export function FinishCookingDialog({
                       } catch (error) {
                         toast({
                           title: 'Could not finish cooking',
-                          description: errorMessage(error, 'Something went wrong. Please try again.'),
+                          description: getErrorMessage(error, 'Something went wrong. Please try again.'),
                           variant: 'destructive',
                         });
                       } finally {

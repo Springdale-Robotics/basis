@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Loader2, Search } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -15,6 +15,7 @@ import {
 import { storageAreaFormSchema, type StorageAreaFormData } from '@/types/forms';
 import type { StorageArea } from '@/types/models';
 import { searchEmojis } from '@/lib/emoji-picker-data';
+import { SearchInput } from '@/components/shared/SearchInput';
 import { cn } from '@/lib/utils';
 
 interface AreaFormProps {
@@ -108,15 +109,11 @@ export function AreaForm({
 
           <div className="space-y-2">
             <Label>Icon</Label>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search icons..."
-                value={iconSearch}
-                onChange={(e) => setIconSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
+            <SearchInput
+              placeholder="Search icons..."
+              value={iconSearch}
+              onChange={setIconSearch}
+            />
             <div className="grid grid-cols-9 gap-1 max-h-[180px] overflow-y-auto rounded-md border p-2">
               {matchingEmojis.length > 0 ? (
                 matchingEmojis.map((entry, i) => (

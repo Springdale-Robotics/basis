@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Plus, Search, Package } from 'lucide-react';
+import { Plus, Package } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,6 +16,7 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
+import { SearchInput } from '@/components/shared/SearchInput';
 import { inventoryApi } from '@/api/inventory';
 import type { StorageArea, InventoryItem } from '@/types/models';
 import { categoryOptions, unitOptions } from '@/lib/inventory-constants';
@@ -233,15 +234,11 @@ export function AddToListDialog({
         {mode === 'select' ? (
           <>
             {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search items..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
+            <SearchInput
+              placeholder="Search items..."
+              value={search}
+              onChange={setSearch}
+            />
 
             {/* Item list */}
             <div className="flex-1 min-h-0 max-h-[250px] overflow-y-auto border rounded-lg">

@@ -14,7 +14,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/shared/UserAvatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   DropdownMenu,
@@ -60,15 +60,6 @@ const ROLE_DESCRIPTIONS: Record<UserRole, string> = {
   kid: 'Limited access, suitable for children',
   visitor: 'View-only access to most features',
 };
-
-function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .map((n) => n[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
-}
 
 function getExpiryText(expiresAt: string): string {
   const expiry = new Date(expiresAt);
@@ -229,10 +220,7 @@ export function MembersSettingsPage() {
                 className="flex items-center justify-between rounded-lg border p-4"
               >
                 <div className="flex items-center gap-4">
-                  <Avatar>
-                    <AvatarImage src={member.avatarUrl} />
-                    <AvatarFallback>{getInitials(member.displayName)}</AvatarFallback>
-                  </Avatar>
+                  <UserAvatar user={member} size="lg" />
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{member.displayName}</span>

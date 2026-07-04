@@ -6,6 +6,8 @@ interface EmptyStateProps {
   title: string;
   description?: string;
   action?: ReactNode;
+  /** 'sm' is a compact variant for popovers, cards, and other tight spots. */
+  size?: 'sm' | 'default';
   className?: string;
 }
 
@@ -14,25 +16,35 @@ export function EmptyState({
   title,
   description,
   action,
+  size = 'default',
   className,
 }: EmptyStateProps) {
+  const compact = size === 'sm';
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center py-12 text-center',
+        'flex flex-col items-center justify-center text-center',
+        compact ? 'py-6' : 'py-12',
         className
       )}
     >
       {icon && (
-        <div className="mb-4 text-muted-foreground/50">{icon}</div>
+        <div className={cn('text-muted-foreground/50', compact ? 'mb-2' : 'mb-4')}>
+          {icon}
+        </div>
       )}
-      <h3 className="text-lg font-medium">{title}</h3>
+      <h3 className={cn('font-medium', compact ? 'text-sm' : 'text-lg')}>{title}</h3>
       {description && (
-        <p className="mt-1 text-sm text-muted-foreground max-w-sm">
+        <p
+          className={cn(
+            'text-muted-foreground max-w-sm',
+            compact ? 'mt-0.5 text-xs' : 'mt-1 text-sm'
+          )}
+        >
           {description}
         </p>
       )}
-      {action && <div className="mt-4">{action}</div>}
+      {action && <div className={compact ? 'mt-3' : 'mt-4'}>{action}</div>}
     </div>
   );
 }

@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Grid, List, Search, Clock, Users, Upload, ChefHat } from 'lucide-react';
+import { Plus, Grid, List, Clock, Users, Upload, ChefHat } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { SearchInput } from '@/components/shared/SearchInput';
 import { ErrorState } from '@/components/shared/ErrorState';
 import { getErrorMessage } from '@/lib/api-error';
 import { RecipeForm, type RecipeImageChange } from '@/components/recipes/RecipeForm';
@@ -123,15 +123,11 @@ export function RecipesPage() {
 
       {/* Filters */}
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search recipes..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
-        </div>
+        <SearchInput
+          placeholder="Search recipes..."
+          onChange={setSearch}
+          className="max-w-sm"
+        />
 
         <div className="flex items-center gap-2">
           <Button

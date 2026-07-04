@@ -4,8 +4,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ChefHat,
   Loader2,
-  Minus,
-  Plus,
   Trash2,
   Users,
   UtensilsCrossed,
@@ -22,12 +20,8 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { recipesApi } from '@/api/recipes';
 import { cn } from '@/lib/utils';
-import {
-  formatMultiplier,
-  formatServings,
-  multiplierFromServings,
-  snapNearInteger,
-} from '@/lib/servings';
+import { multiplierFromServings, snapNearInteger } from '@/lib/servings';
+import { ServingsStepper } from '@/components/recipes/ServingsStepper';
 import type { MealPlan, Recipe } from '@/types/models';
 
 interface MealActionDialogProps {
@@ -127,16 +121,6 @@ export function MealActionDialog({
 
   const imageSrc = recipeImageSrc(meal.recipe);
 
-  // Step by 1 when editing whole servings, by 0.5 when editing the multiplier.
-  const step = editsServings ? 1 : 0.5;
-  const minValue = editsServings ? Math.max(1, Math.round(baseServings! * 0.5)) : 0.5;
-  const maxValue = editsServings ? baseServings! * 10 : 10;
-
-  const adjustValue = (delta: number) => {
-    const next = Math.max(minValue, Math.min(maxValue, Number((value + delta).toFixed(2))));
-    setValue(next);
-  };
-
   // Fire-and-forget save so the user can close immediately; React Query keeps
   // the mutation alive even after unmount and updates the cache when it lands.
   const commitIfDirty = () => {
@@ -196,46 +180,14 @@ export function MealActionDialog({
 
         <div className="px-6 pb-4 space-y-4">
           {/* Servings stepper */}
-          <div className="flex items-center justify-between rounded-lg border p-3">
-            <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-muted-foreground" />
-              <div>
-                <div className="text-sm font-medium">
-                  {editsServings ? 'Servings' : 'Servings multiplier'}
-                </div>
-                {editsServings && Math.abs(multiplier - 1) > 1e-4 && (
-                  <div className="text-xs text-muted-foreground">
-                    {formatMultiplier(multiplier)}× recipe
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-8 w-8"
-                onClick={() => adjustValue(-step)}
-                disabled={value <= minValue}
-                aria-label="Decrease servings"
-              >
-                <Minus className="h-4 w-4" />
-              </Button>
-              <span className="w-12 text-center text-sm font-medium tabular-nums">
-                {editsServings ? formatServings(value) : `${value}×`}
-              </span>
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-8 w-8"
-                onClick={() => adjustValue(step)}
-                disabled={value >= maxValue}
-                aria-label="Increase servings"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
+          <ServingsStepper
+            value={value}
+            onChange={setValue}
+            editsServings={editsServings}
+            baseServings={baseServings}
+            computedMultiplier={multiplier}
+            icon={<Users className="h-4 w-4 text-muted-foreground" />}
+          />
 
           {dirty && (
             <div className="text-xs text-muted-foreground">

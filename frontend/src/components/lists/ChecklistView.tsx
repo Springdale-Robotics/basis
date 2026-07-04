@@ -26,18 +26,18 @@ import {
   ChevronDown,
   CornerDownRight,
 } from 'lucide-react';
-import { format, isPast, isToday, isTomorrow } from 'date-fns';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/shared/UserAvatar';
 import { Badge } from '@/components/ui/badge';
 import { householdsApi } from '@/api/households';
 import { ItemDetailSheet } from './ItemDetailSheet';
 import { BulkAddDialog } from './BulkAddDialog';
 import { useListMutations } from './useListMutations';
 import { cn, hoverAction } from '@/lib/utils';
+import { formatDueDate, isDueDateOverdue } from '@/lib/due-date';
 import type { List, ListItem, User } from '@/types/models';
 
 interface ChecklistViewProps {
@@ -47,14 +47,7 @@ interface ChecklistViewProps {
 
 function dueChip(dueDate: string | null | undefined) {
   if (!dueDate) return null;
-  const d = new Date(dueDate);
-  const overdue = isPast(d) && !isToday(d);
-  const label = isToday(d)
-    ? 'Today'
-    : isTomorrow(d)
-    ? 'Tomorrow'
-    : format(d, 'MMM d');
-  return { label, overdue };
+  return { label: formatDueDate(dueDate), overdue: isDueDateOverdue(dueDate) };
 }
 
 function findUser(users: User[], userId: string | null | undefined) {
@@ -145,14 +138,7 @@ function ItemRow({
           {chip.label}
         </Badge>
       )}
-      {assignee && (
-        <Avatar className="h-5 w-5">
-          <AvatarImage src={assignee.avatarUrl} />
-          <AvatarFallback className="text-[9px]">
-            {assignee.displayName?.[0]?.toUpperCase()}
-          </AvatarFallback>
-        </Avatar>
-      )}
+      {assignee && <UserAvatar user={assignee} size="xs" />}
       {!isSubtask && showAddSubtask && !hasSubtasks && (
         <Button
           variant="ghost"

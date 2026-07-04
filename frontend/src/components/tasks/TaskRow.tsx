@@ -1,14 +1,7 @@
 import { useState, useRef } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import {
-  format,
-  isToday,
-  isTomorrow,
-  isPast,
-  isYesterday,
-  differenceInDays,
-} from 'date-fns';
+import { isToday, isYesterday, differenceInDays } from 'date-fns';
 import {
   Check,
   Clock,
@@ -25,7 +18,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/shared/UserAvatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,6 +29,7 @@ import {
 import { AssigneePicker, type AssigneeValue } from './AssigneePicker';
 import { ChoreDecayMeter } from './ChoreDecayMeter';
 import { cn } from '@/lib/utils';
+import { formatDueDate, isDueDateOverdue } from '@/lib/due-date';
 import { useFeatureFlags } from '@/hooks/useFeatureFlags';
 import type { Task, User } from '@/types/models';
 import type { Group } from '@/api/groups';
@@ -60,15 +54,7 @@ interface TaskRowProps {
 }
 
 function dueLabel(dueDate: string): { text: string; overdue: boolean } {
-  const d = new Date(dueDate);
-  const overdue = isPast(d) && !isToday(d);
-  if (isToday(d)) return { text: 'Today', overdue: false };
-  if (isTomorrow(d)) return { text: 'Tomorrow', overdue: false };
-  const sameYear = d.getFullYear() === new Date().getFullYear();
-  return {
-    text: sameYear ? format(d, 'MMM d') : format(d, 'MMM d, yyyy'),
-    overdue,
-  };
+  return { text: formatDueDate(dueDate), overdue: isDueDateOverdue(dueDate) };
 }
 
 function lastDoneLabel(lastCompletedAt: string): string {
@@ -357,12 +343,7 @@ export function TaskRow({
           {!canClaim && (assignee || assigneeGroup) && (
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               {assignee ? (
-                <Avatar className="h-6 w-6">
-                  <AvatarImage src={assignee.avatarUrl} />
-                  <AvatarFallback className="text-[10px]">
-                    {assignee.displayName?.[0]?.toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
+                <UserAvatar user={assignee} size="sm" />
               ) : (
                 <Users className="h-4 w-4" />
               )}

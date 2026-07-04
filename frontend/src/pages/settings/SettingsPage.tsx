@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { NavLink, Routes, Route, Navigate } from 'react-router-dom';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { SETTINGS_NAV, ADMIN_ONLY_SETTINGS } from '@/lib/constants';
 import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
 import { cn } from '@/lib/utils';
@@ -128,9 +129,9 @@ function PlaceholderSettings({
       <CardContent className="p-6">
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold">{title}</h2>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+          <Badge variant="secondary" className="font-medium text-muted-foreground">
             Coming soon
-          </span>
+          </Badge>
         </div>
         <p className="mt-2 text-sm text-muted-foreground">{description}</p>
       </CardContent>

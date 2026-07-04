@@ -5,7 +5,6 @@ import {
   Plus,
   Camera,
   ChevronDown,
-  Search,
   Pin,
   Archive,
   Copy,
@@ -17,7 +16,7 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
+import { SearchInput } from '@/components/shared/SearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState } from '@/components/shared/EmptyState';
@@ -111,15 +110,11 @@ export function ListsPage() {
             <TabsTrigger value="archived">Archived</TabsTrigger>
           </TabsList>
         </Tabs>
-        <div className="relative">
-          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search lists…"
-            className="pl-8 sm:w-64"
-          />
-        </div>
+        <SearchInput
+          onChange={setSearch}
+          placeholder="Search lists…"
+          className="sm:w-64"
+        />
       </div>
 
       <ImageParseDialog

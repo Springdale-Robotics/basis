@@ -23,6 +23,7 @@ import { formatOcrForEditing } from '@/lib/recipe-utils';
 import { inventoryApi } from '@/api/inventory';
 import { cn } from '@/lib/utils';
 import { getErrorMessage } from '@/lib/api-error';
+import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { IngredientMatchRow } from './IngredientMatchRow';
 import { BulkIngredientActions } from './BulkIngredientActions';
 import { BulkImportRecipeDialog } from './BulkImportRecipeDialog';
@@ -431,7 +432,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
       setPdfBase64(btoa(binary));
       setPdfFileName(file.name);
     } catch (err) {
-      setPdfError(err instanceof Error ? err.message : 'Failed to read PDF');
+      setPdfError(getErrorMessage(err, 'Failed to read PDF'));
     }
   }, []);
 
@@ -529,7 +530,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
 
       throw new Error('Image processing timed out. Please try again.');
     } catch (e) {
-      setImageError(e instanceof Error ? e.message : 'Failed to process image');
+      setImageError(getErrorMessage(e, 'Failed to process image'));
       setImageProcessing(false);
     }
   }, []);
@@ -844,7 +845,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                   <div className="space-y-4">
                     {imageProcessing ? (
                       <div className="border-2 border-dashed rounded-lg p-8 text-center space-y-4">
-                        <Loader2 className="h-12 w-12 mx-auto text-primary animate-spin" />
+                        <LoadingSpinner className="h-12 w-12 mx-auto text-primary" />
                         <p className="text-sm font-medium">Processing image...</p>
                         <p className="text-xs text-muted-foreground">
                           Extracting text from image. This may take up to a minute.
@@ -1037,7 +1038,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
             <div className="space-y-4 py-4">
               {isLoadingSession ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                  <LoadingSpinner size="lg" />
                 </div>
               ) : session?.parsedRecipe ? (() => {
                 const recipe = session.parsedRecipe!;

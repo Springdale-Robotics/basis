@@ -6,21 +6,12 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Archive, Download, Loader2, Plus, Trash2, Info, RotateCcw } from 'lucide-react';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { EmptyState } from '@/components/shared/EmptyState';
 import { settingsApi } from '@/api/settings';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
 import { API_BASE_URL } from '@/lib/constants';
-
-function formatBytes(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let v = bytes;
-  let u = 0;
-  while (v >= 1024 && u < units.length - 1) {
-    v /= 1024;
-    u++;
-  }
-  return `${v.toFixed(v < 10 && u > 0 ? 1 : 0)} ${units[u]}`;
-}
+import { formatFileSize } from '@/lib/utils';
 
 export function BackupSettingsPage() {
   const queryClient = useQueryClient();
@@ -37,7 +28,7 @@ export function BackupSettingsPage() {
     onSuccess: (res) => {
       toast({
         title: 'Backup created',
-        description: `${res.filename} · ${formatBytes(res.bytes)} · ${(res.elapsedMs / 1000).toFixed(1)}s`,
+        description: `${res.filename} · ${formatFileSize(res.bytes)} · ${(res.elapsedMs / 1000).toFixed(1)}s`,
       });
       queryClient.invalidateQueries({ queryKey: ['system', 'backups'] });
     },
@@ -139,13 +130,13 @@ export function BackupSettingsPage() {
           )}
 
           {data.backups.length === 0 ? (
-            <div className="rounded-md border border-dashed p-8 text-center">
-              <Archive className="mx-auto h-8 w-8 text-muted-foreground" />
-              <p className="mt-2 text-sm font-medium">No backups yet</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Click "Back up now" to create your first backup.
-              </p>
-            </div>
+            <EmptyState
+              size="sm"
+              icon={<Archive className="h-8 w-8" />}
+              title="No backups yet"
+              description={'Click "Back up now" to create your first backup.'}
+              className="rounded-md border border-dashed p-8"
+            />
           ) : (
             <div className="divide-y rounded-md border">
               {data.backups.map((b) => (
@@ -156,7 +147,7 @@ export function BackupSettingsPage() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{b.filename}</p>
                     <p className="text-xs text-muted-foreground">
-                      {new Date(b.mtime).toLocaleString()} · {formatBytes(b.bytes)}
+                      {new Date(b.mtime).toLocaleString()} · {formatFileSize(b.bytes)}
                     </p>
                   </div>
                   <div className="flex gap-1">

@@ -16,6 +16,7 @@ import { Separator } from '@/components/ui/separator';
 import { recipesApi, type GenerateShoppingListResponse } from '@/api/recipes';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
 import { toast } from '@/hooks/useToast';
+import { getErrorMessage } from '@/lib/api-error';
 
 interface GenerateShoppingListDialogProps {
   open: boolean;
@@ -65,7 +66,7 @@ export function GenerateShoppingListDialog({
     onError: (error) => {
       toast({
         title: 'Could not preview shopping list',
-        description: error instanceof Error ? error.message : 'Failed to build the preview. Please try again.',
+        description: getErrorMessage(error, 'Failed to build the preview. Please try again.'),
         variant: 'destructive',
       });
     },
@@ -86,7 +87,7 @@ export function GenerateShoppingListDialog({
     onError: (error) => {
       toast({
         title: 'Could not generate shopping list',
-        description: error instanceof Error ? error.message : 'Failed to add items. Please try again.',
+        description: getErrorMessage(error, 'Failed to add items. Please try again.'),
         variant: 'destructive',
       });
     },
