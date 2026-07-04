@@ -21,7 +21,7 @@ import { lists, listItems } from '../../db/schema/lists.js';
 import { recipes, recipeIngredients } from '../../db/schema/recipes.js';
 import { calendarEvents, calendars } from '../../db/schema/calendars.js';
 import { getVisionProvider, getVisionProviderStatus } from './ai-providers/index.js';
-import { detectContentType, buildExtractionPrompt } from './extractors/type-detector.js';
+import { detectContentType } from './extractors/type-detector.js';
 import { normalizeListContent, parseListFromText } from './extractors/list-extractor.js';
 import { normalizeRecipeContent, parseRecipeFromText } from './extractors/recipe-extractor.js';
 import { normalizeCalendarContent, parseCalendarFromText } from './extractors/calendar-extractor.js';
@@ -663,90 +663,6 @@ function parseFromRawText(type: ParsedContentType, rawText: string): ParsedConte
     default:
       return { type: 'unknown', data: { rawText } };
   }
-}
-
-/**
- * Validate that LLM returned the expected structure for a content type.
- * Returns false if the LLM returned an array instead of an object,
- * or if required fields are missing.
- */
-function isValidLlmStructure(data: unknown, expectedType: ParsedContentType): boolean {
-  // Must be an object, not an array
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    return false;
-  }
-
-  const obj = data as Record<string, unknown>;
-
-  // Check for required fields based on type
-  switch (expectedType) {
-    case 'recipe':
-      // Recipe must have ingredients array
-      return 'ingredients' in obj && Array.isArray(obj.ingredients);
-
-    case 'list':
-      // List must have items array
-      return 'items' in obj && Array.isArray(obj.items);
-
-    case 'calendar_event':
-      // Calendar must have events array
-      return 'events' in obj && Array.isArray(obj.events);
-
-    default:
-      return true;
-  }
-}
-
-/**
- * Hybrid parsing: Use heuristic parser for structure but salvage ingredients from LLM array.
- * This handles cases where the LLM returns just the ingredients as an array instead of
- * a full recipe object.
- */
-function parseFromRawTextWithLlmIngredients(
-  rawText: string,
-  llmIngredients: unknown[]
-): ParsedContent {
-  // Start with heuristic parsing for title, instructions, etc.
-  const heuristicResult = parseRecipeFromText(rawText);
-
-  // Try to extract valid ingredients from the LLM array
-  const validIngredients: typeof heuristicResult.ingredients = [];
-
-  for (const item of llmIngredients) {
-    if (item && typeof item === 'object' && !Array.isArray(item)) {
-      const ing = item as Record<string, unknown>;
-      const name = (ing.name as string) || (ing.ingredient as string);
-
-      if (name && typeof name === 'string') {
-        validIngredients.push({
-          name: name.trim(),
-          quantity: typeof ing.quantity === 'number' ? ing.quantity : undefined,
-          unit: typeof ing.unit === 'string' ? ing.unit : undefined,
-          notes: typeof ing.notes === 'string' ? ing.notes : undefined,
-          confidence: typeof ing.confidence === 'number' ? ing.confidence : 0.8,
-        });
-      }
-    }
-  }
-
-  // Use LLM ingredients if they look better than heuristic ones
-  // (more items, or items with quantities)
-  const llmHasQuantities = validIngredients.some(i => i.quantity !== undefined);
-  const heuristicHasQuantities = heuristicResult.ingredients.some(i => i.quantity !== undefined);
-
-  if (
-    validIngredients.length > 0 &&
-    (validIngredients.length >= heuristicResult.ingredients.length || llmHasQuantities && !heuristicHasQuantities)
-  ) {
-    logger.info({
-      llmCount: validIngredients.length,
-      heuristicCount: heuristicResult.ingredients.length,
-      usingLlm: true,
-    }, 'Using LLM ingredients over heuristic');
-    heuristicResult.ingredients = validIngredients;
-  }
-
-  return { type: 'recipe', data: heuristicResult };
 }
 
 async function createListFromContent(

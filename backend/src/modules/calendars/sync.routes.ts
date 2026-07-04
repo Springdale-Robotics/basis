@@ -5,7 +5,7 @@ import { calendars } from '../../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
-import { encrypt, decrypt, generateOAuthState } from '../../lib/crypto.js';
+import { encrypt, generateOAuthState } from '../../lib/crypto.js';
 import { config } from '../../config/index.js';
 import { redis } from '../../config/redis.js';
 import {
@@ -43,9 +43,9 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/sync/google/connect',
     { preHandler: [authMiddleware, requireMember()] },
-    async (request, reply) => {
+    async (request, _reply) => {
       if (!config.GOOGLE_CLIENT_ID || !config.GOOGLE_CLIENT_SECRET) {
-        throw Errors.badRequest('Google Calendar sync is not configured');
+        throw Errors.validation('Google Calendar sync is not configured');
       }
 
       // Generate OAuth state with user info
@@ -139,7 +139,7 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
       const tokensStr = await redis.get(tempTokenKey);
 
       if (!tokensStr) {
-        throw Errors.badRequest('No pending Google connection. Please start the OAuth flow again.');
+        throw Errors.validation('No pending Google connection. Please start the OAuth flow again.');
       }
 
       const tokens = JSON.parse(tokensStr) as {
@@ -175,7 +175,7 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
       const tokensStr = await redis.get(tempTokenKey);
 
       if (!tokensStr) {
-        throw Errors.badRequest('No pending Google connection. Please start the OAuth flow again.');
+        throw Errors.validation('No pending Google connection. Please start the OAuth flow again.');
       }
 
       const tokens = JSON.parse(tokensStr) as {
@@ -252,7 +252,7 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
       }
 
       if (!calendar.syncProvider) {
-        throw Errors.badRequest('Calendar is not configured for sync');
+        throw Errors.validation('Calendar is not configured for sync');
       }
 
       let syncResult;
@@ -267,7 +267,7 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
           request.user!.householdId
         );
       } else {
-        throw Errors.badRequest('Unsupported sync provider');
+        throw Errors.validation('Unsupported sync provider');
       }
 
       return {
@@ -366,10 +366,10 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/sync/outlook/connect',
     { preHandler: [authMiddleware, requireMember()] },
-    async (request, reply) => {
+    async (request, _reply) => {
       const msalClient = createMsalClient();
       if (!msalClient) {
-        throw Errors.badRequest('Outlook Calendar sync is not configured');
+        throw Errors.validation('Outlook Calendar sync is not configured');
       }
 
       // Generate OAuth state with user info
@@ -466,7 +466,7 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
       const tokensStr = await redis.get(tempTokenKey);
 
       if (!tokensStr) {
-        throw Errors.badRequest('No pending Outlook connection. Please start the OAuth flow again.');
+        throw Errors.validation('No pending Outlook connection. Please start the OAuth flow again.');
       }
 
       const tokens = JSON.parse(tokensStr) as {
@@ -502,7 +502,7 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
       const tokensStr = await redis.get(tempTokenKey);
 
       if (!tokensStr) {
-        throw Errors.badRequest('No pending Outlook connection. Please start the OAuth flow again.');
+        throw Errors.validation('No pending Outlook connection. Please start the OAuth flow again.');
       }
 
       const tokens = JSON.parse(tokensStr) as {

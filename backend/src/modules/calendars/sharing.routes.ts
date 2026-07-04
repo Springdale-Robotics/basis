@@ -8,7 +8,7 @@ import {
   groups,
   users,
 } from '../../db/schema/index.js';
-import { eq, and, or, inArray } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { emitHouseholdEvent } from '../../websocket/events.js';
@@ -21,7 +21,6 @@ import {
 
 // Permission levels for calendar sharing (RFC 5545 aligned)
 const permissionLevelSchema = z.enum(['view_busy', 'view', 'edit']);
-type PermissionLevel = z.infer<typeof permissionLevelSchema>;
 
 const ROLE_NAMES = ['admin', 'member', 'kid', 'visitor'] as const;
 const ROLE_LABELS: Record<string, string> = {

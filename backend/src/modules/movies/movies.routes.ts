@@ -9,12 +9,9 @@ import {
   watchProgress,
   hlsStreams,
 } from '../../db/schema/index.js';
-import { eq, and, desc, asc, sql, isNull } from 'drizzle-orm';
+import { eq, and, desc, asc, sql } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
-import * as fs from 'fs/promises';
-import { createReadStream } from 'fs';
-import * as path from 'path';
 
 const setMovieMetadataSchema = z.object({
   title: z.string().min(1).max(500),
@@ -34,15 +31,6 @@ const createTvShowSchema = z.object({
   firstAirDate: z.string().optional(),
   genres: z.array(z.string()).optional(),
   tmdbId: z.number().optional(),
-});
-
-const setEpisodeSchema = z.object({
-  showId: z.string().uuid(),
-  seasonNumber: z.number().int().min(0),
-  episodeNumber: z.number().int().min(1),
-  name: z.string().optional(),
-  overview: z.string().optional(),
-  airDate: z.string().optional(),
 });
 
 export async function moviesRoutes(app: FastifyInstance): Promise<void> {
@@ -545,8 +533,9 @@ export async function moviesRoutes(app: FastifyInstance): Promise<void> {
       if (!file) throw Errors.notFound('File');
 
       // Auto-complete if near end (within 5%)
-      const autoComplete =
-        durationSeconds && positionSeconds > durationSeconds * 0.95;
+      const autoComplete = Boolean(
+        durationSeconds && positionSeconds > durationSeconds * 0.95
+      );
 
       const existing = await db.query.watchProgress.findFirst({
         where: and(

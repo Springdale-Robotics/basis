@@ -1,5 +1,6 @@
 import rruleLib from 'rrule';
-const { RRule, RRuleSet, rrulestr, Frequency, Weekday } = rruleLib;
+import type { Frequency as RRuleFrequency, Weekday as RRuleWeekday } from 'rrule';
+const { RRule, RRuleSet, rrulestr, Frequency } = rruleLib;
 import type { calendarEvents } from '../../db/schema/index.js';
 
 // Infer CalendarEvent type from the schema
@@ -55,7 +56,7 @@ const FREQUENCY_MAP: Record<number, 'daily' | 'weekly' | 'monthly' | 'yearly'> =
   [Frequency.YEARLY]: 'yearly',
 };
 
-const REVERSE_FREQUENCY_MAP: Record<string, Frequency> = {
+const REVERSE_FREQUENCY_MAP: Record<string, RRuleFrequency> = {
   'daily': Frequency.DAILY,
   'weekly': Frequency.WEEKLY,
   'monthly': Frequency.MONTHLY,
@@ -73,7 +74,7 @@ const DAY_MAP: Record<string, number> = {
   'SU': RRule.SU.weekday,
 };
 
-const WEEKDAY_OBJECTS: Weekday[] = [RRule.MO, RRule.TU, RRule.WE, RRule.TH, RRule.FR, RRule.SA, RRule.SU];
+const WEEKDAY_OBJECTS: RRuleWeekday[] = [RRule.MO, RRule.TU, RRule.WE, RRule.TH, RRule.FR, RRule.SA, RRule.SU];
 
 /**
  * Parse an RRULE string into structured options
@@ -105,7 +106,7 @@ export function parseRRule(rruleString: string): RecurrenceOptions | null {
     if (options.byweekday && options.byweekday.length > 0) {
       result.byDay = options.byweekday.map((wd) => {
         // wd can be a number (0-6) or a Weekday object
-        const dayNum = typeof wd === 'number' ? wd : (wd as Weekday).weekday;
+        const dayNum = typeof wd === 'number' ? wd : (wd as RRuleWeekday).weekday;
         const days = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'];
         return days[dayNum];
       });
@@ -132,12 +133,12 @@ export function parseRRule(rruleString: string): RecurrenceOptions | null {
  */
 export function buildRRule(options: RecurrenceOptions, dtstart: Date): string {
   const ruleOptions: {
-    freq: Frequency;
+    freq: RRuleFrequency;
     interval: number;
     dtstart: Date;
     until?: Date;
     count?: number;
-    byweekday?: Weekday[];
+    byweekday?: RRuleWeekday[];
     bymonthday?: number[];
     bysetpos?: number[];
   } = {

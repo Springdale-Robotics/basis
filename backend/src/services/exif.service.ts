@@ -80,7 +80,7 @@ export class ExifService {
     }
   }
 
-  private parseExifBuffer(exifBuffer: Buffer): Record<string, unknown> {
+  private parseExifBuffer(_exifBuffer: Buffer): Record<string, unknown> {
     // Sharp provides raw EXIF buffer, we need to parse it
     // This is a simplified parser - for production, consider using exif-parser package
     try {

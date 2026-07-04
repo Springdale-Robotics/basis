@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { db } from '../config/database.js';
-import { sessions, users, devices } from '../db/schema/index.js';
+import { sessions, users } from '../db/schema/index.js';
 import { eq, and, gt } from 'drizzle-orm';
 import { Errors } from '../lib/errors.js';
 import type { UserRole } from '../lib/validators.js';
@@ -61,7 +61,7 @@ export async function resolveSession(sessionId: string) {
 
 export async function authMiddleware(
   request: FastifyRequest,
-  reply: FastifyReply
+  _reply: FastifyReply
 ): Promise<void> {
   const sessionId = request.cookies?.['session'];
 
@@ -106,7 +106,7 @@ export async function optionalAuthMiddleware(
 }
 
 export function requireRole(...allowedRoles: UserRole[]) {
-  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+  return async (request: FastifyRequest, _reply: FastifyReply): Promise<void> => {
     if (!request.user) {
       throw Errors.unauthorized();
     }
@@ -126,7 +126,7 @@ export function requireMember() {
 }
 
 export function requireAuthenticated() {
-  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+  return async (request: FastifyRequest, _reply: FastifyReply): Promise<void> => {
     if (!request.user) {
       throw Errors.unauthorized();
     }

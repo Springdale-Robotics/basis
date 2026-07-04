@@ -1,4 +1,4 @@
-import pino from 'pino';
+import { pino } from 'pino';
 import { AsyncLocalStorage } from 'async_hooks';
 import { config } from '../config/index.js';
 
@@ -13,7 +13,7 @@ export const asyncLocalStorage = new AsyncLocalStorage<RequestContext>();
 export const logger = pino({
   level: config.LOG_LEVEL,
   formatters: {
-    level: (label) => ({ level: label }),
+    level: (label: string) => ({ level: label }),
   },
   mixin: () => {
     const store = asyncLocalStorage.getStore();

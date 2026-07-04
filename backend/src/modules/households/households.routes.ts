@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { db } from '../../config/database.js';
 import { households, users, memberInvites } from '../../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
-import { authMiddleware, requireAdmin, requireMember } from '../../middleware/auth.middleware.js';
+import { authMiddleware, requireAdmin } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { randomBytes } from 'crypto';
 import { userRoleSchema } from '../../lib/validators.js';

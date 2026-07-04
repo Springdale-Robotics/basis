@@ -1,7 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { authMiddleware, requireAdmin } from '../../middleware/auth.middleware.js';
-import { requireResourceAccess } from '../../middleware/permission.middleware.js';
 import {
   permissionService,
   canAccess,
@@ -20,7 +19,6 @@ import {
   granteeTypeSchema,
   permissionLevelSchema,
   featureSchema,
-  type ResourceType,
   type Feature,
 } from '../../lib/validators.js';
 

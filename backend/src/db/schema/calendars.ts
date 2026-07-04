@@ -10,7 +10,6 @@ import {
 } from 'drizzle-orm/pg-core';
 import { households } from './households.js';
 import { users } from './users.js';
-import { devices } from './devices.js';
 
 export const syncProviderEnum = pgEnum('sync_provider', ['google', 'outlook']);
 export const calendarTypeEnum = pgEnum('calendar_type', ['individual', 'group', 'synced']);

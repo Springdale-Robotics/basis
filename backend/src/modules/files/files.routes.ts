@@ -10,12 +10,11 @@ import {
   playlistItems,
   favorites,
   ratings,
-  thumbnails,
   households,
 } from '../../db/schema/index.js';
-import { eq, and, desc, inArray, sql } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
-import { requireFileAccess, requireAlbumAccess, requireFilesAccess } from '../../middleware/permission.middleware.js';
+import { requireFileAccess, requireFilesAccess } from '../../middleware/permission.middleware.js';
 import { setResourceDefaults, getRestrictionInfo, setRestriction, canAccess } from '../../services/permission.service.js';
 import { Errors, ErrorCode, AppError } from '../../lib/errors.js';
 import { config } from '../../config/index.js';
@@ -135,7 +134,7 @@ async function getDescendantFolderIds(householdId: string, folderIds: string[]):
     SELECT id FROM folder_tree
   `;
 
-  return result.map((row: { id: string }) => row.id);
+  return result.map((row) => (row as { id: string }).id);
 }
 
 // Get all files inside a folder tree
@@ -337,7 +336,7 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/upload',
     { preHandler: [authMiddleware, requireFilesAccess('edit')] },
-    async (request, reply) => {
+    async (request, _reply) => {
       const data = await request.file();
 
       if (!data) {
@@ -1459,12 +1458,13 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
 
       // Walk up the folder tree
       while (currentId) {
-        const folder = await db.query.folders.findFirst({
-          where: and(
-            eq(folders.id, currentId),
-            eq(folders.householdId, user.householdId)
-          ),
-        });
+        const folder: typeof folders.$inferSelect | undefined =
+          await db.query.folders.findFirst({
+            where: and(
+              eq(folders.id, currentId),
+              eq(folders.householdId, user.householdId)
+            ),
+          });
 
         if (!folder) break;
 

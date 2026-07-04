@@ -129,7 +129,7 @@ export async function fetchOutlookEvents(
   accessToken: string,
   outlookCalendarId: string,
   startDateTime?: Date,
-  endDateTime?: Date
+  _endDateTime?: Date
 ): Promise<OutlookCalendarEvent[]> {
   const client = getGraphClient(accessToken);
 

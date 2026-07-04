@@ -2,9 +2,7 @@ import { db } from '../../config/database.js';
 import { inventoryItems, ingredientAliases } from '../../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
 import type { ParsedIngredient, IngredientMatch } from '../../db/schema/recipes.js';
-import type { InventoryItem } from '../../db/schema/inventory.js';
-import { findConversionChain as findGlobalConversion, getUnitCategory } from '../../lib/unit-conversions.js';
-import { isCountUnit as isQuantityUnit } from '../../lib/units.js';
+import { getUnitCategory } from '../../lib/unit-conversions.js';
 
 /**
  * Look up ingredient aliases from the database for a household.
@@ -154,38 +152,6 @@ const INGREDIENT_SYNONYMS: Record<string, string[]> = {
   'spaghetti': ['spaghetti pasta'],
   'linguine': ['linguini'],
   'fettuccine': ['fettuccini'],
-};
-
-// Common unit mappings for conversion suggestions
-const UNIT_MAPPINGS: Record<string, string[]> = {
-  'cup': ['cups', 'c'],
-  'cups': ['cup', 'c'],
-  'tablespoon': ['tbsp', 'tablespoons', 'tbs', 'T'],
-  'tbsp': ['tablespoon', 'tablespoons', 'tbs', 'T'],
-  'teaspoon': ['tsp', 'teaspoons', 't'],
-  'tsp': ['teaspoon', 'teaspoons', 't'],
-  'ounce': ['oz', 'ounces'],
-  'oz': ['ounce', 'ounces'],
-  'pound': ['lb', 'lbs', 'pounds'],
-  'lb': ['pound', 'lbs', 'pounds'],
-  'gram': ['g', 'grams', 'gm'],
-  'g': ['gram', 'grams', 'gm'],
-  'kilogram': ['kg', 'kilograms', 'kilo'],
-  'kg': ['kilogram', 'kilograms', 'kilo'],
-  'milliliter': ['ml', 'milliliters', 'mL'],
-  'ml': ['milliliter', 'milliliters', 'mL'],
-  'liter': ['l', 'liters', 'L', 'litre', 'litres'],
-  'l': ['liter', 'liters', 'L', 'litre', 'litres'],
-  'piece': ['pieces', 'pcs', 'pc'],
-  'pieces': ['piece', 'pcs', 'pc'],
-  'clove': ['cloves'],
-  'cloves': ['clove'],
-  'bunch': ['bunches'],
-  'bunches': ['bunch'],
-  'head': ['heads'],
-  'heads': ['head'],
-  'can': ['cans', 'tin', 'tins'],
-  'cans': ['can', 'tin', 'tins'],
 };
 
 export interface IngredientMatchResult {

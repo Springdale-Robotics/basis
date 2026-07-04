@@ -14,7 +14,7 @@ export function requireResourceAccess(
   level: PermissionLevel,
   getResourceId: ResourceIdGetter
 ): preHandlerHookHandler {
-  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+  return async (request: FastifyRequest, _reply: FastifyReply): Promise<void> => {
     if (!request.user) {
       throw Errors.unauthorized();
     }
@@ -133,7 +133,7 @@ export function requireOwnerOrAccess(
   level: PermissionLevel,
   getResourceId: ResourceIdGetter
 ): preHandlerHookHandler {
-  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+  return async (request: FastifyRequest, _reply: FastifyReply): Promise<void> => {
     if (!request.user) {
       throw Errors.unauthorized();
     }
@@ -173,7 +173,7 @@ export function requireFeatureAccess(
   feature: Feature,
   level: PermissionLevel
 ): preHandlerHookHandler {
-  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+  return async (request: FastifyRequest, _reply: FastifyReply): Promise<void> => {
     if (!request.user) {
       throw Errors.unauthorized();
     }

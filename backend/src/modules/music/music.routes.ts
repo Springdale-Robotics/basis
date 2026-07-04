@@ -9,10 +9,8 @@ import {
   listenHistory,
   playQueues,
   playQueueItems,
-  playlists,
-  playlistItems,
 } from '../../db/schema/index.js';
-import { eq, and, desc, asc, sql, inArray } from 'drizzle-orm';
+import { eq, and, desc, asc, sql } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { createReadStream } from 'fs';

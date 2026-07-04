@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../../config/database.js';
 import { files } from '../../db/schema/index.js';
-import { eq, and, desc, asc, sql } from 'drizzle-orm';
+import { eq, and, desc, asc } from 'drizzle-orm';
 import { authMiddleware } from '../../middleware/auth.middleware.js';
 import { permissionService, type PermissionContext } from '../../services/permission.service.js';
 

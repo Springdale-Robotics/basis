@@ -1,3 +1,6 @@
+// opossum ships without type declarations and no @types package is installed,
+// so the default import resolves to an untyped (any) module.
+// @ts-expect-error -- untyped third-party module
 import CircuitBreaker from 'opossum';
 import { logger } from './logger.js';
 

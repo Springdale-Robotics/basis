@@ -17,7 +17,6 @@ import { hexColorSchema, calendarTypeSchema, iCalRRuleSchema } from '../../lib/v
 import { emitCalendarEvent } from '../../websocket/events.js';
 import { logger } from '../../lib/logger.js';
 import {
-  parseIcsContent,
   importIcsToCalendar,
   exportCalendarToIcs,
   exportAllCalendarsToIcs,
@@ -27,7 +26,6 @@ import {
   createVirtualInstance,
   addExDate,
   truncateRRule,
-  presetToRRule,
   parseInstanceId,
   isRecurringMaster,
 } from './recurrence.service.js';
@@ -840,7 +838,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
       }
 
       if (!masterEvent.recurrenceRule || !isRecurringMaster(masterEvent)) {
-        throw Errors.badRequest('Event is not a recurring master event');
+        throw Errors.validation('Event is not a recurring master event');
       }
 
       // Check if exception already exists for this instance
@@ -921,7 +919,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
       }
 
       if (!masterEvent.recurrenceRule || !isRecurringMaster(masterEvent)) {
-        throw Errors.badRequest('Event is not a recurring master event');
+        throw Errors.validation('Event is not a recurring master event');
       }
 
       const instanceDate = new Date(request.params.originalStartTime);
@@ -1494,7 +1492,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
       // Get multipart file
       const data = await request.file();
       if (!data) {
-        throw Errors.badRequest('No file uploaded');
+        throw Errors.validation('No file uploaded');
       }
 
       // Read file content
@@ -1506,7 +1504,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
 
       // Validate it's an ICS file
       if (!icsContent.includes('BEGIN:VCALENDAR')) {
-        throw Errors.badRequest('Invalid ICS file');
+        throw Errors.validation('Invalid ICS file');
       }
 
       // Import events

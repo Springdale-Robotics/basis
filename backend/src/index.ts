@@ -5,7 +5,6 @@ import { redis } from './config/redis.js';
 import { logger } from './lib/logger.js';
 import { config } from './config/index.js';
 import { db } from './config/database.js';
-import { households } from './db/schema/index.js';
 import { resumeTunnel, stopTunnel as stopCloudflareTunnel } from './lib/cloudflared.js';
 import { probeSharp } from './lib/sharp.js';
 

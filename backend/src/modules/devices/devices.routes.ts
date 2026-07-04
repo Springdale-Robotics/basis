@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../../config/database.js';
 import { devices, deviceSettings, deviceRules } from '../../db/schema/index.js';
+import type { DeviceRuleCondition } from '../../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
 import { authMiddleware, requireAdmin, requireMember } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
@@ -184,7 +185,7 @@ export async function devicesRoutes(app: FastifyInstance): Promise<void> {
         .values({
           deviceId: request.params.id,
           ruleType: input.ruleType,
-          condition: input.condition,
+          condition: input.condition as DeviceRuleCondition | undefined,
           allowedPages: input.allowedPages || [],
           deniedPages: input.deniedPages || [],
           defaultUserId: input.defaultUserId,

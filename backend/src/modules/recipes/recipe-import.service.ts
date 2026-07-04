@@ -866,7 +866,7 @@ export async function confirmImportSession(
   // Create ingredients with inventory links
   if (finalRecipe.ingredients.length > 0) {
     await db.insert(recipeIngredients).values(
-      finalRecipe.ingredients.map((ing, index) => {
+      finalRecipe.ingredients.map((ing, _index) => {
         const match = ingredientMatches.find(m => m.parsedName === ing.name);
         // Use user-modified unit if available, otherwise fall back to parsed unit
         const unit = match?.modifiedUnit ?? ing.unit;
@@ -883,9 +883,12 @@ export async function confirmImportSession(
     );
   }
 
-  // Auto-create ingredient aliases for manual matches where names differ
+  // Auto-create ingredient aliases for manual matches where names differ.
+  // (Previously gated on matchReason === 'manual', which is never true — a
+  // manual match is recorded as matchStatus === 'manual', so this block was
+  // dead. Corrected to the intended condition.)
   for (const match of ingredientMatches) {
-    if (match.matchStatus === 'matched' && match.matchedItemId && match.matchReason === 'manual') {
+    if (match.matchStatus === 'manual' && match.matchedItemId) {
       const parsedNorm = normalizeIngredientName(match.parsedName);
       // Get the matched item name
       const item = await db.query.inventoryItems.findFirst({

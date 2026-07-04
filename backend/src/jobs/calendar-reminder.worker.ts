@@ -1,7 +1,7 @@
 import { Job } from 'bullmq';
 import { db } from '../config/database.js';
 import { eventReminders, calendarEvents, calendars, notifications } from '../db/schema/index.js';
-import { eq, and, lte, gte, isNull } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { emitNotification } from '../websocket/events.js';
 import { logger } from '../lib/logger.js';
 
@@ -19,8 +19,6 @@ export async function processCalendarReminderJob(job: Job<CalendarReminderJobDat
 
   try {
     const now = new Date();
-    const lookAheadMinutes = 60; // Check reminders due in the next hour
-    const lookAhead = new Date(now.getTime() + lookAheadMinutes * 60 * 1000);
 
     // Find all unsent reminders for events starting within the look-ahead window
     const reminders = await db.query.eventReminders.findMany({

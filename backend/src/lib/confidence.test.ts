@@ -6,7 +6,6 @@ import {
   getDecayRate,
   sortTranchesForDepletion,
   planDepletion,
-  DEFAULT_THRESHOLDS,
   type Tranche,
   type AreaInfo,
 } from './confidence.js';

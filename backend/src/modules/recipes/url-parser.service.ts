@@ -1,5 +1,5 @@
 import * as cheerio from 'cheerio';
-import type { ParsedRecipe, ParsedIngredient, IngredientGroup } from '../../db/schema/recipes.js';
+import type { ParsedRecipe, ParsedIngredient } from '../../db/schema/recipes.js';
 // Raw-string emission. URL extractors return ingredients as
 // `{name: rawString}` only — the downstream session re-parses each via CRF
 // (see processUrlImportSession). Keeping URL parsing regex-free here means
@@ -188,6 +188,7 @@ function parseSchemaOrgRecipe(data: Record<string, unknown>, sourceUrl: string):
 async function tryRecipeClipper(html: string, sourceUrl: string, warnings: string[]): Promise<UrlParseResult | null> {
   try {
     // Dynamic import to handle potential loading issues
+    // @ts-ignore - @julianpoy/recipe-clipper ships no type declarations
     const clipperModule = await import('@julianpoy/recipe-clipper');
     const RecipeClipper = clipperModule.default || clipperModule;
 

@@ -1,6 +1,6 @@
 import { emitToHousehold, emitToUser, emitToRoom, broadcastToConnectedHouseholds } from './index.js';
 import { db } from '../config/database.js';
-import { connectedHouseholds, sharedResources } from '../db/schema/index.js';
+import { sharedResources } from '../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
 
 // Event type definitions
@@ -185,11 +185,11 @@ export async function emitRecipeEvent(householdId: string, payload: RecipeEventP
       where: and(
         eq(sharedResources.resourceType, 'recipe'),
         eq(sharedResources.resourceId, payload.recipeId),
-        eq(sharedResources.fromHouseholdId, householdId)
+        eq(sharedResources.householdId, householdId)
       ),
     });
 
-    const connectedIds = sharedWith.map(s => s.toHouseholdId);
+    const connectedIds = sharedWith.map(s => s.sharedWithHouseholdId);
     if (connectedIds.length > 0) {
       await broadcastToConnectedHouseholds(householdId, 'recipe:shared_update', payload, connectedIds);
     }
