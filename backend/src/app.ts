@@ -14,6 +14,7 @@ import { existsSync } from 'fs';
 import { config, isDev } from './config/index.js';
 import { logger } from './lib/logger.js';
 import { requestIdMiddleware } from './middleware/request-id.middleware.js';
+import { csrfMiddleware, issueCsrfToken } from './middleware/csrf.middleware.js';
 import { errorHandler, notFoundHandler } from './middleware/error.middleware.js';
 import { recordHttpRequest } from './lib/metrics.js';
 
@@ -193,6 +194,17 @@ export async function buildApp(): Promise<FastifyInstance> {
       credentials: true,
     });
     await apiScope.register(fastifyCompress);
+
+    // CSRF: seed a token cookie on safe requests, enforce the double-submit
+    // header on state-changing ones. Scoped to the browser API only.
+    apiScope.addHook('onRequest', csrfMiddleware);
+
+    // Bootstrap endpoint so the SPA can obtain a token before its first
+    // mutation (and refresh it after a 403). Also sets the cookie.
+    apiScope.get('/api/v1/auth/csrf', async (request, reply) => {
+      const token = issueCsrfToken(request, reply);
+      return { success: true, data: { token } };
+    });
 
     await apiScope.register(healthRoutes, { prefix: '/api/v1/health' });
     await apiScope.register(setupRoutes, { prefix: '/api/v1/setup' });

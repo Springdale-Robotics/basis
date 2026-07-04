@@ -61,6 +61,76 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return apiResponse.data as T;
 }
 
+// ─── CSRF (double-submit cookie) ──────────────────────────────────────────
+// The backend seeds a readable `csrf-token` cookie on safe requests and
+// requires the same value in the X-CSRF-Token header on state-changing ones.
+const CSRF_COOKIE = 'csrf-token';
+export const CSRF_HEADER = 'X-CSRF-Token';
+let cachedCsrfToken: string | null = null;
+
+function readCsrfCookie(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)csrf-token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+export async function getCsrfToken(forceRefresh = false): Promise<string | null> {
+  if (!forceRefresh) {
+    const fromCookie = readCsrfCookie();
+    if (fromCookie) return (cachedCsrfToken = fromCookie);
+    if (cachedCsrfToken) return cachedCsrfToken;
+  }
+  try {
+    const res = await fetch(`${API_BASE_URL}/auth/csrf`, { credentials: 'include' });
+    if (res.ok) {
+      const json = await res.json();
+      cachedCsrfToken = json?.data?.token ?? readCsrfCookie();
+      return cachedCsrfToken;
+    }
+  } catch {
+    /* offline or unreachable — fall through, the request will fail normally */
+  }
+  return readCsrfCookie();
+}
+
+// Shared path for POST/PUT/PATCH/DELETE: injects the CSRF header and retries
+// once with a fresh token if the server rejects it (e.g. cookie rotated).
+async function mutatingRequest<T>(
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+  url: string,
+  body: string | undefined,
+  baseHeaders: HeadersInit | undefined,
+  extraFetchOptions: RequestInit
+): Promise<T> {
+  const send = async (token: string | null): Promise<Response> =>
+    fetch(url, {
+      method,
+      credentials: 'include',
+      headers: {
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { [CSRF_HEADER]: token } : {}),
+        ...baseHeaders,
+      },
+      body,
+      ...extraFetchOptions,
+    });
+
+  let response = await send(await getCsrfToken());
+  if (response.status === 403) {
+    // Might be a stale/missing CSRF token — refresh once and retry.
+    const cloned = response.clone();
+    let isCsrf = false;
+    try {
+      isCsrf = (await cloned.json())?.error?.code === 'AUTH_1006';
+    } catch {
+      /* not JSON — treat as a real 403 */
+    }
+    if (isCsrf) {
+      response = await send(await getCsrfToken(true));
+    }
+  }
+  return handleResponse<T>(response);
+}
+
 function buildUrl(path: string, params?: Record<string, string | number | boolean | undefined>): string {
   const url = new URL(`${API_BASE_URL}${path}`, window.location.origin);
 
@@ -97,21 +167,15 @@ export async function apiPost<T, D = unknown>(
   data?: D,
   options?: RequestOptions
 ): Promise<T> {
-  const { params, ...fetchOptions } = options || {};
+  const { params, headers, ...fetchOptions } = options || {};
   const url = buildUrl(path, params);
-
-  const response = await fetch(url, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...fetchOptions?.headers,
-    },
-    body: data ? JSON.stringify(data) : undefined,
-    ...fetchOptions,
-  });
-
-  return handleResponse<T>(response);
+  return mutatingRequest<T>(
+    'POST',
+    url,
+    data ? JSON.stringify(data) : undefined,
+    headers,
+    fetchOptions
+  );
 }
 
 export async function apiPut<T, D = unknown>(
@@ -119,21 +183,15 @@ export async function apiPut<T, D = unknown>(
   data?: D,
   options?: RequestOptions
 ): Promise<T> {
-  const { params, ...fetchOptions } = options || {};
+  const { params, headers, ...fetchOptions } = options || {};
   const url = buildUrl(path, params);
-
-  const response = await fetch(url, {
-    method: 'PUT',
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...fetchOptions?.headers,
-    },
-    body: data ? JSON.stringify(data) : undefined,
-    ...fetchOptions,
-  });
-
-  return handleResponse<T>(response);
+  return mutatingRequest<T>(
+    'PUT',
+    url,
+    data ? JSON.stringify(data) : undefined,
+    headers,
+    fetchOptions
+  );
 }
 
 export async function apiPatch<T, D = unknown>(
@@ -141,39 +199,27 @@ export async function apiPatch<T, D = unknown>(
   data?: D,
   options?: RequestOptions
 ): Promise<T> {
-  const { params, ...fetchOptions } = options || {};
+  const { params, headers, ...fetchOptions } = options || {};
   const url = buildUrl(path, params);
-
-  const response = await fetch(url, {
-    method: 'PATCH',
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...fetchOptions?.headers,
-    },
-    body: data ? JSON.stringify(data) : undefined,
-    ...fetchOptions,
-  });
-
-  return handleResponse<T>(response);
+  return mutatingRequest<T>(
+    'PATCH',
+    url,
+    data ? JSON.stringify(data) : undefined,
+    headers,
+    fetchOptions
+  );
 }
 
 export async function apiDelete<T>(path: string, options?: RequestOptions): Promise<T> {
-  const { params, data, ...fetchOptions } = options || {};
+  const { params, data, headers, ...fetchOptions } = options || {};
   const url = buildUrl(path, params);
-
-  const response = await fetch(url, {
-    method: 'DELETE',
-    credentials: 'include',
-    headers: data ? {
-      'Content-Type': 'application/json',
-      ...fetchOptions?.headers,
-    } : fetchOptions?.headers,
-    body: data ? JSON.stringify(data) : undefined,
-    ...fetchOptions,
-  });
-
-  return handleResponse<T>(response);
+  return mutatingRequest<T>(
+    'DELETE',
+    url,
+    data ? JSON.stringify(data) : undefined,
+    headers,
+    fetchOptions
+  );
 }
 
 export async function apiUpload<T>(
@@ -181,11 +227,13 @@ export async function apiUpload<T>(
   file: File,
   options?: RequestOptions & { onProgress?: (progress: number) => void }
 ): Promise<T> {
-  const { params, onProgress, ...fetchOptions } = options || {};
+  const { params, onProgress, headers, ...fetchOptions } = options || {};
   const url = buildUrl(path, params);
 
   const formData = new FormData();
   formData.append('file', file);
+
+  const csrfToken = await getCsrfToken();
 
   // For upload progress, we need XMLHttpRequest
   if (onProgress) {
@@ -218,6 +266,7 @@ export async function apiUpload<T>(
 
       xhr.open('POST', url);
       xhr.withCredentials = true;
+      if (csrfToken) xhr.setRequestHeader(CSRF_HEADER, csrfToken);
       xhr.send(formData);
     });
   }
@@ -225,8 +274,12 @@ export async function apiUpload<T>(
   const response = await fetch(url, {
     method: 'POST',
     credentials: 'include',
-    body: formData,
     ...fetchOptions,
+    headers: {
+      ...(csrfToken ? { [CSRF_HEADER]: csrfToken } : {}),
+      ...headers,
+    },
+    body: formData,
   });
 
   return handleResponse<T>(response);

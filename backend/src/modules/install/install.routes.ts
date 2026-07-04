@@ -5,6 +5,7 @@ import { promises as fs } from 'fs';
 import { config } from '../../config/index.js';
 import { logger } from '../../lib/logger.js';
 import { getAppVersion } from '../../lib/app-version.js';
+import { compareVersions } from '../../lib/semver.js';
 
 interface GitHubRelease {
   tag_name: string;
@@ -29,7 +30,12 @@ async function fetchLatestRelease(includePrerelease: boolean): Promise<GitHubRel
   }
   const releases = (await res.json()) as GitHubRelease[];
   const filtered = includePrerelease ? releases : releases.filter((r) => !r.prerelease);
-  return filtered[0] ?? null;
+  // Don't trust GitHub's array order — pick the genuinely highest version.
+  return (
+    filtered
+      .slice()
+      .sort((a, b) => compareVersions(b.tag_name, a.tag_name))[0] ?? null
+  );
 }
 
 export async function installRoutes(app: FastifyInstance): Promise<void> {
@@ -101,11 +107,15 @@ export async function installRoutes(app: FastifyInstance): Promise<void> {
         logger.warn({ err }, 'GitHub release check failed');
       }
 
-      // Naive "is update available" — compare strings, since our tags are
-      // semver-ish and lexicographic comparison gets us close enough.
+      // Only offer an update when the latest release is genuinely NEWER than
+      // what's installed — a semver comparison, never a string diff (which
+      // would rank 0.1.9 above 0.1.14 and offer a downgrade as an "update").
       const latestVersion = latest?.tag_name.replace(/^v/, '') ?? null;
       const updateAvailable =
-        productionInstall && latestVersion !== null && latestVersion !== current;
+        productionInstall &&
+        latestVersion !== null &&
+        current !== 'dev' &&
+        compareVersions(latestVersion, current) > 0;
 
       return {
         success: true,

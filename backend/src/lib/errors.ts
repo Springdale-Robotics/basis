@@ -163,4 +163,7 @@ export const Errors = {
 
   rateLimit: () =>
     new AppError(ErrorCode.SYSTEM_RATE_LIMITED, 'Too many requests'),
+
+  csrfInvalid: () =>
+    new AppError(ErrorCode.AUTH_CSRF_INVALID, 'Missing or invalid CSRF token'),
 };

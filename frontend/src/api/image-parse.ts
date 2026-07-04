@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPatch, apiDelete } from './client';
+import { apiGet, apiPost, apiPatch, apiDelete, getCsrfToken, CSRF_HEADER } from './client';
 import { API_BASE_URL } from '@/lib/constants';
 import type { ApiResponse } from '@/types/api';
 
@@ -114,6 +114,7 @@ export const imageParseApi = {
     formData.append('extractionMode', extractionMode);
 
     const url = `${API_BASE_URL}/image-parse/upload`;
+    const csrfToken = await getCsrfToken();
 
     if (onProgress) {
       return new Promise((resolve, reject) => {
@@ -144,6 +145,7 @@ export const imageParseApi = {
 
         xhr.open('POST', url);
         xhr.withCredentials = true;
+        if (csrfToken) xhr.setRequestHeader(CSRF_HEADER, csrfToken);
         xhr.send(formData);
       });
     }
@@ -152,6 +154,7 @@ export const imageParseApi = {
       method: 'POST',
       credentials: 'include',
       body: formData,
+      headers: csrfToken ? { [CSRF_HEADER]: csrfToken } : undefined,
     });
 
     const data = await response.json();

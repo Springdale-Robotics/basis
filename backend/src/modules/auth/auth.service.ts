@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import { db } from '../../config/database.js';
 import { redis } from '../../config/redis.js';
 import { users, sessions, households, memberInvites } from '../../db/schema/index.js';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, ne } from 'drizzle-orm';
 import { config } from '../../config/index.js';
 import { Errors } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
@@ -128,9 +128,10 @@ export async function logoutAllSessions(
   exceptSessionId?: string
 ): Promise<void> {
   if (exceptSessionId) {
+    // Revoke every OTHER session for this user, keeping the caller signed in.
     await db
       .delete(sessions)
-      .where(and(eq(sessions.userId, userId), eq(sessions.id, exceptSessionId)));
+      .where(and(eq(sessions.userId, userId), ne(sessions.id, exceptSessionId)));
   } else {
     await db.delete(sessions).where(eq(sessions.userId, userId));
   }

@@ -1,4 +1,5 @@
 import { loadSharp } from '../../lib/sharp.js';
+import { assertPublicUrl } from '../../lib/ssrf.js';
 
 const MAX_WIDTH = 800;
 const WEBP_QUALITY = 80;
@@ -72,18 +73,8 @@ export async function processRecipeImage(input: Buffer): Promise<ProcessedImage>
  * Fetch an image from a URL and return it as a buffer
  */
 export async function fetchImageFromUrl(url: string): Promise<Buffer> {
-  // Validate URL
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(url);
-  } catch {
-    throw new Error('Invalid image URL');
-  }
-
-  // Only allow http/https
-  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-    throw new Error('Invalid URL protocol. Only HTTP and HTTPS are supported.');
-  }
+  // Validate URL, scheme, and reject internal/loopback targets (SSRF guard).
+  await assertPublicUrl(url);
 
   // Fetch with timeout
   const controller = new AbortController();
