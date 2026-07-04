@@ -1,9 +1,8 @@
-import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/authStore';
 import { useNotificationStore } from '@/stores/notificationStore';
-import { useCookingStore } from '@/stores/cookingStore';
 import { toast } from '@/hooks/useToast';
 import type { ServerToClientEvents, ClientToServerEvents } from '@/types/socket';
 
@@ -24,40 +23,54 @@ interface WebSocketProviderProps {
 }
 
 export function WebSocketProvider({ children }: WebSocketProviderProps) {
-  const socketRef = useRef<TypedSocket | null>(null);
+  const [socket, setSocket] = useState<TypedSocket | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
   const queryClient = useQueryClient();
   const { isAuthenticated, household } = useAuthStore();
   const { addNotification } = useNotificationStore();
-  const { updateTimerRemaining, markTimerComplete, activeSession } = useCookingStore();
 
   useEffect(() => {
     if (!isAuthenticated || !household) {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
-      }
+      setSocket(null);
+      setIsConnected(false);
       return;
     }
 
     // Create socket connection
-    const socket: TypedSocket = io('/', {
+    const newSocket: TypedSocket = io('/', {
       autoConnect: true,
       withCredentials: true,
     });
 
-    socketRef.current = socket;
+    setSocket(newSocket);
 
-    socket.on('connect', () => {
+    // Track whether this socket has connected before so we can tell a
+    // reconnect apart from the initial connect.
+    let hasConnectedBefore = false;
+
+    newSocket.on('connect', () => {
       console.log('WebSocket connected');
-      socket.emit('join:household', household.id);
+      setIsConnected(true);
+      newSocket.emit('join:household', household.id);
+
+      if (hasConnectedBefore) {
+        // We were disconnected and may have missed events — refetch everything.
+        queryClient.invalidateQueries();
+      }
+      hasConnectedBefore = true;
     });
 
-    socket.on('disconnect', () => {
+    newSocket.on('disconnect', () => {
       console.log('WebSocket disconnected');
+      setIsConnected(false);
+    });
+
+    newSocket.on('connect_error', (error) => {
+      console.warn('WebSocket connection error:', error.message);
     });
 
     // Calendar events
-    socket.on('calendar:event', (data) => {
+    newSocket.on('calendar:event', (data) => {
       // Invalidate relevant queries when calendar events change
       queryClient.invalidateQueries({ queryKey: ['events'] });
       queryClient.invalidateQueries({ queryKey: ['eventDetails', data.calendarId, data.eventId] });
@@ -66,154 +79,144 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       }
     });
 
-    socket.on('calendar:update', (data) => {
+    newSocket.on('calendar:update', (data) => {
       queryClient.invalidateQueries({ queryKey: ['calendars', data.calendarId] });
       queryClient.invalidateQueries({ queryKey: ['calendars'] });
       queryClient.invalidateQueries({ queryKey: ['events'] });
     });
 
-    socket.on('calendar:delete', (data) => {
+    newSocket.on('calendar:delete', () => {
       queryClient.invalidateQueries({ queryKey: ['calendars'] });
       queryClient.invalidateQueries({ queryKey: ['events'] });
     });
 
     // Recipe events
-    socket.on('recipe:update', (data) => {
+    newSocket.on('recipe:update', (data) => {
       queryClient.invalidateQueries({ queryKey: ['recipes', data.recipeId] });
       queryClient.invalidateQueries({ queryKey: ['recipes'] });
     });
 
-    socket.on('recipe:delete', (data) => {
+    newSocket.on('recipe:delete', () => {
       queryClient.invalidateQueries({ queryKey: ['recipes'] });
     });
 
-    // Inventory events
-    socket.on('inventory:update', () => {
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      queryClient.invalidateQueries({ queryKey: ['stock'] });
+    // Meal plan events
+    newSocket.on('meal-plan:update', () => {
+      queryClient.invalidateQueries({ queryKey: ['meal-plans'] });
     });
 
-    socket.on('shopping-list:update', () => {
+    // Inventory events
+    newSocket.on('inventory:update', () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
+      queryClient.invalidateQueries({ queryKey: ['stock'] });
+      queryClient.invalidateQueries({ queryKey: ['storage-areas'] });
+    });
+
+    newSocket.on('shopping-list:update', () => {
       queryClient.invalidateQueries({ queryKey: ['shopping-list'] });
     });
 
     // Confidence-aware inventory events
-    socket.on('inventory:confidence-updated', () => {
+    newSocket.on('inventory:confidence-updated', () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['stock'] });
       queryClient.invalidateQueries({ queryKey: ['item-confidence'] });
     });
 
-    socket.on('inventory:reconciled', () => {
+    newSocket.on('inventory:reconciled', () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['stock'] });
       queryClient.invalidateQueries({ queryKey: ['item-confidence'] });
     });
 
-    socket.on('inventory:out-of-stock', () => {
+    newSocket.on('inventory:out-of-stock', () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['stock'] });
       queryClient.invalidateQueries({ queryKey: ['shopping-list'] });
     });
 
-    socket.on('shopping:look-ahead-suggestion', () => {
+    newSocket.on('shopping:look-ahead-suggestion', () => {
       queryClient.invalidateQueries({ queryKey: ['shopping-list'] });
       queryClient.invalidateQueries({ queryKey: ['look-ahead-suggestions'] });
     });
 
     // Task events
-    socket.on('task:update', (data) => {
+    newSocket.on('task:update', (data) => {
       queryClient.invalidateQueries({ queryKey: ['tasks', data.taskId] });
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
     });
 
-    socket.on('task:delete', () => {
+    newSocket.on('task:delete', () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
     });
 
     // List events
-    socket.on('list:update', (data) => {
+    newSocket.on('list:update', (data) => {
       queryClient.invalidateQueries({ queryKey: ['lists', data.listId] });
       queryClient.invalidateQueries({ queryKey: ['lists'] });
     });
 
-    socket.on('list:delete', () => {
+    newSocket.on('list:delete', () => {
       queryClient.invalidateQueries({ queryKey: ['lists'] });
     });
 
     // File events
-    socket.on('file:update', (data) => {
+    newSocket.on('file:update', (data) => {
       queryClient.invalidateQueries({ queryKey: ['files'] });
-      if (data.parentId) {
-        queryClient.invalidateQueries({ queryKey: ['files', data.parentId] });
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
+      if (data.folderId) {
+        queryClient.invalidateQueries({ queryKey: ['files', data.folderId] });
       }
     });
 
-    socket.on('file:delete', (data) => {
+    newSocket.on('file:delete', () => {
       queryClient.invalidateQueries({ queryKey: ['files'] });
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
     });
 
     // Notification events
-    socket.on('notification', (notification: { id: string; type: string; title: string; body?: string; data?: Record<string, unknown> }) => {
+    newSocket.on('notification:new', ({ notification }) => {
       const now = new Date().toISOString();
       addNotification({
         id: notification.id,
         type: notification.type as import('@/types/models').NotificationType,
         title: notification.title,
-        body: notification.body,
-        data: notification.data,
+        body: notification.body ?? undefined,
+        data: notification.data ?? undefined,
         userId: '',
         householdId: household.id,
         read: false,
-        createdAt: now,
-        updatedAt: now,
+        createdAt: notification.createdAt ?? now,
+        updatedAt: notification.createdAt ?? now,
       });
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
       toast({
         title: notification.title,
-        description: notification.body,
+        description: notification.body ?? undefined,
       });
-    });
-
-    // Cooking timer events
-    socket.on('cooking:timer:alert', (data) => {
-      if (activeSession) {
-        markTimerComplete(activeSession.id, data.timerId);
-        toast({
-          title: 'Timer Complete',
-          description: `${data.name} timer has finished!`,
-        });
-        // Play sound
-        const audio = new Audio('/sounds/timer-complete.mp3');
-        audio.play().catch(() => {});
-      }
-    });
-
-    socket.on('cooking:timer:update', (data) => {
-      updateTimerRemaining(data.sessionId, data.timerId, data.remainingSeconds);
     });
 
     // Household events
-    socket.on('household:update', () => {
+    newSocket.on('household:update', () => {
       queryClient.invalidateQueries({ queryKey: ['household'] });
+      queryClient.invalidateQueries({ queryKey: ['household-members'] });
     });
 
-    socket.on('user:update', () => {
+    newSocket.on('user:update', () => {
       queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
     });
 
     return () => {
-      socket.disconnect();
-      socketRef.current = null;
+      newSocket.disconnect();
+      setSocket(null);
+      setIsConnected(false);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, household?.id]);
 
-  const value: WebSocketContextType = {
-    socket: socketRef.current,
-    isConnected: socketRef.current?.connected ?? false,
-  };
-
   return (
-    <WebSocketContext.Provider value={value}>
+    <WebSocketContext.Provider value={{ socket, isConnected }}>
       {children}
     </WebSocketContext.Provider>
   );

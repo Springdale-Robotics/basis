@@ -1,6 +1,5 @@
 import { useEffect, useCallback } from 'react';
 import { useCookingStore } from '@/stores/cookingStore';
-import { useWebSocket } from '@/providers/WebSocketProvider';
 import type { Recipe } from '@/types/models';
 
 export function useCookingSession(sessionId?: string) {
@@ -20,8 +19,6 @@ export function useCookingSession(sessionId?: string) {
     getSession,
   } = useCookingStore();
 
-  const { socket } = useWebSocket();
-
   const session = sessionId ? getSession(sessionId) : activeSession;
 
   // Timer tick effect
@@ -36,11 +33,6 @@ export function useCookingSession(sessionId?: string) {
 
           if (newRemaining === 0) {
             markTimerComplete(session.id, timer.id);
-            // Emit WebSocket event for other devices
-            socket?.emit('cooking:timer:alert', {
-              sessionId: session.id,
-              timerId: timer.id,
-            } as never);
           }
         }
       });
@@ -88,39 +80,27 @@ export function useCookingSession(sessionId?: string) {
     (timerId: string) => {
       if (session) {
         startTimer(session.id, timerId);
-        socket?.emit('cooking:timer:start', {
-          sessionId: session.id,
-          timerId,
-        } as never);
       }
     },
-    [session, startTimer, socket]
+    [session, startTimer]
   );
 
   const handlePauseTimer = useCallback(
     (timerId: string) => {
       if (session) {
         pauseTimer(session.id, timerId);
-        socket?.emit('cooking:timer:pause', {
-          sessionId: session.id,
-          timerId,
-        } as never);
       }
     },
-    [session, pauseTimer, socket]
+    [session, pauseTimer]
   );
 
   const handleResetTimer = useCallback(
     (timerId: string) => {
       if (session) {
         resetTimer(session.id, timerId);
-        socket?.emit('cooking:timer:reset', {
-          sessionId: session.id,
-          timerId,
-        } as never);
       }
     },
-    [session, resetTimer, socket]
+    [session, resetTimer]
   );
 
   return {

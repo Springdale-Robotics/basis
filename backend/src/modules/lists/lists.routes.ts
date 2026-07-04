@@ -8,6 +8,7 @@ import { requireListAccess, requireListsAccess } from '../../middleware/permissi
 import { setResourceDefaults } from '../../services/permission.service.js';
 import { Errors } from '../../lib/errors.js';
 import { createListTypeSchema, hexColorSchema } from '../../lib/validators.js';
+import { emitListEvent, emitListDeleted } from '../../websocket/events.js';
 
 const createListSchema = z.object({
   name: z.string().min(1).max(255),
@@ -190,6 +191,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
 
       await setResourceDefaults('list', list.id, request.user!.id, request.user!.householdId);
 
+      emitListEvent(request.user!.householdId, { listId: list.id, action: 'created' });
       return { success: true, data: { list } };
     },
   );
@@ -263,6 +265,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      emitListEvent(request.user!.householdId, { listId: copy.id, action: 'created' });
       return { success: true, data: { list: copy } };
     },
   );
@@ -314,6 +317,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
 
       if (!updated) throw Errors.notFound('List');
 
+      emitListEvent(request.user!.householdId, { listId: updated.id, action: 'updated' });
       return { success: true, data: { list: updated } };
     },
   );
@@ -332,6 +336,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
           ),
         );
 
+      emitListDeleted(request.user!.householdId, request.params.id);
       return { success: true, data: { message: 'List deleted' } };
     },
   );
@@ -380,6 +385,11 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
         })
         .returning();
 
+      emitListEvent(request.user!.householdId, {
+        listId: request.params.id,
+        itemId: item.id,
+        action: 'item_added',
+      });
       return { success: true, data: { item } };
     },
   );
@@ -421,6 +431,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
       }));
 
       const inserted = await db.insert(listItems).values(rows).returning();
+      emitListEvent(request.user!.householdId, { listId: request.params.id, action: 'item_added' });
       return { success: true, data: { items: inserted } };
     },
   );
@@ -450,6 +461,11 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
         .returning();
 
       if (!updated) throw Errors.notFound('List item');
+      emitListEvent(request.user!.householdId, {
+        listId: request.params.id,
+        itemId: updated.id,
+        action: 'updated',
+      });
       return { success: true, data: { item: updated } };
     },
   );
@@ -468,6 +484,11 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
           ),
         );
 
+      emitListEvent(request.user!.householdId, {
+        listId: request.params.id,
+        itemId: request.params.itemId,
+        action: 'item_removed',
+      });
       return { success: true, data: { message: 'Item deleted' } };
     },
   );
@@ -500,6 +521,11 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
         )
         .returning();
 
+      emitListEvent(request.user!.householdId, {
+        listId: request.params.id,
+        itemId: request.params.itemId,
+        action: 'item_checked',
+      });
       return { success: true, data: { item: updated } };
     },
   );
@@ -548,6 +574,11 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
         .where(eq(listItems.id, request.params.itemId))
         .returning();
 
+      emitListEvent(request.user!.householdId, {
+        listId: request.params.id,
+        itemId: updated.id,
+        action: 'updated',
+      });
       return { success: true, data: { item: updated } };
     },
   );
@@ -575,6 +606,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
           );
       }
 
+      emitListEvent(request.user!.householdId, { listId: request.params.id, action: 'updated' });
       return { success: true, data: { message: 'Items reordered' } };
     },
   );
@@ -593,6 +625,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
           ),
         );
 
+      emitListEvent(request.user!.householdId, { listId: request.params.id, action: 'item_removed' });
       return { success: true, data: { message: 'Checked items cleared' } };
     },
   );

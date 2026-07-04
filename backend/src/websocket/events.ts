@@ -9,7 +9,8 @@ export interface CalendarEventPayload {
 }
 
 export interface InventoryEventPayload {
-  itemId: string;
+  itemId?: string;
+  areaId?: string;
   locationId?: string;
   action: 'created' | 'updated' | 'deleted' | 'quantity_changed' | 'low_stock' | 'expiring';
   item?: Record<string, unknown>;
@@ -28,10 +29,15 @@ export interface RecipeEventPayload {
 }
 
 export interface FileEventPayload {
-  fileId: string;
+  fileId?: string;
   folderId?: string;
-  action: 'uploaded' | 'deleted' | 'moved';
+  action: 'uploaded' | 'updated' | 'deleted' | 'moved';
   file?: Record<string, unknown>;
+}
+
+export interface MealPlanEventPayload {
+  mealPlanId?: string;
+  action: 'created' | 'updated' | 'deleted' | 'cooked';
 }
 
 export interface NotificationEventPayload {
@@ -169,6 +175,20 @@ export function emitRecipeEvent(householdId: string, payload: RecipeEventPayload
   emitToHousehold(householdId, 'recipe:update', payload);
 }
 
+export function emitRecipeDeleted(householdId: string, recipeId: string): void {
+  emitToHousehold(householdId, 'recipe:delete', { recipeId });
+}
+
+// Meal plan events
+export function emitMealPlanEvent(householdId: string, payload: MealPlanEventPayload): void {
+  emitToHousehold(householdId, 'meal-plan:update', payload);
+}
+
+// Shopping list events (payload is intentionally empty — clients just refetch)
+export function emitShoppingListUpdate(householdId: string): void {
+  emitToHousehold(householdId, 'shopping-list:update', {});
+}
+
 // File events
 export function emitFileEvent(householdId: string, payload: FileEventPayload): void {
   emitToHousehold(householdId, 'file:update', payload);
@@ -176,6 +196,10 @@ export function emitFileEvent(householdId: string, payload: FileEventPayload): v
   if (payload.folderId) {
     emitToRoom(`folder:${payload.folderId}`, 'file:update', payload);
   }
+}
+
+export function emitFileDeleted(householdId: string, payload: { fileId?: string; folderId?: string }): void {
+  emitToHousehold(householdId, 'file:delete', { fileId: payload.fileId, parentId: payload.folderId });
 }
 
 // Notification events
@@ -193,6 +217,10 @@ export function emitListEvent(householdId: string, payload: ListEventPayload): v
   emitToRoom(`list:${payload.listId}`, 'list:update', payload);
 }
 
+export function emitListDeleted(householdId: string, listId: string): void {
+  emitToHousehold(householdId, 'list:delete', { listId });
+}
+
 // Device events
 export function emitDeviceEvent(householdId: string, payload: DeviceEventPayload): void {
   emitToHousehold(householdId, 'device:update', payload);
@@ -201,6 +229,11 @@ export function emitDeviceEvent(householdId: string, payload: DeviceEventPayload
 // Household-wide events
 export function emitHouseholdEvent(householdId: string, event: string, data: unknown): void {
   emitToHousehold(householdId, event, data);
+}
+
+// Household settings/membership changed — clients refetch household + members.
+export function emitHouseholdUpdated(householdId: string): void {
+  emitToHousehold(householdId, 'household:update', { householdId });
 }
 
 // User online/offline status

@@ -7,6 +7,7 @@ import { authMiddleware, requireAdmin } from '../../middleware/auth.middleware.j
 import { Errors } from '../../lib/errors.js';
 import { randomBytes } from 'crypto';
 import { userRoleSchema } from '../../lib/validators.js';
+import { emitHouseholdUpdated } from '../../websocket/events.js';
 
 const updateHouseholdSchema = z.object({
   name: z.string().min(1).max(255).optional(),
@@ -68,6 +69,7 @@ export async function householdsRoutes(app: FastifyInstance): Promise<void> {
         .where(eq(households.id, request.user!.householdId))
         .returning();
 
+      emitHouseholdUpdated(request.user!.householdId);
       return { success: true, data: { household: updated } };
     }
   );
@@ -114,6 +116,7 @@ export async function householdsRoutes(app: FastifyInstance): Promise<void> {
         })
         .returning();
 
+      emitHouseholdUpdated(request.user!.householdId);
       return {
         success: true,
         data: { invite: toInviteResponse(invite) },
@@ -152,6 +155,7 @@ export async function householdsRoutes(app: FastifyInstance): Promise<void> {
           )
         );
 
+      emitHouseholdUpdated(request.user!.householdId);
       return { success: true, data: { message: 'Invite revoked' } };
     }
   );
@@ -183,6 +187,7 @@ export async function householdsRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.notFound('Member');
       }
 
+      emitHouseholdUpdated(request.user!.householdId);
       return { success: true, data: { member: updated } };
     }
   );
@@ -206,6 +211,7 @@ export async function householdsRoutes(app: FastifyInstance): Promise<void> {
           )
         );
 
+      emitHouseholdUpdated(request.user!.householdId);
       return { success: true, data: { message: 'Member removed' } };
     }
   );
