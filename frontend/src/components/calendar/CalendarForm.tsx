@@ -42,8 +42,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { calendarsApi, type PermissionLevel } from '@/api/calendars';
-import { IntraHouseholdAccess } from '@/components/calendar/CalendarSharingDialog';
+import { calendarsApi } from '@/api/calendars';
+import { IntraHouseholdAccess } from '@/components/calendar/IntraHouseholdAccess';
 import type { Calendar } from '@/types/models';
 import { toast } from '@/hooks/useToast';
 import { useTheme } from '@/hooks/useTheme';
@@ -77,12 +77,6 @@ interface CalendarFormProps {
   initialTab?: 'general' | 'sharing' | 'public';
 }
 
-const permissionLabels: Record<PermissionLevel, string> = {
-  view_busy: 'Busy/Free Only',
-  view: 'View Events',
-  edit: 'Edit Events',
-};
-
 export function CalendarForm({
   open,
   onOpenChange,
@@ -101,8 +95,6 @@ export function CalendarForm({
   const [activeTab, setActiveTab] = useState('general');
   const [copiedField, setCopiedField] = useState<'feed' | 'webcal' | null>(null);
   const [showRevokeDialog, setShowRevokeDialog] = useState(false);
-  const [shareHouseholdId, setShareHouseholdId] = useState<string>('');
-  const [sharePermission, setSharePermission] = useState<PermissionLevel>('view');
 
   const {
     register,
@@ -130,51 +122,11 @@ export function CalendarForm({
   const selectedType = watch('type');
   const selectedColor = getColorForIndex(colorPalette, selectedColorIndex);
 
-  // Fetch connected households for sharing
-  const { data: householdsData } = useQuery({
-    queryKey: ['connected-households'],
-    queryFn: () => calendarsApi.getConnectedHouseholds(),
-    enabled: open && isEditing,
-  });
-
-  // Fetch current shares for this calendar
-  const { data: sharesData, isLoading: sharesLoading } = useQuery({
-    queryKey: ['calendar-shares', calendar?.id],
-    queryFn: () => calendarsApi.getCalendarShares(calendar!.id),
-    enabled: open && isEditing && !!calendar?.id,
-  });
-
   // Fetch public link status
   const { data: linkStatus, isLoading: linkLoading } = useQuery({
     queryKey: ['calendar-public-link', calendar?.id],
     queryFn: () => calendarsApi.getPublicLinkStatus(calendar!.id),
     enabled: open && isEditing && !!calendar?.id,
-  });
-
-  // Share calendar mutation
-  const shareMutation = useMutation({
-    mutationFn: ({ householdId, permissionLevel }: { householdId: string; permissionLevel: PermissionLevel }) =>
-      calendarsApi.shareCalendar(calendar!.id, { householdId, permissionLevel }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['calendar-shares', calendar?.id] });
-      setShareHouseholdId('');
-      toast({ title: 'Calendar Shared', description: 'Calendar has been shared successfully.' });
-    },
-    onError: () => {
-      toast({ title: 'Failed to Share', description: 'Could not share calendar.', variant: 'destructive' });
-    },
-  });
-
-  // Remove share mutation
-  const removeShareMutation = useMutation({
-    mutationFn: (shareId: string) => calendarsApi.removeShare(calendar!.id, shareId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['calendar-shares', calendar?.id] });
-      toast({ title: 'Share Removed', description: 'Calendar share has been removed.' });
-    },
-    onError: () => {
-      toast({ title: 'Failed to Remove', description: 'Could not remove share.', variant: 'destructive' });
-    },
   });
 
   // Generate public link mutation
@@ -241,20 +193,10 @@ export function CalendarForm({
     }
   };
 
-  const handleShare = () => {
-    if (!shareHouseholdId) return;
-    shareMutation.mutate({ householdId: shareHouseholdId, permissionLevel: sharePermission });
-  };
-
   const goToSettings = () => {
     handleClose();
     navigate('/settings/calendars');
   };
-
-  // Get households that haven't been shared with yet
-  const availableHouseholds = householdsData?.households?.filter(
-    (h) => !sharesData?.shares?.some((s) => s.householdId === h.id)
-  ) || [];
 
   return (
     <>
@@ -363,109 +305,11 @@ export function CalendarForm({
                   </div>
                 )}
 
-                {/* Connected-household sharing (cross-household) */}
-                <div className="space-y-2">
-                  <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Connected households
-                  </Label>
-                  {sharesLoading ? (
-                    <div className="flex justify-center py-8">
-                      <Loader2 className="h-6 w-6 animate-spin" />
-                    </div>
-                  ) : (
-                    <>
-                      {/* Current Shares */}
-                    {sharesData?.shares && sharesData.shares.length > 0 && (
-                      <div className="space-y-2">
-                        <Label>Shared With</Label>
-                        <div className="space-y-2">
-                          {sharesData.shares.map((share) => (
-                            <div
-                              key={share.id}
-                              className="flex items-center justify-between rounded-md border p-2"
-                            >
-                              <div>
-                                <span className="font-medium">{share.householdName}</span>
-                                <Badge variant="outline" className="ml-2 text-xs">
-                                  {permissionLabels[share.permissionLevel as PermissionLevel]}
-                                </Badge>
-                              </div>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => removeShareMutation.mutate(share.id)}
-                                disabled={removeShareMutation.isPending}
-                              >
-                                {removeShareMutation.isPending ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Trash2 className="h-4 w-4 text-destructive" />
-                                )}
-                              </Button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Add New Share */}
-                    {availableHouseholds.length > 0 && (
-                      <div className="space-y-2">
-                        <Label>Share with Household</Label>
-                        <div className="flex gap-2">
-                          <Select value={shareHouseholdId} onValueChange={setShareHouseholdId}>
-                            <SelectTrigger className="flex-1">
-                              <SelectValue placeholder="Select household" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {availableHouseholds.map((h) => (
-                                <SelectItem key={h.id} value={h.id}>
-                                  {h.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <Select
-                            value={sharePermission}
-                            onValueChange={(v) => setSharePermission(v as PermissionLevel)}
-                          >
-                            <SelectTrigger className="w-[140px]">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="view_busy">Busy/Free Only</SelectItem>
-                              <SelectItem value="view">View Events</SelectItem>
-                              <SelectItem value="edit">Edit Events</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <Button
-                            onClick={handleShare}
-                            disabled={!shareHouseholdId || shareMutation.isPending}
-                          >
-                            {shareMutation.isPending ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              'Share'
-                            )}
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-
-                    {availableHouseholds.length === 0 && (!sharesData?.shares || sharesData.shares.length === 0) && (
-                      <p className="text-sm text-muted-foreground py-4 text-center">
-                        No connected households to share with. Connect with other households first.
-                      </p>
-                    )}
-
-                    <DialogFooter className="pt-4">
-                      <Button variant="outline" onClick={handleClose}>
-                        Close
-                      </Button>
-                    </DialogFooter>
-                  </>
-                  )}
-                </div>
+                <DialogFooter className="pt-4">
+                  <Button variant="outline" onClick={handleClose}>
+                    Close
+                  </Button>
+                </DialogFooter>
               </TabsContent>
 
               {/* Public Link Tab */}

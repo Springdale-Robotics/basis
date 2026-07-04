@@ -1,9 +1,10 @@
 import { Job } from 'bullmq';
 import { db } from '../config/database.js';
-import { inventoryItems, households, leftovers } from '../db/schema/index.js';
-import { eq, and, lt, lte, isNotNull, isNull } from 'drizzle-orm';
+import { inventoryItems, inventoryStock, leftovers } from '../db/schema/index.js';
+import { eq, and, lte, isNotNull, isNull, inArray } from 'drizzle-orm';
 import { queueNotification } from './index.js';
 import { emitLowStockAlert, emitExpiringAlert } from '../websocket/events.js';
+import { convertWithDensity, normalizeUnit } from '../lib/unit-conversions.js';
 import { logger } from '../lib/logger.js';
 import type { InventoryJobData } from './index.js';
 
@@ -13,22 +14,25 @@ export async function processInventoryJob(job: Job<InventoryJobData>): Promise<v
   const log = logger.child({ jobId: job.id, type, householdId });
   log.debug('Processing inventory job');
 
-  try {
-    switch (type) {
-      case 'check_low_stock':
-        await checkLowStock(householdId);
-        break;
-      case 'check_expiring':
-        await checkExpiringItems(householdId);
-        break;
-      case 'check_leftovers_expiring':
-        await checkLeftoversExpiring(householdId);
-        break;
-      case 'update_quantities':
-        await updateQuantities(householdId);
-        break;
-    }
+  // The recurring jobs carry no householdId — run for every household.
+  const householdIds = householdId
+    ? [householdId]
+    : (await db.query.households.findMany({ columns: { id: true } })).map((h) => h.id);
 
+  try {
+    for (const hid of householdIds) {
+      switch (type) {
+        case 'check_low_stock':
+          await checkLowStock(hid);
+          break;
+        case 'check_expiring':
+          await checkExpiringItems(hid);
+          break;
+        case 'check_leftovers_expiring':
+          await checkLeftoversExpiring(hid);
+          break;
+      }
+    }
     log.debug('Inventory job completed');
   } catch (error) {
     log.error({ error }, 'Inventory job failed');
@@ -36,120 +40,146 @@ export async function processInventoryJob(job: Job<InventoryJobData>): Promise<v
   }
 }
 
+/**
+ * Total on-hand quantity for an item, expressed in its default unit. Stock
+ * lives in tranches (inventory_stock) that may be recorded in different units,
+ * so each is converted using the item's density / custom unit sizes. Tranches
+ * whose unit can't be bridged are added at face value (best-effort) rather than
+ * dropped, so we never under-count and raise a false "low stock".
+ */
+function totalInDefaultUnit(
+  stock: Array<{ quantity: string; unit: string | null }>,
+  defaultUnit: string | null,
+  density: number | null,
+  quantityUnitSizes: Record<string, { quantity: number; unit: string }> | null
+): number {
+  let total = 0;
+  for (const s of stock) {
+    const qty = parseFloat(s.quantity);
+    if (Number.isNaN(qty)) continue;
+    const from = s.unit || defaultUnit;
+    if (!from || !defaultUnit || normalizeUnit(from) === normalizeUnit(defaultUnit)) {
+      total += qty;
+      continue;
+    }
+    const converted = convertWithDensity(qty, from, defaultUnit, density, quantityUnitSizes ?? {});
+    total += converted ?? qty;
+  }
+  return total;
+}
+
 async function checkLowStock(householdId: string): Promise<void> {
-  // Find items where quantity <= minQuantity
-  const allItems = await db.query.inventoryItems.findMany({
-    where: eq(inventoryItems.householdId, householdId),
+  // Only items the household actively keeps in stock, with a reorder threshold.
+  const items = await db.query.inventoryItems.findMany({
+    where: and(
+      eq(inventoryItems.householdId, householdId),
+      eq(inventoryItems.keepInStock, true),
+      isNotNull(inventoryItems.minStockQuantity)
+    ),
   });
+  if (items.length === 0) return;
 
-  const lowStockItems = allItems.filter(
-    (item) => item.minQuantity !== null && item.quantity <= item.minQuantity
-  );
+  const stockRows = await db
+    .select({ itemId: inventoryStock.itemId, quantity: inventoryStock.quantity, unit: inventoryStock.unit })
+    .from(inventoryStock)
+    .where(inArray(inventoryStock.itemId, items.map((i) => i.id)));
 
-  logger.info(
-    { householdId, lowStockCount: lowStockItems.length },
-    'Low stock check completed'
-  );
+  const stockByItem = new Map<string, Array<{ quantity: string; unit: string | null }>>();
+  for (const s of stockRows) {
+    if (!stockByItem.has(s.itemId)) stockByItem.set(s.itemId, []);
+    stockByItem.get(s.itemId)!.push({ quantity: s.quantity, unit: s.unit });
+  }
 
-  for (const item of lowStockItems) {
-    // Emit real-time alert
+  let lowCount = 0;
+  for (const item of items) {
+    const min = Number(item.minStockQuantity);
+    if (Number.isNaN(min)) continue;
+    const total = totalInDefaultUnit(
+      stockByItem.get(item.id) ?? [],
+      item.defaultUnit,
+      item.density ? Number(item.density) : null,
+      item.quantityUnitSizes as Record<string, { quantity: number; unit: string }> | null
+    );
+    if (total > min) continue;
+    lowCount += 1;
+
     emitLowStockAlert(householdId, {
       itemId: item.id,
-      locationId: item.locationId || undefined,
+      locationId: item.defaultAreaId || undefined,
       action: 'low_stock',
-      item: {
-        id: item.id,
-        name: item.name,
-        quantity: item.quantity,
-        minQuantity: item.minQuantity,
-        unit: item.unit,
-      },
+      item: { id: item.id, name: item.name, total, minQuantity: min, unit: item.defaultUnit },
     });
 
-    // Queue notification
     await queueNotification({
       type: 'low_stock',
       householdId,
       title: 'Low Stock Alert',
-      message: `${item.name} is running low (${item.quantity} ${item.unit || 'units'} remaining)`,
-      data: {
-        itemId: item.id,
-        itemName: item.name,
-        quantity: item.quantity,
-        minQuantity: item.minQuantity,
-      },
+      message: `${item.name} is running low (${total} ${item.defaultUnit || 'units'} on hand, keep ${min})`,
+      data: { itemId: item.id, itemName: item.name, currentQuantity: total, minQuantity: min, unit: item.defaultUnit ?? undefined },
     });
   }
+
+  logger.info({ householdId, lowStockCount: lowCount }, 'Low stock check completed');
 }
 
 async function checkExpiringItems(householdId: string): Promise<void> {
   const now = new Date();
-  const warningThreshold = new Date();
-  warningThreshold.setDate(warningThreshold.getDate() + 7); // 7 days warning
+  const threshold = new Date();
+  threshold.setDate(threshold.getDate() + 7); // 7-day warning window
+  const thresholdStr = threshold.toISOString().split('T')[0];
 
-  // Find items expiring within 7 days
-  const expiringItems = await db.query.inventoryItems.findMany({
-    where: and(
-      eq(inventoryItems.householdId, householdId),
-      isNotNull(inventoryItems.expiryDate),
-      lte(inventoryItems.expiryDate, warningThreshold)
-    ),
-  });
+  // inventory_stock has no household column; scope via the household's items.
+  const items = await db
+    .select({ id: inventoryItems.id, name: inventoryItems.name })
+    .from(inventoryItems)
+    .where(eq(inventoryItems.householdId, householdId));
+  if (items.length === 0) return;
+  const nameById = new Map(items.map((i) => [i.id, i.name]));
 
-  logger.info(
-    { householdId, expiringCount: expiringItems.length },
-    'Expiring items check completed'
-  );
-
-  for (const item of expiringItems) {
-    const daysUntilExpiry = Math.ceil(
-      (item.expiryDate!.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
+  const expiring = await db
+    .select({ id: inventoryStock.id, itemId: inventoryStock.itemId, expiryDate: inventoryStock.expiryDate })
+    .from(inventoryStock)
+    .where(
+      and(
+        inArray(inventoryStock.itemId, items.map((i) => i.id)),
+        isNotNull(inventoryStock.expiryDate),
+        lte(inventoryStock.expiryDate, thresholdStr)
+      )
     );
 
+  for (const stock of expiring) {
+    const name = nameById.get(stock.itemId) ?? 'An item';
+    const [y, m, d] = stock.expiryDate!.split('-').map(Number);
+    const expiry = new Date(y, m - 1, d);
+    const daysUntilExpiry = Math.ceil((expiry.getTime() - now.getTime()) / 86400000);
     const isExpired = daysUntilExpiry <= 0;
     const urgency = isExpired ? 'expired' : daysUntilExpiry <= 3 ? 'urgent' : 'warning';
 
-    // Emit real-time alert
     emitExpiringAlert(householdId, {
-      itemId: item.id,
-      locationId: item.locationId || undefined,
+      itemId: stock.itemId,
       action: 'expiring',
-      item: {
-        id: item.id,
-        name: item.name,
-        expiryDate: item.expiryDate,
-        daysUntilExpiry,
-        urgency,
-      },
+      item: { id: stock.itemId, name, expiryDate: stock.expiryDate, daysUntilExpiry, urgency },
     });
-
-    // Queue notification
-    const message = isExpired
-      ? `${item.name} has expired!`
-      : `${item.name} will expire in ${daysUntilExpiry} day${daysUntilExpiry === 1 ? '' : 's'}`;
 
     await queueNotification({
       type: 'expiring_soon',
       householdId,
       title: isExpired ? 'Item Expired' : 'Expiring Soon',
-      message,
-      data: {
-        itemId: item.id,
-        itemName: item.name,
-        expiryDate: item.expiryDate,
-        daysUntilExpiry,
-        urgency,
-      },
+      message: isExpired
+        ? `${name} has expired`
+        : `${name} expires in ${daysUntilExpiry} day${daysUntilExpiry === 1 ? '' : 's'}`,
+      data: { itemId: stock.itemId, itemName: name, daysUntilExpiry },
     });
   }
+
+  logger.info({ householdId, expiringCount: expiring.length }, 'Expiring items check completed');
 }
 
 async function checkLeftoversExpiring(householdId: string): Promise<void> {
   const now = new Date();
   const warningThreshold = new Date();
-  warningThreshold.setDate(warningThreshold.getDate() + 3); // 3 days warning for leftovers
+  warningThreshold.setDate(warningThreshold.getDate() + 3); // 3-day warning for leftovers
 
-  // Find active leftovers expiring within 3 days
   const expiringLeftovers = await db.query.leftovers.findMany({
     where: and(
       eq(leftovers.householdId, householdId),
@@ -158,38 +188,20 @@ async function checkLeftoversExpiring(householdId: string): Promise<void> {
     ),
   });
 
-  logger.info(
-    { householdId, expiringCount: expiringLeftovers.length },
-    'Expiring leftovers check completed'
-  );
-
   for (const leftover of expiringLeftovers) {
-    // Parse the expiry date as local date
+    if (!leftover.expiryDate) continue;
     const [year, month, day] = leftover.expiryDate.split('-').map(Number);
     const expiryDate = new Date(year, month - 1, day);
-    const daysUntilExpiry = Math.ceil(
-      (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
-    );
-
-    // Calculate age
-    const preparedDate = new Date(leftover.preparedAt);
-    const ageInDays = Math.floor(
-      (now.getTime() - preparedDate.getTime()) / (1000 * 60 * 60 * 24)
-    );
-
+    const daysUntilExpiry = Math.ceil((expiryDate.getTime() - now.getTime()) / 86400000);
+    const ageInDays = Math.floor((now.getTime() - new Date(leftover.preparedAt).getTime()) / 86400000);
     const isExpired = daysUntilExpiry <= 0;
 
-    // Build the message
-    let message: string;
-    if (isExpired) {
-      message = `Leftover "${leftover.name}" (${ageInDays} days old) has expired!`;
-    } else if (daysUntilExpiry === 1) {
-      message = `Leftover "${leftover.name}" (${ageInDays} days old) expires tomorrow!`;
-    } else {
-      message = `Leftover "${leftover.name}" (${ageInDays} days old) expires in ${daysUntilExpiry} days`;
-    }
+    const message = isExpired
+      ? `Leftover "${leftover.name}" (${ageInDays} days old) has expired!`
+      : daysUntilExpiry === 1
+        ? `Leftover "${leftover.name}" (${ageInDays} days old) expires tomorrow!`
+        : `Leftover "${leftover.name}" (${ageInDays} days old) expires in ${daysUntilExpiry} days`;
 
-    // Queue notification
     await queueNotification({
       type: 'leftover_expiring',
       householdId,
@@ -203,53 +215,9 @@ async function checkLeftoversExpiring(householdId: string): Promise<void> {
       },
     });
   }
-}
 
-async function updateQuantities(householdId: string): Promise<void> {
-  // This could be used for auto-consumption tracking or other quantity updates
-  // For now, just log that it was called
-  logger.debug({ householdId }, 'Update quantities called (no-op for now)');
-}
-
-// Schedule inventory checks for all households
-export async function scheduleInventoryChecksForAllHouseholds(): Promise<void> {
-  const allHouseholds = await db.query.households.findMany({
-    columns: { id: true },
-  });
-
-  const { inventoryQueue } = await import('./index.js');
-
-  for (const household of allHouseholds) {
-    // Schedule low stock check daily at 8 AM
-    await inventoryQueue.add(
-      'check_low_stock',
-      { type: 'check_low_stock', householdId: household.id },
-      {
-        repeat: { pattern: '0 8 * * *' }, // Daily at 8 AM
-        jobId: `inventory:low_stock:${household.id}`,
-      }
-    );
-
-    // Schedule expiring check daily at 9 AM
-    await inventoryQueue.add(
-      'check_expiring',
-      { type: 'check_expiring', householdId: household.id },
-      {
-        repeat: { pattern: '0 9 * * *' }, // Daily at 9 AM
-        jobId: `inventory:expiring:${household.id}`,
-      }
-    );
-
-    // Schedule leftovers expiring check daily at 9 AM (alongside regular expiring check)
-    await inventoryQueue.add(
-      'check_leftovers_expiring',
-      { type: 'check_leftovers_expiring', householdId: household.id },
-      {
-        repeat: { pattern: '0 9 * * *' }, // Daily at 9 AM
-        jobId: `inventory:leftovers_expiring:${household.id}`,
-      }
-    );
-  }
-
-  logger.info({ count: allHouseholds.length }, 'Scheduled inventory checks for all households');
+  logger.info(
+    { householdId, expiringCount: expiringLeftovers.length },
+    'Expiring leftovers check completed'
+  );
 }

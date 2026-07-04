@@ -49,7 +49,6 @@ export const SETTINGS_NAV = [
   { label: 'Devices', href: '/settings/devices' },
   { label: 'Remote Access', href: '/settings/remote-access' },
   { label: 'Backup', href: '/settings/backup' },
-  { label: 'Connections', href: '/settings/connections' },
   { label: 'Features', href: '/settings/features' },
   { label: 'Sessions', href: '/settings/sessions' },
   { label: 'Updates', href: '/settings/updates' },

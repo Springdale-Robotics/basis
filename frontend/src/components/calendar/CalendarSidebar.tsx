@@ -1,4 +1,4 @@
-import { Plus, Settings, Share2, RefreshCw, AlertCircle, Users } from 'lucide-react';
+import { Plus, Settings, Share2, RefreshCw, AlertCircle } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -9,11 +9,10 @@ import { cn } from '@/lib/utils';
 import { useTheme } from '@/hooks/useTheme';
 import { getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
 import type { Calendar } from '@/types/models';
-import { calendarsApi, type SharedCalendar } from '@/api/calendars';
+import { calendarsApi } from '@/api/calendars';
 
 interface CalendarSidebarProps {
   calendars: Calendar[];
-  sharedCalendars?: SharedCalendar[];
   visibleCalendars: string[];
   onToggleCalendar: (calendarId: string) => void;
   onCreateCalendar: () => void;
@@ -23,7 +22,6 @@ interface CalendarSidebarProps {
 
 export function CalendarSidebar({
   calendars,
-  sharedCalendars = [],
   visibleCalendars,
   onToggleCalendar,
   onCreateCalendar,
@@ -35,7 +33,7 @@ export function CalendarSidebar({
   const syncedCalendars = calendars.filter((cal) => cal.syncProvider);
 
   // Helper to get calendar color from colorIndex
-  const getCalendarColor = (calendar: Calendar | SharedCalendar): string => {
+  const getCalendarColor = (calendar: Calendar): string => {
     if (calendar.colorIndex !== undefined && calendar.colorIndex >= 0) {
       return getColorForIndex(colorPalette as ColorPalette, calendar.colorIndex);
     }
@@ -101,32 +99,6 @@ export function CalendarSidebar({
                 </div>
               </>
             )}
-
-            {sharedCalendars.length > 0 && (
-              <>
-                <Separator />
-                <div>
-                  <h3 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1">
-                    <Users className="h-3 w-3" />
-                    Shared with Me
-                  </h3>
-                  <div className="space-y-1">
-                    {sharedCalendars.map((calendar) => (
-                      <CalendarItem
-                        key={calendar.id}
-                        calendar={calendar}
-                        calendarColor={getCalendarColor(calendar)}
-                        isVisible={visibleCalendars.includes(calendar.id)}
-                        onToggle={() => onToggleCalendar(calendar.id)}
-                        onEdit={() => onEditCalendar(calendar)}
-                        isShared
-                        sharedByName={calendar.sharedBy.householdName}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
           </div>
         </ScrollArea>
       </div>
@@ -142,8 +114,6 @@ interface CalendarItemProps {
   onEdit: () => void;
   onShare?: () => void;
   isSynced?: boolean;
-  isShared?: boolean;
-  sharedByName?: string;
 }
 
 function CalendarItem({
@@ -154,8 +124,6 @@ function CalendarItem({
   onEdit,
   onShare,
   isSynced,
-  isShared,
-  sharedByName,
 }: CalendarItemProps) {
   const getSyncStatusIndicator = () => {
     if (!isSynced) return null;
@@ -214,25 +182,15 @@ function CalendarItem({
             backgroundColor: isVisible ? calendarColor : 'transparent',
           }}
         />
-        <AccessTooltip calendarId={calendar.id} disabled={isShared || isSynced}>
+        <AccessTooltip calendarId={calendar.id} disabled={isSynced}>
           <span className={cn('text-sm truncate cursor-default', !isVisible && 'text-muted-foreground')}>
             {calendar.name}
           </span>
         </AccessTooltip>
         {isSynced && getSyncStatusIndicator()}
-        {isShared && sharedByName && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Users className="h-3 w-3 text-muted-foreground shrink-0" />
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Shared by {sharedByName}</p>
-            </TooltipContent>
-          </Tooltip>
-        )}
       </div>
       <div className="flex items-center opacity-0 group-hover:opacity-100">
-        {onShare && !isShared && (
+        {onShare && (
           <Button
             variant="ghost"
             size="icon"

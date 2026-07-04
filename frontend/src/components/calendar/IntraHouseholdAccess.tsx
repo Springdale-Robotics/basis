@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Share2,
   Trash2,
   Loader2,
   Users,
@@ -12,27 +11,17 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from '@/components/ui/dialog';
-import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import {
   calendarsApi,
   type PermissionLevel,
-  type CalendarShare,
   type CalendarAccessRule,
 } from '@/api/calendars';
 import { householdsApi } from '@/api/households';
@@ -40,12 +29,6 @@ import { groupsApi } from '@/api/groups';
 import type { Calendar } from '@/types/models';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
-
-interface CalendarSharingDialogProps {
-  calendar: Calendar;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}
 
 function permissionLabel(level: PermissionLevel): string {
   switch (level) {
@@ -56,47 +39,6 @@ function permissionLabel(level: PermissionLevel): string {
     case 'edit':
       return 'Edit events';
   }
-}
-
-export function CalendarSharingDialog({
-  calendar,
-  open,
-  onOpenChange,
-}: CalendarSharingDialogProps) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Share2 className="h-5 w-5" />
-            Share Calendar
-          </DialogTitle>
-          <DialogDescription>
-            Control who can see and edit "{calendar.name}".
-          </DialogDescription>
-        </DialogHeader>
-
-        <Tabs defaultValue="household">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="household">Inside household</TabsTrigger>
-            <TabsTrigger value="connected">Connected households</TabsTrigger>
-          </TabsList>
-          <TabsContent value="household" className="space-y-4">
-            <IntraHouseholdAccess calendar={calendar} open={open} />
-          </TabsContent>
-          <TabsContent value="connected" className="space-y-4">
-            <ConnectedHouseholdSharing calendar={calendar} open={open} />
-          </TabsContent>
-        </Tabs>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Done
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 // ─── Inside-household access ───────────────────────────────────────────────
@@ -304,174 +246,6 @@ function AccessRuleRow({
       >
         {isRemoving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4 text-destructive" />}
       </Button>
-    </div>
-  );
-}
-
-// ─── Connected-household sharing (preserved from prior implementation) ──────
-
-function ConnectedHouseholdSharing({ calendar, open }: { calendar: Calendar; open: boolean }) {
-  const queryClient = useQueryClient();
-  const [selectedHousehold, setSelectedHousehold] = useState('');
-  const [permissionLevel, setPermissionLevel] = useState<PermissionLevel>('view');
-
-  const { data: sharesData, isLoading: loadingShares } = useQuery({
-    queryKey: ['calendar-shares', calendar.id],
-    queryFn: () => calendarsApi.getCalendarShares(calendar.id),
-    enabled: open,
-  });
-  const { data: householdsData } = useQuery({
-    queryKey: ['connected-households'],
-    queryFn: calendarsApi.getConnectedHouseholds,
-    enabled: open,
-  });
-
-  const shareMutation = useMutation({
-    mutationFn: () =>
-      calendarsApi.shareCalendar(calendar.id, {
-        householdId: selectedHousehold,
-        permissionLevel,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['calendar-shares', calendar.id] });
-      setSelectedHousehold('');
-      setPermissionLevel('view');
-      toast({ title: 'Shared' });
-    },
-    onError: (err) =>
-      toast({ title: 'Could not share', description: getErrorMessage(err), variant: 'destructive' }),
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: ({ shareId, permission }: { shareId: string; permission: PermissionLevel }) =>
-      calendarsApi.updateShare(calendar.id, shareId, permission),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['calendar-shares', calendar.id] }),
-  });
-
-  const removeMutation = useMutation({
-    mutationFn: (shareId: string) => calendarsApi.removeShare(calendar.id, shareId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['calendar-shares', calendar.id] }),
-  });
-
-  const shares = sharesData?.shares || [];
-  const households = householdsData?.households || [];
-  const sharedHouseholdIds = new Set(shares.map((s) => s.householdId));
-  const availableHouseholds = households.filter((h) => !sharedHouseholdIds.has(h.id));
-
-  return (
-    <div className="space-y-4">
-      {availableHouseholds.length > 0 && (
-        <>
-          <div className="space-y-2">
-            <Label>Share with household</Label>
-            <Select value={selectedHousehold} onValueChange={setSelectedHousehold}>
-              <SelectTrigger><SelectValue placeholder="Select a household" /></SelectTrigger>
-              <SelectContent>
-                {availableHouseholds.map((h) => (
-                  <SelectItem key={h.id} value={h.id}>{h.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Permission</Label>
-            <Select value={permissionLevel} onValueChange={(v) => setPermissionLevel(v as PermissionLevel)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="view_busy"><PermissionRow level="view_busy" /></SelectItem>
-                <SelectItem value="view"><PermissionRow level="view" /></SelectItem>
-                <SelectItem value="edit"><PermissionRow level="edit" /></SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <Button
-            onClick={() => shareMutation.mutate()}
-            disabled={!selectedHousehold || shareMutation.isPending}
-            className="w-full"
-          >
-            {shareMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Share2 className="mr-2 h-4 w-4" />}
-            Share calendar
-          </Button>
-        </>
-      )}
-
-      {availableHouseholds.length === 0 && households.length === 0 && (
-        <div className="rounded-md border border-dashed p-3 text-center text-xs text-muted-foreground">
-          No connected households. Connect with other households in Settings &gt; Connections.
-        </div>
-      )}
-
-      {shares.length > 0 && (
-        <>
-          <Separator />
-          <div className="space-y-2">
-            {shares.map((share) => (
-              <ShareItem
-                key={share.id}
-                share={share}
-                onUpdatePermission={(permission) =>
-                  updateMutation.mutate({ shareId: share.id, permission })
-                }
-                onRemove={() => removeMutation.mutate(share.id)}
-                isUpdating={updateMutation.isPending}
-                isRemoving={removeMutation.isPending}
-              />
-            ))}
-          </div>
-        </>
-      )}
-
-      {loadingShares && (
-        <div className="flex items-center justify-center py-2">
-          <Loader2 className="h-5 w-5 animate-spin" />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ShareItem({
-  share,
-  onUpdatePermission,
-  onRemove,
-  isUpdating,
-  isRemoving,
-}: {
-  share: CalendarShare;
-  onUpdatePermission: (permission: PermissionLevel) => void;
-  onRemove: () => void;
-  isUpdating: boolean;
-  isRemoving: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between rounded-lg border p-3">
-      <div className="flex items-center gap-2">
-        <Users className="h-4 w-4 text-muted-foreground" />
-        <span className="font-medium">{share.householdName}</span>
-      </div>
-      <div className="flex items-center gap-2">
-        <Select
-          value={share.permissionLevel}
-          onValueChange={(v) => onUpdatePermission(v as PermissionLevel)}
-          disabled={isUpdating}
-        >
-          <SelectTrigger className="h-8 w-[140px]"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="view_busy">Free/Busy</SelectItem>
-            <SelectItem value="view">View</SelectItem>
-            <SelectItem value="edit">Edit</SelectItem>
-          </SelectContent>
-        </Select>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={onRemove}
-          disabled={isRemoving}
-        >
-          {isRemoving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4 text-destructive" />}
-        </Button>
-      </div>
     </div>
   );
 }

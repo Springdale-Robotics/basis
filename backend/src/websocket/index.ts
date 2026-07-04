@@ -289,20 +289,3 @@ export async function getOnlineUsers(householdId: string): Promise<string[]> {
   const members = await redis.smembers(`online:${householdId}`);
   return members;
 }
-
-// Broadcast to connected households (for sync)
-export async function broadcastToConnectedHouseholds(
-  fromHouseholdId: string,
-  event: string,
-  data: unknown,
-  connectedHouseholdIds: string[]
-): Promise<void> {
-  if (!io) return;
-
-  for (const householdId of connectedHouseholdIds) {
-    io.to(`household:${householdId}`).emit(event, {
-      ...data as object,
-      fromHouseholdId,
-    });
-  }
-}

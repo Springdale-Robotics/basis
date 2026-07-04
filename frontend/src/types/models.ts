@@ -543,22 +543,6 @@ export interface NotificationAction {
   endpoint?: string;
 }
 
-export interface HouseholdConnection {
-  id: string;
-  sourceHouseholdId: string;
-  targetHouseholdId: string;
-  status: 'pending' | 'accepted' | 'rejected';
-  permissions: ConnectionPermissions;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ConnectionPermissions {
-  shareCalendars: boolean;
-  shareRecipes: boolean;
-  shareFiles: boolean;
-}
-
 export interface BackupConfig {
   partnerId: string;
   categories: string[];

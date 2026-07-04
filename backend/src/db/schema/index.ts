@@ -20,7 +20,6 @@ export * from './notifications.js';
 export * from './settings.js';
 
 // Connected households and sync
-export * from './connections.js';
 
 // Audit and security
 export * from './audit.js';
