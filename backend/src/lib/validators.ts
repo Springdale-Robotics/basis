@@ -9,9 +9,11 @@ export const emailSchema = z
   .email()
   .transform((v) => v.toLowerCase().trim());
 
+// Used for password creation (register/reset/change/setup). Login has its own
+// lenient check so existing accounts aren't locked out by a policy change.
 export const passwordSchema = z
   .string()
-  .min(1, 'Password is required')
+  .min(8, 'Password must be at least 8 characters')
   .max(128, 'Password must be at most 128 characters');
 
 export const hexColorSchema = z
