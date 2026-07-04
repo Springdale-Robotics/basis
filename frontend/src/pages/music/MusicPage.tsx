@@ -1,26 +1,14 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
-import {
-  Music,
-  Disc,
-  User,
-  Play,
-  Pause,
-  SkipBack,
-  SkipForward,
-  List,
-  Clock,
-  Search,
-} from 'lucide-react';
+import { Disc, User, Play, Clock, Search } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/shared/ErrorState';
-import { Badge } from '@/components/ui/badge';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { EmptyState } from '@/components/shared/EmptyState';
+import { MediaCard, MediaCardSkeleton } from '@/components/media/MediaCard';
 import { Input } from '@/components/ui/input';
 import {
   Table,
@@ -30,13 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {
-  musicApi,
-  filesMediaApi,
-  type Artist,
-  type MusicAlbum,
-  type Track,
-} from '@/api/media';
+import { musicApi, type Track } from '@/api/media';
 import { usePlayerStore } from '@/stores/playerStore';
 import { cn, formatDuration } from '@/lib/utils';
 
@@ -45,7 +27,7 @@ type TabType = 'artists' | 'albums' | 'recent';
 export function MusicPage() {
   const [activeTab, setActiveTab] = useState<TabType>('albums');
   const [search, setSearch] = useState('');
-  const { playTrack, addToQueue, currentTrack, isPlaying } = usePlayerStore();
+  const { playTrack, currentTrack, isPlaying } = usePlayerStore();
 
   const { data: artistsData, isLoading: artistsLoading, isError: artistsError, error: artistsErrorObj, refetch: refetchArtists } = useQuery({
     queryKey: ['artists', search],
@@ -65,15 +47,9 @@ export function MusicPage() {
     enabled: activeTab === 'recent',
   });
 
-  const { data: genresData } = useQuery({
-    queryKey: ['music-genres'],
-    queryFn: () => musicApi.getGenres(),
-  });
-
   const artists = artistsData?.artists || [];
   const albums = albumsData?.albums || [];
   const recentTracks = recentData?.tracks || [];
-  const genres = genresData?.genres || [];
 
   const handlePlayTrack = (track: Track, allTracks?: Track[]) => {
     playTrack(track, allTracks);
@@ -121,7 +97,7 @@ export function MusicPage() {
           {albumsLoading ? (
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
               {Array.from({ length: 10 }).map((_, i) => (
-                <AlbumCardSkeleton key={i} />
+                <MediaCardSkeleton key={i} aspect="square" />
               ))}
             </div>
           ) : albumsError ? (
@@ -131,20 +107,41 @@ export function MusicPage() {
               onRetry={refetchAlbums}
             />
           ) : albums.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Disc className="mb-4 h-12 w-12 text-muted-foreground" />
-                <p className="text-lg font-medium">No albums found</p>
-                <p className="text-sm text-muted-foreground">
-                  Add music files to build your library
-                </p>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={<Disc className="h-12 w-12" />}
+              title="No albums found"
+              description="Add music files to build your library"
+            />
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
-              {albums.map((album) => (
-                <AlbumCard key={album.id} album={album} />
-              ))}
+              {albums.map((album) => {
+                const year = album.releaseDate
+                  ? new Date(album.releaseDate).getFullYear()
+                  : null;
+                return (
+                  <MediaCard
+                    key={album.id}
+                    href={`/music/albums/${album.id}`}
+                    image={album.coverArtPath}
+                    title={album.name}
+                    aspect="square"
+                    fallbackIcon={Disc}
+                    subtitle={
+                      <>
+                        {album.artistName || 'Unknown Artist'}
+                        {year && ` • ${year}`}
+                      </>
+                    }
+                    overlay={
+                      <div className="absolute bottom-2 right-2 opacity-0 transition-opacity group-hover:opacity-100">
+                        <Button size="icon" className="h-10 w-10 rounded-full shadow-lg">
+                          <Play className="h-5 w-5" />
+                        </Button>
+                      </div>
+                    }
+                  />
+                );
+              })}
             </div>
           )}
         </TabsContent>
@@ -154,7 +151,7 @@ export function MusicPage() {
           {artistsLoading ? (
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6">
               {Array.from({ length: 12 }).map((_, i) => (
-                <ArtistCardSkeleton key={i} />
+                <MediaCardSkeleton key={i} aspect="square" centered />
               ))}
             </div>
           ) : artistsError ? (
@@ -164,19 +161,26 @@ export function MusicPage() {
               onRetry={refetchArtists}
             />
           ) : artists.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <User className="mb-4 h-12 w-12 text-muted-foreground" />
-                <p className="text-lg font-medium">No artists found</p>
-                <p className="text-sm text-muted-foreground">
-                  {search ? 'Try a different search' : 'Add music files to build your library'}
-                </p>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={<User className="h-12 w-12" />}
+              title="No artists found"
+              description={
+                search ? 'Try a different search' : 'Add music files to build your library'
+              }
+            />
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6">
               {artists.map((artist) => (
-                <ArtistCard key={artist.id} artist={artist} />
+                <MediaCard
+                  key={artist.id}
+                  href={`/music/artists/${artist.id}`}
+                  image={artist.imageUrl || artist.imagePath}
+                  title={artist.name}
+                  subtitle="Artist"
+                  aspect="square"
+                  fallbackIcon={User}
+                  centered
+                />
               ))}
             </div>
           )}
@@ -197,15 +201,11 @@ export function MusicPage() {
               onRetry={refetchRecent}
             />
           ) : recentTracks.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Clock className="mb-4 h-12 w-12 text-muted-foreground" />
-                <p className="text-lg font-medium">No recent plays</p>
-                <p className="text-sm text-muted-foreground">
-                  Start listening to see your history
-                </p>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={<Clock className="h-12 w-12" />}
+              title="No recent plays"
+              description="Start listening to see your history"
+            />
           ) : (
             <Card>
               <Table>
@@ -252,101 +252,5 @@ export function MusicPage() {
         </TabsContent>
       </Tabs>
     </div>
-  );
-}
-
-interface AlbumCardProps {
-  album: MusicAlbum;
-}
-
-function AlbumCard({ album }: AlbumCardProps) {
-  const year = album.releaseDate
-    ? new Date(album.releaseDate).getFullYear()
-    : null;
-
-  return (
-    <Link to={`/music/albums/${album.id}`}>
-      <Card className="group cursor-pointer overflow-hidden transition-shadow hover:shadow-lg">
-        <div className="relative aspect-square bg-muted">
-          {album.coverArtPath ? (
-            <img
-              src={album.coverArtPath}
-              alt={album.name}
-              className="h-full w-full object-cover transition-transform group-hover:scale-105"
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center">
-              <Disc className="h-12 w-12 text-muted-foreground" />
-            </div>
-          )}
-          <div className="absolute bottom-2 right-2 opacity-0 transition-opacity group-hover:opacity-100">
-            <Button size="icon" className="h-10 w-10 rounded-full shadow-lg">
-              <Play className="h-5 w-5" />
-            </Button>
-          </div>
-        </div>
-        <CardContent className="p-3">
-          <h3 className="truncate font-medium">{album.name}</h3>
-          <p className="truncate text-sm text-muted-foreground">
-            {album.artistName || 'Unknown Artist'}
-            {year && ` \u2022 ${year}`}
-          </p>
-        </CardContent>
-      </Card>
-    </Link>
-  );
-}
-
-interface ArtistCardProps {
-  artist: Artist;
-}
-
-function ArtistCard({ artist }: ArtistCardProps) {
-  return (
-    <Link to={`/music/artists/${artist.id}`}>
-      <Card className="group cursor-pointer overflow-hidden transition-shadow hover:shadow-lg">
-        <div className="relative aspect-square bg-muted">
-          {artist.imageUrl || artist.imagePath ? (
-            <img
-              src={artist.imageUrl || artist.imagePath}
-              alt={artist.name}
-              className="h-full w-full object-cover transition-transform group-hover:scale-105"
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center">
-              <User className="h-12 w-12 text-muted-foreground" />
-            </div>
-          )}
-        </div>
-        <CardContent className="p-3 text-center">
-          <h3 className="truncate font-medium">{artist.name}</h3>
-          <p className="text-sm text-muted-foreground">Artist</p>
-        </CardContent>
-      </Card>
-    </Link>
-  );
-}
-
-function AlbumCardSkeleton() {
-  return (
-    <Card className="overflow-hidden">
-      <Skeleton className="aspect-square" />
-      <CardContent className="p-3">
-        <Skeleton className="h-5 w-3/4" />
-        <Skeleton className="mt-2 h-4 w-1/2" />
-      </CardContent>
-    </Card>
-  );
-}
-
-function ArtistCardSkeleton() {
-  return (
-    <Card className="overflow-hidden">
-      <Skeleton className="aspect-square" />
-      <CardContent className="p-3 text-center">
-        <Skeleton className="mx-auto h-5 w-3/4" />
-        <Skeleton className="mx-auto mt-2 h-4 w-1/2" />
-      </CardContent>
-    </Card>
   );
 }

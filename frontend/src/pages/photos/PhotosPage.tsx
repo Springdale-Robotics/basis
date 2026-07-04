@@ -1,24 +1,15 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import {
-  Camera,
-  Calendar,
-  MapPin,
-  Grid,
-  List,
-  Heart,
-  Star,
-  ChevronLeft,
-  ChevronRight,
-} from 'lucide-react';
+import { Camera, Calendar, MapPin, Grid } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/shared/ErrorState';
+import { EmptyState } from '@/components/shared/EmptyState';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { TimelineSection } from '@/components/media/TimelineSection';
+import { MediaLightbox } from '@/components/media/MediaLightbox';
 import {
   Select,
   SelectContent,
@@ -26,8 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { photosApi, filesMediaApi, type Photo, type TimelineGroup } from '@/api/media';
-import { cn, formatDate } from '@/lib/utils';
+import { photosApi, filesMediaApi, type Photo } from '@/api/media';
+import { formatDate } from '@/lib/utils';
 
 type ViewMode = 'grid' | 'timeline' | 'map';
 
@@ -49,21 +40,15 @@ export function PhotosPage() {
     enabled: viewMode === 'timeline',
   });
 
-  const { data: locationsData, isLoading: locationsLoading } = useQuery({
+  const { data: locationsData } = useQuery({
     queryKey: ['photos-locations'],
     queryFn: () => photosApi.getLocations(),
     enabled: viewMode === 'map',
   });
 
-  const { data: camerasData } = useQuery({
-    queryKey: ['cameras'],
-    queryFn: () => photosApi.getCameras(),
-  });
-
   const photos = photosData?.photos || [];
   const timeline = timelineData?.timeline || [];
   const locations = locationsData?.locations || [];
-  const cameras = camerasData?.cameras || [];
 
   const years = Array.from(
     new Set(timeline.map((t) => new Date(t.date).getFullYear()))
@@ -73,6 +58,13 @@ export function PhotosPage() {
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
   ];
+
+  // Lightbox navigation within the currently loaded photo set
+  const previewIndex = previewPhoto
+    ? photos.findIndex((p) => p.id === previewPhoto.id)
+    : -1;
+  const hasPrev = previewIndex > 0;
+  const hasNext = previewIndex >= 0 && previewIndex < photos.length - 1;
 
   return (
     <div>
@@ -155,15 +147,11 @@ export function PhotosPage() {
               onRetry={refetchPhotos}
             />
           ) : photos.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Camera className="mb-4 h-12 w-12 text-muted-foreground" />
-                <p className="text-lg font-medium">No photos yet</p>
-                <p className="text-sm text-muted-foreground">
-                  Upload some photos to get started
-                </p>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={<Camera className="h-12 w-12" />}
+              title="No photos yet"
+              description="Upload some photos to get started"
+            />
           ) : (
             <div className="grid gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
               {photos.map((photo) => (
@@ -199,19 +187,26 @@ export function PhotosPage() {
               onRetry={refetchTimeline}
             />
           ) : timeline.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Calendar className="mb-4 h-12 w-12 text-muted-foreground" />
-                <p className="text-lg font-medium">No photos in timeline</p>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={<Calendar className="h-12 w-12" />}
+              title="No photos in timeline"
+            />
           ) : (
             timeline.map((group) => (
-              <TimelineGroupSection
+              <TimelineSection
                 key={group.date}
-                group={group}
-                onPhotoClick={setPreviewPhoto}
-              />
+                date={group.date}
+                count={group.count}
+                gridClassName="sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8"
+              >
+                {group.photos.map((photo) => (
+                  <PhotoThumbnail
+                    key={photo.id}
+                    photo={photo}
+                    onClick={() => setPreviewPhoto(photo)}
+                  />
+                ))}
+              </TimelineSection>
             ))
           )}
         </div>
@@ -244,14 +239,53 @@ export function PhotosPage() {
         </Card>
       )}
 
-      {/* Photo Preview Modal */}
+      {/* Photo Lightbox */}
       {previewPhoto && (
-        <PhotoPreviewModal
-          photo={previewPhoto}
-          photos={photos}
+        <MediaLightbox
+          title={previewPhoto.filename}
           onClose={() => setPreviewPhoto(null)}
-          onNavigate={setPreviewPhoto}
-        />
+          onPrev={hasPrev ? () => setPreviewPhoto(photos[previewIndex - 1]) : undefined}
+          onNext={hasNext ? () => setPreviewPhoto(photos[previewIndex + 1]) : undefined}
+          info={
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">{previewPhoto.filename}</p>
+                {previewPhoto.metadata?.dateTaken && (
+                  <p className="text-sm text-gray-300">
+                    {formatDate(previewPhoto.metadata.dateTaken)}
+                  </p>
+                )}
+              </div>
+              <div className="flex gap-2">
+                {previewPhoto.metadata?.cameraMake && (
+                  <Badge variant="secondary">
+                    <Camera className="mr-1 h-3 w-3" />
+                    {previewPhoto.metadata.cameraModel || previewPhoto.metadata.cameraMake}
+                  </Badge>
+                )}
+                {previewPhoto.metadata?.latitude && (
+                  <Badge variant="secondary">
+                    <MapPin className="mr-1 h-3 w-3" />
+                    Location
+                  </Badge>
+                )}
+              </div>
+            </div>
+          }
+        >
+          <img
+            src={filesMediaApi.getThumbnailUrl(previewPhoto.id, 'lg')}
+            alt={previewPhoto.filename}
+            className="max-h-[90vh] max-w-[90vw] object-contain"
+            onError={(e) => {
+              const img = e.currentTarget;
+              const streamUrl = filesMediaApi.getStreamUrl(previewPhoto.id);
+              if (img.src !== streamUrl) {
+                img.src = streamUrl;
+              }
+            }}
+          />
+        </MediaLightbox>
       )}
     </div>
   );
@@ -285,154 +319,6 @@ function PhotoThumbnail({ photo, onClick }: PhotoThumbnailProps) {
         onError={handleImageError}
       />
       <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/20" />
-    </div>
-  );
-}
-
-interface TimelineGroupSectionProps {
-  group: TimelineGroup;
-  onPhotoClick: (photo: Photo) => void;
-}
-
-function TimelineGroupSection({ group, onPhotoClick }: TimelineGroupSectionProps) {
-  const date = new Date(group.date);
-  const formattedDate = date.toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
-
-  return (
-    <div>
-      <div className="mb-3 flex items-center gap-2">
-        <h3 className="text-lg font-semibold">{formattedDate}</h3>
-        <Badge variant="secondary">{group.count}</Badge>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
-        {group.photos.map((photo) => (
-          <PhotoThumbnail
-            key={photo.id}
-            photo={photo}
-            onClick={() => onPhotoClick(photo)}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-interface PhotoPreviewModalProps {
-  photo: Photo;
-  photos: Photo[];
-  onClose: () => void;
-  onNavigate: (photo: Photo) => void;
-}
-
-function PhotoPreviewModal({ photo, photos, onClose, onNavigate }: PhotoPreviewModalProps) {
-  const currentIndex = photos.findIndex((p) => p.id === photo.id);
-  const hasPrev = currentIndex > 0;
-  const hasNext = currentIndex < photos.length - 1;
-
-  const handlePrev = () => {
-    if (hasPrev) onNavigate(photos[currentIndex - 1]);
-  };
-
-  const handleNext = () => {
-    if (hasNext) onNavigate(photos[currentIndex + 1]);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') onClose();
-    if (e.key === 'ArrowLeft') handlePrev();
-    if (e.key === 'ArrowRight') handleNext();
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
-      onClick={onClose}
-      onKeyDown={handleKeyDown}
-      tabIndex={0}
-    >
-      {/* Close button */}
-      <button
-        className="absolute top-4 right-4 text-white hover:text-gray-300"
-        onClick={onClose}
-      >
-        <span className="sr-only">Close</span>
-        <svg className="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
-
-      {/* Navigation */}
-      {hasPrev && (
-        <button
-          className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
-          onClick={(e) => {
-            e.stopPropagation();
-            handlePrev();
-          }}
-        >
-          <ChevronLeft className="h-8 w-8" />
-        </button>
-      )}
-
-      {hasNext && (
-        <button
-          className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full bg-black/50 p-2 text-white hover:bg-black/70"
-          onClick={(e) => {
-            e.stopPropagation();
-            handleNext();
-          }}
-        >
-          <ChevronRight className="h-8 w-8" />
-        </button>
-      )}
-
-      {/* Image */}
-      <img
-        src={filesMediaApi.getThumbnailUrl(photo.id, 'lg')}
-        alt={photo.filename}
-        className="max-h-[90vh] max-w-[90vw] object-contain"
-        onClick={(e) => e.stopPropagation()}
-        onError={(e) => {
-          const img = e.currentTarget;
-          const streamUrl = filesMediaApi.getStreamUrl(photo.id);
-          if (img.src !== streamUrl) {
-            img.src = streamUrl;
-          }
-        }}
-      />
-
-      {/* Info bar */}
-      <div className="absolute bottom-0 left-0 right-0 bg-black/60 p-4 text-white">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="font-medium">{photo.filename}</p>
-            {photo.metadata?.dateTaken && (
-              <p className="text-sm text-gray-300">
-                {formatDate(photo.metadata.dateTaken)}
-              </p>
-            )}
-          </div>
-          <div className="flex gap-2">
-            {photo.metadata?.cameraMake && (
-              <Badge variant="secondary">
-                <Camera className="mr-1 h-3 w-3" />
-                {photo.metadata.cameraModel || photo.metadata.cameraMake}
-              </Badge>
-            )}
-            {photo.metadata?.latitude && (
-              <Badge variant="secondary">
-                <MapPin className="mr-1 h-3 w-3" />
-                Location
-              </Badge>
-            )}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

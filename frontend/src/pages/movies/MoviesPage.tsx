@@ -1,24 +1,14 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import {
-  Film,
-  Tv,
-  Play,
-  Clock,
-  Calendar,
-  Star,
-  Filter,
-  Grid,
-  List,
-} from 'lucide-react';
+import { Film, Tv, Play, Star } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/shared/ErrorState';
-import { Badge } from '@/components/ui/badge';
+import { EmptyState } from '@/components/shared/EmptyState';
+import { MediaCard, MediaCardSkeleton } from '@/components/media/MediaCard';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import {
   Select,
@@ -27,14 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  moviesApi,
-  filesMediaApi,
-  type Movie,
-  type TvShow,
-  type ContinueWatchingItem,
-} from '@/api/media';
-import { cn } from '@/lib/utils';
+import { moviesApi, type Movie, type ContinueWatchingItem } from '@/api/media';
 
 type ContentType = 'movies' | 'tv';
 type SortBy = 'title' | 'releaseDate' | 'addedDate' | 'rating';
@@ -161,7 +144,7 @@ export function MoviesPage() {
           {moviesLoading ? (
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
               {Array.from({ length: 10 }).map((_, i) => (
-                <MovieCardSkeleton key={i} />
+                <MediaCardSkeleton key={i} aspect="poster" />
               ))}
             </div>
           ) : moviesError ? (
@@ -171,20 +154,59 @@ export function MoviesPage() {
               onRetry={refetchMovies}
             />
           ) : movies.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Film className="mb-4 h-12 w-12 text-muted-foreground" />
-                <p className="text-lg font-medium">No movies found</p>
-                <p className="text-sm text-muted-foreground">
-                  Add video files and they'll appear here
-                </p>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={<Film className="h-12 w-12" />}
+              title="No movies found"
+              description="Add video files and they'll appear here"
+            />
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
-              {movies.map((movie) => (
-                <MovieCard key={movie.id} movie={movie} />
-              ))}
+              {movies.map((movie) => {
+                const year = movie.releaseDate
+                  ? new Date(movie.releaseDate).getFullYear()
+                  : null;
+                return (
+                  <MediaCard
+                    key={movie.id}
+                    href={`/movies/${movie.id}`}
+                    image={movie.posterPath}
+                    title={movie.title}
+                    aspect="poster"
+                    fallbackIcon={Film}
+                    subtitle={
+                      <span className="flex items-center gap-2">
+                        {year && <span>{year}</span>}
+                        {movie.runtime && (
+                          <>
+                            <span>&bull;</span>
+                            <span>{movie.runtime} min</span>
+                          </>
+                        )}
+                        {movie.tmdbRating && (
+                          <>
+                            <span>&bull;</span>
+                            <span className="flex items-center">
+                              <Star className="mr-1 h-3 w-3 fill-yellow-500 text-yellow-500" />
+                              {movie.tmdbRating.toFixed(1)}
+                            </span>
+                          </>
+                        )}
+                      </span>
+                    }
+                    overlay={
+                      <>
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+                        <div className="absolute bottom-0 left-0 right-0 p-3 opacity-0 transition-opacity group-hover:opacity-100">
+                          <Button size="sm" className="w-full">
+                            <Play className="mr-2 h-4 w-4" />
+                            Play
+                          </Button>
+                        </div>
+                      </>
+                    }
+                  />
+                );
+              })}
             </div>
           )}
         </TabsContent>
@@ -193,7 +215,7 @@ export function MoviesPage() {
           {tvLoading ? (
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
               {Array.from({ length: 10 }).map((_, i) => (
-                <MovieCardSkeleton key={i} />
+                <MediaCardSkeleton key={i} aspect="poster" />
               ))}
             </div>
           ) : tvError ? (
@@ -203,123 +225,43 @@ export function MoviesPage() {
               onRetry={refetchTvShows}
             />
           ) : tvShows.length === 0 ? (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <Tv className="mb-4 h-12 w-12 text-muted-foreground" />
-                <p className="text-lg font-medium">No TV shows found</p>
-                <p className="text-sm text-muted-foreground">
-                  Add video files and organize them into shows
-                </p>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={<Tv className="h-12 w-12" />}
+              title="No TV shows found"
+              description="Add video files and organize them into shows"
+            />
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
-              {tvShows.map((show) => (
-                <TvShowCard key={show.id} show={show} />
-              ))}
+              {tvShows.map((show) => {
+                const year = show.firstAirDate
+                  ? new Date(show.firstAirDate).getFullYear()
+                  : null;
+                return (
+                  <MediaCard
+                    key={show.id}
+                    href={`/tv/${show.id}`}
+                    image={show.posterPath}
+                    title={show.name}
+                    aspect="poster"
+                    fallbackIcon={Tv}
+                    subtitle={
+                      <span className="flex items-center gap-2">
+                        {year && <span>{year}</span>}
+                        {year && <span>&bull;</span>}
+                        <span>
+                          {show.numberOfSeasons}{' '}
+                          {show.numberOfSeasons === 1 ? 'Season' : 'Seasons'}
+                        </span>
+                      </span>
+                    }
+                  />
+                );
+              })}
             </div>
           )}
         </TabsContent>
       </Tabs>
     </div>
-  );
-}
-
-interface MovieCardProps {
-  movie: Movie;
-}
-
-function MovieCard({ movie }: MovieCardProps) {
-  const year = movie.releaseDate
-    ? new Date(movie.releaseDate).getFullYear()
-    : null;
-
-  return (
-    <Link to={`/movies/${movie.id}`}>
-      <Card className="group cursor-pointer overflow-hidden transition-shadow hover:shadow-lg">
-        <div className="relative aspect-[2/3] bg-muted">
-          {movie.posterPath ? (
-            <img
-              src={movie.posterPath}
-              alt={movie.title}
-              className="h-full w-full object-cover transition-transform group-hover:scale-105"
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center">
-              <Film className="h-12 w-12 text-muted-foreground" />
-            </div>
-          )}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-          <div className="absolute bottom-0 left-0 right-0 p-3 opacity-0 transition-opacity group-hover:opacity-100">
-            <Button size="sm" className="w-full">
-              <Play className="mr-2 h-4 w-4" />
-              Play
-            </Button>
-          </div>
-        </div>
-        <CardContent className="p-3">
-          <h3 className="truncate font-medium">{movie.title}</h3>
-          <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
-            {year && <span>{year}</span>}
-            {movie.runtime && (
-              <>
-                <span>&bull;</span>
-                <span>{movie.runtime} min</span>
-              </>
-            )}
-            {movie.tmdbRating && (
-              <>
-                <span>&bull;</span>
-                <span className="flex items-center">
-                  <Star className="mr-1 h-3 w-3 fill-yellow-500 text-yellow-500" />
-                  {movie.tmdbRating.toFixed(1)}
-                </span>
-              </>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-    </Link>
-  );
-}
-
-interface TvShowCardProps {
-  show: TvShow;
-}
-
-function TvShowCard({ show }: TvShowCardProps) {
-  const year = show.firstAirDate
-    ? new Date(show.firstAirDate).getFullYear()
-    : null;
-
-  return (
-    <Link to={`/tv/${show.id}`}>
-      <Card className="group cursor-pointer overflow-hidden transition-shadow hover:shadow-lg">
-        <div className="relative aspect-[2/3] bg-muted">
-          {show.posterPath ? (
-            <img
-              src={show.posterPath}
-              alt={show.name}
-              className="h-full w-full object-cover transition-transform group-hover:scale-105"
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center">
-              <Tv className="h-12 w-12 text-muted-foreground" />
-            </div>
-          )}
-        </div>
-        <CardContent className="p-3">
-          <h3 className="truncate font-medium">{show.name}</h3>
-          <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
-            {year && <span>{year}</span>}
-            <span>&bull;</span>
-            <span>
-              {show.numberOfSeasons} {show.numberOfSeasons === 1 ? 'Season' : 'Seasons'}
-            </span>
-          </div>
-        </CardContent>
-      </Card>
-    </Link>
   );
 }
 
@@ -363,18 +305,6 @@ function ContinueWatchingCard({ item }: ContinueWatchingCardProps) {
         <p className="text-xs text-muted-foreground">
           {Math.floor(item.progress.positionSeconds / 60)} min watched
         </p>
-      </CardContent>
-    </Card>
-  );
-}
-
-function MovieCardSkeleton() {
-  return (
-    <Card className="overflow-hidden">
-      <Skeleton className="aspect-[2/3]" />
-      <CardContent className="p-3">
-        <Skeleton className="h-5 w-3/4" />
-        <Skeleton className="mt-2 h-4 w-1/2" />
       </CardContent>
     </Card>
   );

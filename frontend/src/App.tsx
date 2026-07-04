@@ -37,7 +37,11 @@ import { FilesPage } from './pages/files/FilesPage';
 import { PhotosPage } from './pages/photos/PhotosPage';
 import { VideosPage } from './pages/videos/VideosPage';
 import { MoviesPage } from './pages/movies/MoviesPage';
+import { MovieDetailPage } from './pages/movies/MovieDetailPage';
+import { TvShowDetailPage } from './pages/movies/TvShowDetailPage';
 import { MusicPage } from './pages/music/MusicPage';
+import { AlbumDetailPage } from './pages/music/AlbumDetailPage';
+import { ArtistDetailPage } from './pages/music/ArtistDetailPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 
 export function App() {
@@ -98,11 +102,11 @@ export function App() {
                   <Route path="photos" element={<PhotosPage />} />
                   <Route path="videos" element={<VideosPage />} />
                   <Route path="movies" element={<MoviesPage />} />
-                  <Route path="movies/:id" element={<MoviesPage />} />
-                  <Route path="tv/:id" element={<MoviesPage />} />
+                  <Route path="movies/:id" element={<MovieDetailPage />} />
+                  <Route path="tv/:id" element={<TvShowDetailPage />} />
                   <Route path="music" element={<MusicPage />} />
-                  <Route path="music/albums/:id" element={<MusicPage />} />
-                  <Route path="music/artists/:id" element={<MusicPage />} />
+                  <Route path="music/albums/:id" element={<AlbumDetailPage />} />
+                  <Route path="music/artists/:id" element={<ArtistDetailPage />} />
 
                   {/* Settings */}
                   <Route path="settings/*" element={<SettingsPage />} />
