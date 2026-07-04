@@ -36,6 +36,62 @@ export interface WebSocketEvent {
 
 let io: Server | null = null;
 
+/**
+ * Cross-process event bridge.
+ *
+ * Socket.io only lives in the API process; in the production systemd install
+ * background jobs run in a separate worker process (WORKERS_IN_PROCESS=false)
+ * where `io` is null. Without a bridge, every worker-side emit (notifications,
+ * calendar sync/reminders) is silently dropped. Since there is a single API
+ * instance, we don't need the full socket.io Redis adapter — the worker just
+ * publishes its emit intents to a Redis channel and the API process re-emits
+ * them locally to the connected sockets.
+ */
+const WS_EMIT_CHANNEL = 'ws:emit';
+
+interface EmitMessage {
+  kind: 'household' | 'user' | 'room';
+  id: string;
+  event: string;
+  data: unknown;
+}
+
+function roomFor(msg: EmitMessage): string {
+  switch (msg.kind) {
+    case 'household':
+      return `household:${msg.id}`;
+    case 'user':
+      return `user:${msg.id}`;
+    case 'room':
+      return msg.id;
+  }
+}
+
+/** Publish an emit intent for the API process to deliver (used when io is null). */
+function publishEmit(msg: EmitMessage): void {
+  redis.publish(WS_EMIT_CHANNEL, JSON.stringify(msg)).catch((error: unknown) => {
+    logger.error({ error, event: msg.event }, 'Failed to publish websocket event to Redis');
+  });
+}
+
+/** Subscribe (API process only) to worker-published emit intents. */
+function subscribeToEmitBridge(): void {
+  const sub = redis.duplicate();
+  sub.on('error', (error: Error) => logger.error({ error }, 'WebSocket emit-bridge subscriber error'));
+  sub.subscribe(WS_EMIT_CHANNEL).catch((error: unknown) =>
+    logger.error({ error }, 'Failed to subscribe to websocket emit bridge')
+  );
+  sub.on('message', (channel: string, message: string) => {
+    if (channel !== WS_EMIT_CHANNEL || !io) return;
+    try {
+      const msg = JSON.parse(message) as EmitMessage;
+      io.to(roomFor(msg)).emit(msg.event, msg.data);
+    } catch (error) {
+      logger.error({ error }, 'Failed to relay websocket event from Redis');
+    }
+  });
+}
+
 export function getIO(): Server {
   if (!io) {
     throw new Error('Socket.io not initialized');
@@ -170,6 +226,9 @@ export function initializeWebSocket(server: HttpServer): Server {
   // terminals. Admin-only auth lives inside the namespace setup.
   registerInstallNamespace(io);
 
+  // Relay events emitted from the separate worker process.
+  subscribeToEmitBridge();
+
   logger.info('WebSocket server initialized');
   return io;
 }
@@ -197,22 +256,32 @@ async function trackOnlineStatus(userId: string, householdId: string, online: bo
   });
 }
 
-// Emit event to all members of a household
+// Emit event to all members of a household. In the worker process (no local
+// io) this publishes to the Redis bridge for the API process to deliver.
 export function emitToHousehold(householdId: string, event: string, data: unknown): void {
-  if (!io) return;
-  io.to(`household:${householdId}`).emit(event, data);
+  if (io) {
+    io.to(`household:${householdId}`).emit(event, data);
+    return;
+  }
+  publishEmit({ kind: 'household', id: householdId, event, data });
 }
 
 // Emit event to a specific user
 export function emitToUser(userId: string, event: string, data: unknown): void {
-  if (!io) return;
-  io.to(`user:${userId}`).emit(event, data);
+  if (io) {
+    io.to(`user:${userId}`).emit(event, data);
+    return;
+  }
+  publishEmit({ kind: 'user', id: userId, event, data });
 }
 
 // Emit event to a specific room
 export function emitToRoom(room: string, event: string, data: unknown): void {
-  if (!io) return;
-  io.to(room).emit(event, data);
+  if (io) {
+    io.to(room).emit(event, data);
+    return;
+  }
+  publishEmit({ kind: 'room', id: room, event, data });
 }
 
 // Get online users for a household
