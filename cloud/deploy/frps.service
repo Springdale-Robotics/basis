@@ -1,0 +1,30 @@
+[Unit]
+Description=frp server — Basis Remote relay (frps)
+Documentation=https://github.com/Springdale-Robotics/basis
+After=network-online.target
+# Wants (NOT Requires) basis-cloud: frps must keep running while the control
+# plane restarts (e.g. during update.sh) so established customer tunnels stay
+# up. It fails safe on its own — with the httpPlugin unreachable, new Logins
+# can't be authorized, and existing sessions are re-checked on Ping.
+Wants=network-online.target basis-cloud.service
+# See basis-cloud.service for why the start limiter is disabled.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=frps
+Group=frps
+ExecStart=/usr/local/bin/frps -c /etc/frp/frps.toml
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Hardening: frps needs no disk access beyond reading its config.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

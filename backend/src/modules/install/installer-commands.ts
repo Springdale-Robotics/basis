@@ -25,6 +25,16 @@ export interface InstallerCommand {
  *  same path works in dev (`npm run dev`) and production. */
 export const LOCAL_BIN_DIR = resolve(process.cwd(), 'bin');
 export const CLOUDFLARED_LOCAL_PATH = resolve(LOCAL_BIN_DIR, 'cloudflared');
+export const FRPC_LOCAL_PATH = resolve(LOCAL_BIN_DIR, 'frpc');
+
+/**
+ * Pinned frp release for the Basis Remote tunnel client. Pinned (not
+ * `latest`) because the asset filenames embed the version and because a pin
+ * is what makes the sha256 verification below meaningful. Keep in sync with
+ * the relay's pin in cloud/deploy/provision.sh so client/server stay within
+ * a compatible protocol range.
+ */
+export const FRP_VERSION = '0.61.1';
 
 async function ensureBinDir(): Promise<void> {
   await fs.mkdir(LOCAL_BIN_DIR, { recursive: true });
@@ -41,6 +51,22 @@ function cloudflaredAsset(platform: NodeJS.Platform, arch: string): string {
     // No separate arm64 build — Cloudflare ships a universal tgz, but the
     // amd64 binary runs under Rosetta. Keep it simple.
     return 'cloudflared-darwin-amd64.tgz';
+  }
+  throw new Error(`Unsupported platform: ${platform}/${arch}`);
+}
+
+function frpAsset(platform: NodeJS.Platform, arch: string): string {
+  // frp release naming, see github.com/fatedier/frp/releases:
+  //   frp_<version>_<os>_<arch>.tar.gz  (tarball contains both frps and frpc)
+  if (platform === 'linux') {
+    if (arch === 'arm64' || arch === 'aarch64') return `frp_${FRP_VERSION}_linux_arm64`;
+    if (arch === 'arm') return `frp_${FRP_VERSION}_linux_arm`;
+    return `frp_${FRP_VERSION}_linux_amd64`;
+  }
+  if (platform === 'darwin') {
+    return arch === 'arm64'
+      ? `frp_${FRP_VERSION}_darwin_arm64`
+      : `frp_${FRP_VERSION}_darwin_amd64`;
   }
   throw new Error(`Unsupported platform: ${platform}/${arch}`);
 }
@@ -263,6 +289,24 @@ echo "Once signed in, return here and click 'Check again'."`,
       }
     },
   },
+  {
+    id: 'install-frpc',
+    description: 'Download the frpc tunnel client (Basis Remote) into the app\'s local bin.',
+    argv: [
+      'bash',
+      '-lc',
+      // Resolved at spawn time below — see buildArgv.
+      '__FRPC_INSTALL_PLACEHOLDER__',
+    ],
+    postCheck: async () => {
+      try {
+        const stat = await fs.stat(FRPC_LOCAL_PATH);
+        return stat.isFile();
+      } catch {
+        return false;
+      }
+    },
+  },
 ];
 
 /**
@@ -302,6 +346,46 @@ curl -fL "${url}" -o "${target}"
 chmod +x "${target}"
 echo "Installed cloudflared to ${target}"
 "${target}" --version`;
+
+    return ['bash', '-lc', script];
+  }
+
+  if (id === 'install-frpc') {
+    await ensureBinDir();
+    const asset = frpAsset(process.platform, process.arch);
+    const base = `https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}`;
+    const target = FRPC_LOCAL_PATH;
+
+    // Unlike the cloudflared entry, frp publishes per-release checksums —
+    // verify them and refuse an unverified binary (same stance as update-self).
+    const script = `set -eo pipefail
+echo "Downloading ${asset}.tar.gz from frp v${FRP_VERSION} GitHub release..."
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+curl -fL "${base}/${asset}.tar.gz" -o "$TMPDIR/frp.tar.gz"
+echo "Verifying checksum against the published frp_sha256_checksums.txt..."
+curl -fsSL "${base}/frp_sha256_checksums.txt" -o "$TMPDIR/checksums.txt"
+EXPECTED=$(grep "  ${asset}.tar.gz\$" "$TMPDIR/checksums.txt" | awk '{print $1}')
+if [ -z "$EXPECTED" ]; then
+  echo "No published checksum for ${asset}.tar.gz — refusing to install unverified binary."
+  exit 1
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL=$(sha256sum "$TMPDIR/frp.tar.gz" | awk '{print $1}')
+else
+  ACTUAL=$(shasum -a 256 "$TMPDIR/frp.tar.gz" | awk '{print $1}')
+fi
+if [ "$EXPECTED" != "$ACTUAL" ]; then
+  echo "Checksum mismatch (expected $EXPECTED, got $ACTUAL). Aborting."
+  exit 1
+fi
+echo "Checksum OK."
+tar -xzf "$TMPDIR/frp.tar.gz" -C "$TMPDIR"
+mkdir -p "${LOCAL_BIN_DIR}"
+mv "$TMPDIR/${asset}/frpc" "${target}"
+chmod +x "${target}"
+echo "Installed frpc to ${target}"
+"${target}" -v`;
 
     return ['bash', '-lc', script];
   }

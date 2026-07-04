@@ -137,3 +137,90 @@ jobs:
       - name: Build
         run: npm run build
         working-directory: frontend
+
+  cloud-server:
+    name: Cloud server lint + typecheck + unit tests + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: cloud/server/package-lock.json
+
+      - name: Install deps
+        run: npm ci --no-audit --no-fund
+        working-directory: cloud/server
+
+      - name: Lint
+        run: npm run lint
+        working-directory: cloud/server
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+        working-directory: cloud/server
+
+      - name: Unit tests (no infra required)
+        # The cloud server's suite is unit-only (frp handler decisions,
+        # subdomain validation, usage deltas, webhook transitions) — no
+        # Postgres needed, but importing the config module validates env on
+        # load, so provide syntactically-valid dummy values.
+        env:
+          DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+          SESSION_SECRET: ci-session-secret-not-used-in-ci-000000
+          FRP_PLUGIN_SECRET: ci-plugin-secret-not-used-in-ci-00000
+          FRPS_ADMIN_USER: admin
+          FRPS_ADMIN_PASSWORD: ci-admin-password-not-used
+          FRPS_ADMIN_URL: http://127.0.0.1:7500
+          APP_ORIGIN: http://localhost:4000
+          RELAY_SERVER_ADDR: localhost
+          RELAY_SERVER_PORT: '7000'
+          STRIPE_SECRET_KEY: sk_test_ci_dummy
+          STRIPE_WEBHOOK_SECRET: whsec_ci_dummy
+          STRIPE_PRICE_BASIC_ANNUAL: price_ci_basic_dummy
+          STRIPE_PRICE_STREAMING_ANNUAL: price_ci_streaming_dummy
+          CAP_BASIC_GB: '250'
+          CAP_STREAMING_GB: '2048'
+          THROTTLE_BASIC_MBPS: '4'
+        run: npx vitest run
+        working-directory: cloud/server
+
+      # The build is a tsc emit consumed as-is by the release tarball — gate
+      # on it actually emitting.
+      - name: Build
+        run: node build.mjs
+        working-directory: cloud/server
+
+  cloud-frontend:
+    name: Cloud frontend lint + typecheck + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: cloud/frontend/package-lock.json
+
+      - name: Install deps
+        run: npm ci --no-audit --no-fund
+        working-directory: cloud/frontend
+
+      - name: Lint
+        run: npm run lint
+        working-directory: cloud/frontend
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+        working-directory: cloud/frontend
+
+      # Typecheck alone won't catch a broken production build (asset resolution,
+      # env access, bundler config). Gate on the real build.
+      - name: Build
+        run: npm run build
+        working-directory: cloud/frontend

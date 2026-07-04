@@ -37,12 +37,21 @@ export interface HouseholdSettings {
     notifyOnAdd: boolean;
   };
   remoteAccess?: {
-    mode: 'local_only' | 'cloudflare' | 'tailscale' | 'custom_domain';
+    mode: 'local_only' | 'cloudflare' | 'tailscale' | 'custom_domain' | 'basis_remote';
     publicUrl?: string;
     localUrl?: string;
     cloudflare?: {
       tunnelId: string;
       tunnelToken: string;
+    };
+    /** Basis Remote (paid lastname.home-basis.com tunnel). Written only by the
+     *  claim/disconnect routes — never via the generic PATCH. */
+    basisRemote?: {
+      tenantId: string;
+      subdomain: string;
+      hostname: string;
+      tunnelToken: string;
+      relay: { serverAddr: string; serverPort: number };
     };
     tailscale?: {
       hostname: string;

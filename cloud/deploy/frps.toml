@@ -1,0 +1,42 @@
+# frps.toml — Basis Remote relay configuration (TEMPLATE).
+#
+# Rendered to /etc/frp/frps.toml by provision.sh, which substitutes the
+# __FRP_PLUGIN_SECRET__ and __FRPS_ADMIN_PASSWORD__ placeholders with the
+# values generated into /opt/basis-cloud/.env. Do not deploy this file
+# unrendered.
+#
+# There is deliberately no global auth.token: every frpc Login/NewProxy/Ping
+# is authorized by the control plane via the httpPlugin below. If the control
+# plane is down, logins are rejected — the relay fails safe.
+
+# Control connections from customer boxes (frpc).
+bindPort = 7000
+
+# HTTP vhost router for *.home-basis.com traffic. Loopback-only: Caddy
+# terminates TLS on 443 and proxies the wildcard host here — this port must
+# never be reachable from the internet.
+vhostHTTPPort = 8080
+proxyBindAddr = "127.0.0.1"
+
+# Tenants claim <subdomain>.home-basis.com via frpc's `subdomain` field.
+subDomainHost = "home-basis.com"
+
+# Journald captures stdout/stderr from the systemd unit.
+log.to = "console"
+
+# Admin API, loopback-only. The control plane's usage meter polls
+# /api/proxy/http every minute for per-proxy traffic counters.
+webServer.addr = "127.0.0.1"
+webServer.port = 7500
+webServer.user = "admin"
+webServer.password = "__FRPS_ADMIN_PASSWORD__"
+enablePrometheus = true
+
+# Authorization callbacks to the control plane. The secret lives in the URL
+# path; the handler additionally checks the source is loopback, and Caddy
+# returns 404 for /frp-plugin/* on the public origin (defense in depth).
+[[httpPlugins]]
+name = "basis-control"
+addr = "http://127.0.0.1:4000"
+path = "/frp-plugin/__FRP_PLUGIN_SECRET__/handler"
+ops = ["Login", "NewProxy", "Ping", "CloseProxy"]

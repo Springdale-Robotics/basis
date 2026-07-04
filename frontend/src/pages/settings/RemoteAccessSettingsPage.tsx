@@ -1,6 +1,6 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Globe, Cloud, Network, Laptop, Copy, Check as CheckIcon, XCircle, AlertTriangle } from 'lucide-react';
+import { Loader2, Globe, Cloud, Network, Laptop, Copy, Check as CheckIcon, XCircle, AlertTriangle, Zap } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,6 +9,8 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { GuidedInstallDialog } from '@/components/settings/GuidedInstallDialog';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import {
   settingsApi,
@@ -16,9 +18,10 @@ import {
   type TailscaleDetectResult,
   type TailscaleIssue,
   type CloudflaredStatus,
+  type BasisRemoteStatus,
 } from '@/api/settings';
 import { toast } from '@/hooks/useToast';
-import { getErrorMessage } from '@/lib/api-error';
+import { ApiError, getErrorMessage } from '@/lib/api-error';
 import { copyToClipboard } from '@/lib/clipboard';
 import { CheckCircle2, ExternalLink, Network as NetworkIcon } from 'lucide-react';
 
@@ -30,9 +33,21 @@ interface ModeOption {
   urlPlaceholder: string;
   guidance: string;
   allowsHttp: boolean;
+  badge?: string;
 }
 
 const MODES: ModeOption[] = [
+  {
+    id: 'basis_remote',
+    label: 'Basis Remote',
+    description: 'yourname.home-basis.com — one code, we handle the rest',
+    icon: Zap,
+    urlPlaceholder: 'https://yourname.home-basis.com',
+    guidance:
+      'Basis Remote opens a secure outbound tunnel to your home-basis.com address — TLS, forwarding headers, and reconnection are handled for you. Claim your address at home-basis.com, then paste the claim code below.',
+    allowsHttp: false,
+    badge: 'Recommended',
+  },
   {
     id: 'local_only',
     label: 'Local only',
@@ -177,7 +192,14 @@ export function RemoteAccessSettingsPage() {
                       <Icon className="h-4 w-4" />
                     </div>
                     <div className="flex-1">
-                      <p className="font-medium text-sm">{option.label}</p>
+                      <p className="font-medium text-sm">
+                        {option.label}
+                        {option.badge && (
+                          <span className="ml-2 inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                            {option.badge}
+                          </span>
+                        )}
+                      </p>
                       <p className="text-xs text-muted-foreground">{option.description}</p>
                     </div>
                   </button>
@@ -206,15 +228,22 @@ export function RemoteAccessSettingsPage() {
               onChange={(e) => setPublicUrl(e.target.value)}
               placeholder={selectedMode.urlPlaceholder}
               autoComplete="off"
+              readOnly={selectedMode.id === 'basis_remote'}
+              className={selectedMode.id === 'basis_remote' ? 'bg-muted' : undefined}
             />
             <p className="text-xs text-muted-foreground">
-              No trailing slash. Used as the base for ICS subscription URLs and CalDAV
-              endpoints.
+              {selectedMode.id === 'basis_remote'
+                ? 'Assigned automatically when you claim your Basis Remote address below. Used as the base for ICS subscription URLs and CalDAV endpoints.'
+                : 'No trailing slash. Used as the base for ICS subscription URLs and CalDAV endpoints.'}
             </p>
             {publicUrlError && (
               <p className="text-xs text-destructive">{publicUrlError}</p>
             )}
           </div>
+
+          {selectedMode.id === 'basis_remote' && (
+            <BasisRemotePanel setPublicUrl={setPublicUrl} />
+          )}
 
           {selectedMode.id === 'tailscale' && <TailscalePanel publicUrl={publicUrl} setPublicUrl={setPublicUrl} />}
 
@@ -719,6 +748,395 @@ function CloudflarePanel({
   );
 }
 
+// ─── Basis Remote: claim-code flow + tunnel status ────────────────────────
+
+/** "aB3x-9k2M 4Qz7" → "AB3X-9K2M-4QZ7" — 12 chars in XXXX-XXXX-XXXX groups. */
+function formatClaimCode(raw: string): string {
+  const chars = raw
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 12);
+  return chars.replace(/(.{4})(?=.)/g, '$1-');
+}
+
+const CLAIM_ERROR_MESSAGES: Record<string, string> = {
+  FRPC_NOT_INSTALLED: 'frpc is not installed on this server — install it first, then retry.',
+  CLAIM_CODE_INVALID: "That claim code isn't valid. Check it against your home-basis.com dashboard.",
+  CLAIM_CODE_EXPIRED: 'That claim code has expired — generate a fresh one at home-basis.com.',
+  CLAIM_CODE_USED: 'That claim code was already used — generate a fresh one at home-basis.com.',
+  CLOUD_UNREACHABLE: "Couldn't reach home-basis.com — check this server's internet connection and try again.",
+  CLOUD_ERROR: 'home-basis.com returned an error. Please try again in a few minutes.',
+};
+
+function claimErrorMessage(err: unknown): string {
+  if (ApiError.isApiError(err) && CLAIM_ERROR_MESSAGES[err.code]) {
+    return CLAIM_ERROR_MESSAGES[err.code];
+  }
+  return getErrorMessage(err);
+}
+
+function BasisRemotePanel({ setPublicUrl }: { setPublicUrl: (v: string) => void }) {
+  const queryClient = useQueryClient();
+  const [claimCode, setClaimCode] = useState('');
+  const [installOpen, setInstallOpen] = useState(false);
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['settings', 'remote-access', 'basis-remote'],
+    queryFn: settingsApi.getBasisRemoteStatus,
+    refetchInterval: (q) =>
+      // While the tunnel is running, poll occasionally so the UI catches
+      // unexpected exits and heartbeat/usage changes.
+      (q.state.data as BasisRemoteStatus | undefined)?.running ? 15_000 : false,
+  });
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['settings', 'remote-access'] });
+    queryClient.invalidateQueries({
+      queryKey: ['settings', 'remote-access', 'basis-remote'],
+    });
+  };
+
+  const claimMutation = useMutation({
+    mutationFn: () => settingsApi.claimBasisRemote(claimCode),
+    onSuccess: (res) => {
+      invalidate();
+      setPublicUrl(res.publicUrl);
+      setClaimCode('');
+      if (res.status.running) {
+        toast({ title: 'Basis Remote connected', description: res.publicUrl });
+      } else {
+        // Claim succeeded (address is yours, settings saved) but the tunnel
+        // hasn't come up yet — the panel shows a "Retry connection" button.
+        toast({
+          title: 'Address claimed',
+          description: `${res.hostname} is yours, but the tunnel isn't connected yet. Use "Retry connection" below.`,
+        });
+      }
+    },
+    onError: (err) => {
+      toast({
+        title: 'Could not claim',
+        description: claimErrorMessage(err),
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const connectMutation = useMutation({
+    mutationFn: settingsApi.connectBasisRemote,
+    onSuccess: () => {
+      invalidate();
+      toast({ title: 'Basis Remote connected' });
+    },
+    onError: (err) => {
+      toast({
+        title: 'Could not connect',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const disconnectMutation = useMutation({
+    mutationFn: settingsApi.disconnectBasisRemote,
+    onSuccess: () => {
+      invalidate();
+      setPublicUrl('');
+      setDisconnectOpen(false);
+      toast({ title: 'Basis Remote disconnected' });
+    },
+    onError: (err) => {
+      setDisconnectOpen(false);
+      toast({
+        title: 'Could not disconnect',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      });
+    },
+  });
+
+  if (isLoading) return <Skeleton className="h-32" />;
+  if (!data) return null;
+
+  // Keep the install dialog mounted across status transitions (the
+  // post-install refetch flips `data.installed` to true, which would
+  // otherwise unmount the dialog mid-show). Same pattern as CloudflarePanel.
+  const installDialog = (
+    <GuidedInstallDialog
+      open={installOpen}
+      onOpenChange={setInstallOpen}
+      commandId="install-frpc"
+      title="Install frpc"
+      description="Downloads the official frpc binary from frp's GitHub releases, verifies its checksum, and installs it into this app's bin/. No sudo required."
+      onSuccess={() => {
+        refetch();
+      }}
+    />
+  );
+
+  const disconnectDialog = (
+    <ConfirmDialog
+      open={disconnectOpen}
+      onOpenChange={setDisconnectOpen}
+      title="Disconnect Basis Remote?"
+      description="Stops the tunnel and removes the connection from this server. Your subdomain and subscription are managed at home-basis.com — disconnecting here does not release or cancel them."
+      confirmText="Disconnect"
+      variant="destructive"
+      isPending={disconnectMutation.isPending}
+      onConfirm={() => disconnectMutation.mutate()}
+    />
+  );
+
+  const heartbeat = data.heartbeat;
+  const unlinked =
+    data.claimed && (heartbeat?.status === 'canceled' || heartbeat?.authFailed);
+
+  let body: React.ReactNode;
+  if (!data.installed) {
+    body = (
+      <Alert>
+        <Zap className="h-4 w-4" />
+        <AlertTitle>frpc is not installed</AlertTitle>
+        <AlertDescription className="space-y-2">
+          <p>
+            Basis Remote uses <code className="rounded bg-muted px-1">frpc</code> to open a
+            secure outbound tunnel to your address. We can download the official binary into
+            this app's local bin — no sudo, no system-wide install.
+          </p>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => setInstallOpen(true)}>
+              Install frpc
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              Check again
+            </Button>
+          </div>
+        </AlertDescription>
+      </Alert>
+    );
+  } else if (!data.claimed) {
+    body = (
+      <Alert>
+        <Zap className="h-4 w-4" />
+        <AlertTitle>
+          Claim your address{data.version && ` — frpc v${data.version} ready`}
+        </AlertTitle>
+        <AlertDescription className="space-y-3">
+          <p>
+            Paste the one-time claim code from your home-basis.com dashboard. Claiming links
+            this server to your address and starts the tunnel.
+          </p>
+          <div className="space-y-2">
+            <Label htmlFor="br-claim-code">Claim code</Label>
+            <Input
+              id="br-claim-code"
+              value={claimCode}
+              onChange={(e) => setClaimCode(formatClaimCode(e.target.value))}
+              placeholder="XXXX-XXXX-XXXX"
+              maxLength={14}
+              autoComplete="off"
+              className="font-mono uppercase tracking-wider"
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Don't have a code?{' '}
+            <a
+              href="https://home-basis.com"
+              target="_blank"
+              rel="noreferrer"
+              className="underline inline-flex items-center gap-1"
+            >
+              Get your address at home-basis.com <ExternalLink className="h-3 w-3" />
+            </a>
+          </p>
+          {data.lastError && (
+            <p className="text-xs text-destructive">Last attempt: {data.lastError}</p>
+          )}
+          <Button
+            size="sm"
+            onClick={() => claimMutation.mutate()}
+            disabled={claimMutation.isPending || claimCode.length !== 14}
+          >
+            {claimMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Connect
+          </Button>
+        </AlertDescription>
+      </Alert>
+    );
+  } else if (unlinked) {
+    // Canceled subscription or auth failure — the backend has stopped the
+    // tunnel. Disconnect is the only meaningful action from this box.
+    body = (
+      <Alert variant="destructive">
+        <XCircle className="h-4 w-4" />
+        <AlertTitle>This box is no longer linked to a subscription</AlertTitle>
+        <AlertDescription className="space-y-2">
+          <p>
+            The tunnel has been stopped. Manage your subscription at{' '}
+            <a
+              href="https://home-basis.com"
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
+              home-basis.com
+            </a>
+            . If you resubscribed, disconnect here and enter a fresh claim code.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setDisconnectOpen(true)}
+            disabled={disconnectMutation.isPending}
+          >
+            Disconnect
+          </Button>
+        </AlertDescription>
+      </Alert>
+    );
+  } else if (data.running) {
+    const usage = heartbeat?.usage;
+    const usagePct =
+      usage && usage.capGB > 0 ? (usage.monthGB / usage.capGB) * 100 : null;
+    body = (
+      <Alert>
+        <CheckCircle2 className="h-4 w-4 text-success" />
+        <AlertTitle>Basis Remote is connected</AlertTitle>
+        <AlertDescription className="space-y-3">
+          <p>
+            Your Basis is reachable at{' '}
+            <a
+              href={`https://${data.hostname}`}
+              target="_blank"
+              rel="noreferrer"
+              className="underline inline-flex items-center gap-1"
+            >
+              https://{data.hostname} <ExternalLink className="h-3 w-3" />
+            </a>
+            . frpc {data.version && <>(v{data.version}) </>}runs as a managed child of this
+            server and reconnects automatically.
+          </p>
+          {heartbeat?.tier && (
+            <p className="text-sm">
+              Plan: <span className="font-medium capitalize">{heartbeat.tier}</span>
+            </p>
+          )}
+          {usage && usagePct !== null && (
+            <div className="space-y-1">
+              <Progress
+                value={Math.min(usagePct, 100)}
+                className={cn(
+                  'h-2',
+                  usagePct >= 100
+                    ? '[&>div]:bg-destructive'
+                    : usagePct >= 80
+                    ? '[&>div]:bg-warning'
+                    : undefined
+                )}
+              />
+              <p
+                className={cn(
+                  'text-xs',
+                  usagePct >= 100
+                    ? 'text-destructive'
+                    : usagePct >= 80
+                    ? 'text-warning-muted-foreground'
+                    : 'text-muted-foreground'
+                )}
+              >
+                {Math.round(usage.monthGB * 10) / 10} GB of {usage.capGB} GB used this month
+                {usagePct >= 100 && ' — over your cap, transfers may be throttled'}
+              </p>
+            </div>
+          )}
+          {heartbeat?.stale && (
+            <p className="text-xs text-muted-foreground">
+              Subscription status may be out of date — last checked{' '}
+              {heartbeat.fetchedAt
+                ? new Date(heartbeat.fetchedAt).toLocaleString()
+                : 'unknown'}
+              .
+            </p>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setDisconnectOpen(true)}
+            disabled={disconnectMutation.isPending}
+          >
+            Disconnect
+          </Button>
+        </AlertDescription>
+      </Alert>
+    );
+  } else {
+    // Claimed but the tunnel isn't up (claim returned before frpc connected,
+    // or the child exited).
+    body = (
+      <Alert>
+        <AlertTriangle className="h-4 w-4 text-warning" />
+        <AlertTitle>Claimed, but the tunnel is not connected</AlertTitle>
+        <AlertDescription className="space-y-2">
+          <p>
+            Your address <code className="rounded bg-muted px-1">{data.hostname}</code> is
+            claimed, but the tunnel to home-basis.com isn't up right now.
+          </p>
+          {data.lastError && (
+            <p className="text-xs text-destructive">Last error: {data.lastError}</p>
+          )}
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => connectMutation.mutate()}
+              disabled={connectMutation.isPending}
+            >
+              {connectMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Retry connection
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDisconnectOpen(true)}
+              disabled={disconnectMutation.isPending}
+            >
+              Disconnect
+            </Button>
+          </div>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {data.claimed && heartbeat?.status === 'suspended' && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Subscription suspended</AlertTitle>
+          <AlertDescription>
+            Update your payment method at{' '}
+            <a
+              href="https://home-basis.com"
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
+              home-basis.com
+            </a>{' '}
+            to keep remote access working.
+          </AlertDescription>
+        </Alert>
+      )}
+      {body}
+      {installDialog}
+      {disconnectDialog}
+    </div>
+  );
+}
+
 // ─── Custom Domain: reachability probe + reverse-proxy snippets ───────────
 
 function CustomDomainPanel({ publicUrl }: { publicUrl: string }) {
@@ -885,7 +1303,9 @@ function ModeSwitchWarning({
 
   const isLeavingTailscale = previousMode === 'tailscale' && newMode !== 'tailscale';
   const isLeavingCloudflare = previousMode === 'cloudflare' && newMode !== 'cloudflare';
-  const shouldShow = isLeavingTailscale || isLeavingCloudflare;
+  const isLeavingBasisRemote =
+    previousMode === 'basis_remote' && newMode !== 'basis_remote';
+  const shouldShow = isLeavingTailscale || isLeavingCloudflare || isLeavingBasisRemote;
 
   // Probe whichever managed setup the user is leaving so we only warn if it's
   // actually running right now. Skipping the query when not relevant avoids
@@ -900,9 +1320,15 @@ function ModeSwitchWarning({
     queryFn: settingsApi.detectCloudflared,
     enabled: isLeavingCloudflare,
   });
+  const { data: basisRemoteStatus } = useQuery({
+    queryKey: ['settings', 'remote-access', 'basis-remote'],
+    queryFn: settingsApi.getBasisRemoteStatus,
+    enabled: isLeavingBasisRemote,
+  });
 
   const tailscaleRunning = isLeavingTailscale && tailscaleStatus?.serve.configured;
   const cloudflareRunning = isLeavingCloudflare && cloudflaredStatus?.running;
+  const basisRemoteRunning = isLeavingBasisRemote && basisRemoteStatus?.running;
 
   const stopTailscale = useMutation({
     mutationFn: settingsApi.disableTailscale,
@@ -938,7 +1364,25 @@ function ModeSwitchWarning({
       }),
   });
 
-  if (!shouldShow || (!tailscaleRunning && !cloudflareRunning)) return null;
+  const stopBasisRemote = useMutation({
+    mutationFn: settingsApi.disconnectBasisRemote,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings', 'remote-access'] });
+      queryClient.invalidateQueries({
+        queryKey: ['settings', 'remote-access', 'basis-remote'],
+      });
+      toast({ title: 'Basis Remote tunnel stopped' });
+    },
+    onError: (err) =>
+      toast({
+        title: 'Could not stop',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      }),
+  });
+
+  if (!shouldShow || (!tailscaleRunning && !cloudflareRunning && !basisRemoteRunning))
+    return null;
 
   return (
     <Alert>
@@ -947,9 +1391,13 @@ function ModeSwitchWarning({
       <AlertDescription className="space-y-2">
         <p>
           You're switching away from <strong>{previousMode}</strong>, but the{' '}
-          {tailscaleRunning ? 'Tailscale serve' : 'Cloudflare tunnel'} on this
-          host is still active. Saving the new mode won't stop it — tear it down
-          here so it doesn't keep serving in the background.
+          {tailscaleRunning
+            ? 'Tailscale serve'
+            : cloudflareRunning
+            ? 'Cloudflare tunnel'
+            : 'Basis Remote tunnel'}{' '}
+          on this host is still active. Saving the new mode won't stop it — tear
+          it down here so it doesn't keep serving in the background.
         </p>
         {tailscaleRunning && (
           <Button
@@ -975,6 +1423,19 @@ function ModeSwitchWarning({
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             )}
             Stop Cloudflare tunnel
+          </Button>
+        )}
+        {basisRemoteRunning && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => stopBasisRemote.mutate()}
+            disabled={stopBasisRemote.isPending}
+          >
+            {stopBasisRemote.isPending && (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            )}
+            Stop Basis Remote tunnel
           </Button>
         )}
       </AlertDescription>

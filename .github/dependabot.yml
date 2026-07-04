@@ -28,6 +28,32 @@ updates:
           - minor
           - patch
 
+  # Cloud control-plane server npm deps (Basis Remote)
+  - package-ecosystem: npm
+    directory: /cloud/server
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      cloud-server-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Cloud frontend npm deps (Basis Remote)
+  - package-ecosystem: npm
+    directory: /cloud/frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      cloud-frontend-minor-patch:
+        update-types:
+          - minor
+          - patch
+
   # GitHub Actions versions
   - package-ecosystem: github-actions
     directory: /

@@ -818,6 +818,7 @@ case "${1:-help}" in
     echo -e "  ${GREEN}clean${NC}                Remove everything (confirms first)"
     echo -e "  ${GREEN}prune${NC}                Full Docker cleanup including volumes (confirms first)"
     echo -e "  ${GREEN}help${NC}                 Show this help"
+    echo -e "  ${BLUE}Basis Remote (home-basis.com) cloud service has its own helper: cloud/dev.sh${NC}"
     echo ""
     echo -e "${YELLOW}Examples:${NC}"
     echo "  ./dev.sh start             # Start full stack"

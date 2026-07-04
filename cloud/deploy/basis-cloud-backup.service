@@ -1,0 +1,21 @@
+[Unit]
+Description=Basis Remote nightly database backup (pg_dump)
+Documentation=https://github.com/Springdale-Robotics/basis
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=basis-cloud
+Group=basis-cloud
+# Installed by provision.sh from cloud/deploy/backup.sh. The subscriber DB is
+# the business — see backup.sh for the optional BACKUP_REMOTE_CMD off-host
+# hook (strongly recommended).
+ExecStart=/usr/local/bin/basis-cloud-backup
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/backups/basis-cloud

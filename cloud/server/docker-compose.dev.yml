@@ -1,0 +1,22 @@
+# Dev-only Postgres for the cloud control plane. Host port 5433 so it never
+# clashes with the main app's dev Postgres on 5432.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: basis-cloud-dev-postgres
+    environment:
+      POSTGRES_USER: basis_cloud
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: basis_cloud
+    ports:
+      - '5433:5432'
+    volumes:
+      - basis_cloud_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U basis_cloud']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  basis_cloud_pgdata:

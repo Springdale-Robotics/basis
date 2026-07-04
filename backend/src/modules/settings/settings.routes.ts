@@ -21,6 +21,12 @@ import {
   startTunnel as startCloudflareTunnel,
   stopTunnel as stopCloudflareTunnel,
 } from '../../lib/cloudflared.js';
+import {
+  getBasisRemoteStatus,
+  startBasisRemote,
+  stopBasisRemote,
+} from '../../lib/basis-remote.js';
+import { claimBox, ClaimError } from '../../lib/basis-cloud.js';
 
 const PUBLIC_ICS_PATH = '/api/v1/calendars/public';
 
@@ -63,7 +69,10 @@ const remoteAccessUrlSchema = z
   .refine((u) => !u.endsWith('/'), 'Must not end with a trailing slash');
 
 const updateRemoteAccessSchema = z.object({
-  mode: z.enum(['local_only', 'cloudflare', 'tailscale', 'custom_domain']).optional(),
+  // NB: no writable `basisRemote` object here on purpose — that blob is
+  // managed exclusively by the /remote-access/basis-remote/* routes so the
+  // UI can never half-write tunnel credentials.
+  mode: z.enum(['local_only', 'cloudflare', 'tailscale', 'custom_domain', 'basis_remote']).optional(),
   publicUrl: remoteAccessUrlSchema.optional().nullable(),
   localUrl: remoteAccessUrlSchema.optional().nullable(),
   cloudflare: z
@@ -328,6 +337,9 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       const redacted = { ...remoteAccess };
       if (redacted.cloudflare?.tunnelToken) {
         redacted.cloudflare = { ...redacted.cloudflare, tunnelToken: '***' };
+      }
+      if (redacted.basisRemote?.tunnelToken) {
+        redacted.basisRemote = { ...redacted.basisRemote, tunnelToken: '***' };
       }
 
       return { success: true, data: { remoteAccess: redacted } };
@@ -627,6 +639,159 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         .where(eq(households.id, request.user!.householdId));
 
       return { success: true, data: { message: 'Cloudflare tunnel stopped' } };
+    }
+  );
+
+  // ─── Basis Remote: claim / connect / disconnect / status ─────────────────
+  // The paid lastname.home-basis.com tunnel. The box redeems a one-time claim
+  // code from the customer's home-basis.com dashboard, persists the returned
+  // credentials, then runs frpc against our relay.
+
+  const claimBasisRemoteSchema = z.object({
+    claimCode: z
+      .string()
+      .transform((s) => s.toUpperCase().replace(/[\s-]/g, ''))
+      .pipe(z.string().regex(/^[A-Z0-9]{12}$/, 'Claim code should look like XXXX-XXXX-XXXX'))
+      .transform((s) => `${s.slice(0, 4)}-${s.slice(4, 8)}-${s.slice(8, 12)}`),
+  });
+
+  app.get(
+    '/remote-access/basis-remote/status',
+    { preHandler: [authMiddleware] },
+    async (request) => {
+      const status = await getBasisRemoteStatus();
+      const household = await db.query.households.findFirst({
+        where: eq(households.id, request.user!.householdId),
+        columns: { settings: true },
+      });
+      const remote = (household?.settings as any)?.remoteAccess;
+      return {
+        success: true,
+        data: { ...status, claimed: !!remote?.basisRemote?.tunnelToken },
+      };
+    }
+  );
+
+  app.post(
+    '/remote-access/basis-remote/claim',
+    { preHandler: [authMiddleware, requireAdmin()] },
+    async (request, reply) => {
+      const { claimCode } = claimBasisRemoteSchema.parse(request.body);
+
+      // Claim codes are one-time: refuse before redeeming if frpc isn't even
+      // installed, so the user can run the guided install without burning it.
+      const preStatus = await getBasisRemoteStatus();
+      if (!preStatus.installed) {
+        reply.code(409);
+        return {
+          success: false,
+          error: {
+            code: 'FRPC_NOT_INSTALLED',
+            message: 'frpc is not installed yet — use the guided install first',
+          },
+        };
+      }
+
+      let claim;
+      try {
+        claim = await claimBox(claimCode);
+      } catch (err) {
+        if (err instanceof ClaimError) {
+          reply.code(err.code === 'CLOUD_UNREACHABLE' || err.code === 'CLOUD_ERROR' ? 502 : 400);
+          return { success: false, error: { code: err.code, message: err.message } };
+        }
+        throw err;
+      }
+
+      // Persist BEFORE starting the tunnel: the code is spent — if the spawn
+      // fails the credentials must survive so /connect can retry.
+      const publicUrl = `https://${claim.hostname}`;
+      const current = await db.query.households.findFirst({
+        where: eq(households.id, request.user!.householdId),
+        columns: { settings: true },
+      });
+      const existing = (current?.settings as Record<string, unknown>) ?? {};
+      const existingRemote =
+        (existing.remoteAccess as Record<string, unknown> | undefined) ?? {};
+      const newRemote = {
+        ...existingRemote,
+        mode: 'basis_remote',
+        publicUrl,
+        basisRemote: claim,
+      };
+      await db
+        .update(households)
+        .set({ settings: { ...existing, remoteAccess: newRemote as RemoteAccessSettings }, updatedAt: new Date() })
+        .where(eq(households.id, request.user!.householdId));
+
+      // Claimed-but-not-yet-connected is a valid state (e.g. relay briefly
+      // unreachable) — return 200 with running=false and let the UI offer retry.
+      const status = await startBasisRemote(claim);
+      return {
+        success: true,
+        data: { status, hostname: claim.hostname, publicUrl },
+      };
+    }
+  );
+
+  app.post(
+    '/remote-access/basis-remote/connect',
+    { preHandler: [authMiddleware, requireAdmin()] },
+    async (request, reply) => {
+      const household = await db.query.households.findFirst({
+        where: eq(households.id, request.user!.householdId),
+        columns: { settings: true },
+      });
+      const stored = (household?.settings as any)?.remoteAccess?.basisRemote;
+      if (!stored?.tunnelToken) {
+        reply.code(409);
+        return {
+          success: false,
+          error: { code: 'NOT_CLAIMED', message: 'This box has not been linked to a Basis Remote subscription yet' },
+        };
+      }
+      const status = await startBasisRemote(stored);
+      if (!status.running) {
+        reply.code(409);
+        return {
+          success: false,
+          error: {
+            code: 'BASIS_REMOTE_CONNECT_FAILED',
+            message:
+              status.lastError ??
+              (status.issues[0] === 'not_installed'
+                ? 'frpc is not installed on this host'
+                : 'frpc failed to start'),
+            issues: status.issues,
+          },
+        };
+      }
+      return { success: true, data: { status } };
+    }
+  );
+
+  app.post(
+    '/remote-access/basis-remote/disconnect',
+    { preHandler: [authMiddleware, requireAdmin()] },
+    async (request) => {
+      stopBasisRemote();
+
+      // Local-only: drops the stored credentials and stops frpc. Releasing the
+      // subdomain / revoking the token server-side happens on home-basis.com.
+      const current = await db.query.households.findFirst({
+        where: eq(households.id, request.user!.householdId),
+        columns: { settings: true },
+      });
+      const existing = (current?.settings as Record<string, unknown>) ?? {};
+      const existingRemote =
+        (existing.remoteAccess as Record<string, unknown> | undefined) ?? {};
+      const { basisRemote: _drop, publicUrl: _drop2, ...rest } = existingRemote;
+      await db
+        .update(households)
+        .set({ settings: { ...existing, remoteAccess: rest as RemoteAccessSettings }, updatedAt: new Date() })
+        .where(eq(households.id, request.user!.householdId));
+
+      return { success: true, data: { message: 'Basis Remote tunnel stopped' } };
     }
   );
 

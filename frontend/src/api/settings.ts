@@ -36,13 +36,44 @@ export interface CloudflaredStatus {
   /** Local origin the tunnel should forward to (dashboard Service value). */
   localServiceUrl?: string;
 }
+
+export type BasisRemoteIssue =
+  | 'not_installed'
+  | 'spawn_failed'
+  | 'child_exited'
+  | 'unknown_error';
+
+export interface BasisRemoteHeartbeat {
+  status?: 'active' | 'suspended' | 'canceled';
+  tier?: string;
+  usage?: {
+    monthGB: number;
+    capGB: number;
+  };
+  fetchedAt?: string;
+  stale: boolean;
+  authFailed?: boolean;
+}
+
+export interface BasisRemoteStatus {
+  installed: boolean;
+  version?: string;
+  running: boolean;
+  lastError?: string;
+  issues: BasisRemoteIssue[];
+  hostname?: string;
+  subdomain?: string;
+  claimed: boolean;
+  heartbeat?: BasisRemoteHeartbeat;
+}
 import type { HouseholdSettings, ThemeConfig } from '@/types/models';
 
 export type RemoteAccessMode =
   | 'local_only'
   | 'cloudflare'
   | 'tailscale'
-  | 'custom_domain';
+  | 'custom_domain'
+  | 'basis_remote';
 
 export interface RemoteAccessSettings {
   mode: RemoteAccessMode;
@@ -51,6 +82,17 @@ export interface RemoteAccessSettings {
   cloudflare?: {
     tunnelId: string;
     tunnelToken: string;
+  };
+  /** Managed by the basis-remote routes; tunnelToken is redacted to '***' on read. */
+  basisRemote?: {
+    tenantId: string;
+    subdomain: string;
+    hostname: string;
+    tunnelToken: string;
+    relay: {
+      serverAddr: string;
+      serverPort: number;
+    };
   };
   tailscale?: {
     hostname: string;
@@ -161,6 +203,25 @@ export const settingsApi = {
   disconnectCloudflare: () =>
     apiPost<{ message: string }>(
       '/settings/remote-access/cloudflare/disconnect'
+    ),
+
+  getBasisRemoteStatus: () =>
+    apiGet<BasisRemoteStatus>('/settings/remote-access/basis-remote/status'),
+
+  claimBasisRemote: (claimCode: string) =>
+    apiPost<{ status: BasisRemoteStatus; hostname: string; publicUrl: string }>(
+      '/settings/remote-access/basis-remote/claim',
+      { claimCode }
+    ),
+
+  connectBasisRemote: () =>
+    apiPost<{ status: BasisRemoteStatus }>(
+      '/settings/remote-access/basis-remote/connect'
+    ),
+
+  disconnectBasisRemote: () =>
+    apiPost<{ message: string }>(
+      '/settings/remote-access/basis-remote/disconnect'
     ),
 
   testRemoteUrl: (url: string) =>

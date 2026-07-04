@@ -125,6 +125,11 @@ const envSchema = z.object({
   IMAGE_PARSE_SESSION_TTL_HOURS: z.coerce.number().default(24),
   IMAGE_PARSE_REQUIRE_AI: z.coerce.boolean().default(false),
 
+  // Basis Remote — the paid lastname.home-basis.com tunnel service. The box
+  // redeems claim codes and sends heartbeats against this control plane.
+  // Overridable so dev/e2e can point at a locally-run control plane.
+  BASIS_CLOUD_URL: z.string().url().default('https://home-basis.com'),
+
   // Bug reports — POSTed to a Cloudflare Worker relay (see
   // worker/bug-report-relay/) which holds the GitHub PAT and creates the
   // issue. When unset, reports are stored locally but not pushed.

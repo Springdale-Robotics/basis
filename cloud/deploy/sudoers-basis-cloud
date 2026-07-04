@@ -1,0 +1,9 @@
+# Narrow passwordless escalation for the basis-cloud service account: restart
+# (and clear latched failure state for) the Basis Remote units only, so
+# deploy/update tooling running as basis-cloud can hand off to a new version
+# unattended. Deliberately minimal — apt, user management, journalctl, etc.
+# still require a password (and the account is a nologin system user anyway).
+#
+# Installed by provision.sh to /etc/sudoers.d/basis-cloud (chmod 440,
+# validated with visudo -cf before activation).
+basis-cloud ALL=(root) NOPASSWD: /usr/bin/systemctl restart basis-cloud, /usr/bin/systemctl restart frps, /usr/bin/systemctl restart caddy, /usr/bin/systemctl reset-failed basis-cloud, /usr/bin/systemctl reset-failed frps, /usr/bin/systemctl reset-failed caddy
