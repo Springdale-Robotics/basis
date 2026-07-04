@@ -7,6 +7,21 @@ interface RequestOptions extends RequestInit {
   data?: unknown;
 }
 
+// Global 401 hook. AuthProvider registers a handler that tears down an expired
+// session and redirects to login. Kept out of React so any request path can
+// trigger it. See setUnauthorizedHandler.
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
+}
+
+function notifyIfUnauthorized(status: number): void {
+  if (status === 401) {
+    unauthorizedHandler?.();
+  }
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   const text = await response.text();
 
@@ -16,6 +31,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
       // For successful empty responses (like 204 No Content), return empty object
       return {} as T;
     }
+    notifyIfUnauthorized(response.status);
     throw new ApiError({
       success: false,
       error: { code: 'EMPTY_RESPONSE', message: 'Server returned an empty response' },
@@ -33,6 +49,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
   }
 
   if (!response.ok) {
+    notifyIfUnauthorized(response.status);
     throw new ApiError(data as ApiErrorResponse, response.status);
   }
 

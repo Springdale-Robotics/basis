@@ -74,12 +74,9 @@ export async function register(input: RegisterInput): Promise<AuthResult> {
     throw Errors.notFound('Household', householdId);
   }
 
-  // Check if email already exists in household
+  // Email must be globally unique (login looks a user up by email alone).
   const existingUser = await db.query.users.findFirst({
-    where: and(
-      eq(users.householdId, householdId),
-      eq(users.email, email.toLowerCase())
-    ),
+    where: eq(users.email, email.toLowerCase()),
   });
 
   if (existingUser) {

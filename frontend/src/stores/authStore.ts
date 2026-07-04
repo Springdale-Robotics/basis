@@ -40,10 +40,12 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'homemanager-auth',
+      // Note: isAuthenticated is intentionally NOT persisted. It is derived
+      // from a live session check on load (AuthProvider), so an expired
+      // session cannot appear authenticated after a reload.
       partialize: (state) => ({
         user: state.user,
         household: state.household,
-        isAuthenticated: state.isAuthenticated,
       }),
     }
   )

@@ -10,6 +10,7 @@ export const households = pgTable('households', {
 });
 
 export interface HouseholdSettings {
+  timezone?: string;
   theme?: {
     mode: 'light' | 'dark' | 'system';
     primaryColor: string;

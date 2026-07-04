@@ -54,8 +54,8 @@ export async function setupRoutes(app: FastifyInstance): Promise<void> {
       .insert(households)
       .values({
         name: input.householdName,
-        timezone: input.timezone,
         settings: {
+          timezone: input.timezone,
           enabledFeatures: {
             calendar: true,
             recipes: true,
@@ -99,8 +99,8 @@ export async function setupRoutes(app: FastifyInstance): Promise<void> {
       request.headers['user-agent']
     );
 
-    // Set session cookie
-    reply.setCookie('session', session.token, {
+    // Set session cookie (sessions are keyed by id, not a token)
+    reply.setCookie('session', session.id, {
       httpOnly: true,
       secure: request.protocol === 'https',
       sameSite: 'lax',
