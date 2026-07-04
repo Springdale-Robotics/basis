@@ -171,7 +171,11 @@ export async function buildApp(): Promise<FastifyInstance> {
       duration: `${duration.toFixed(2)}ms`,
     });
 
-    recordHttpRequest(method, url, statusCode, duration);
+    // Use the matched route TEMPLATE (e.g. /api/v1/recipes/:id) for the metric
+    // label, never the raw URL — raw URLs carry UUIDs and query strings, so
+    // every request would mint a new Prometheus time series (unbounded memory).
+    const routeLabel = request.routeOptions?.url ?? 'unmatched';
+    recordHttpRequest(method, routeLabel, statusCode, duration);
     done();
   });
 

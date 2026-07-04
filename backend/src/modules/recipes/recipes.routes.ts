@@ -17,6 +17,13 @@ import { promises as fs } from 'fs';
 import { eq, and, sql, gt, gte, lte, asc, isNotNull } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
 import { requireRecipesAccess, requireMealPlanAccess } from '../../middleware/permission.middleware.js';
+import { createRateLimiter } from '../../middleware/rate-limit.middleware.js';
+
+// Per-user throttle for the URL/image import endpoints. These make the server
+// fetch external URLs (see the SSRF guard in assertPublicUrl); a tight limit
+// stops them being used as a request-amplification / scanning vector. Generous
+// for a human importing recipes by hand.
+const importRateLimiter = createRateLimiter({ max: 20, windowMs: 60_000 });
 import { Errors } from '../../lib/errors.js';
 import { mealTypeSchema } from '../../lib/validators.js';
 import {
@@ -494,7 +501,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
   // Upload recipe image (multipart file or URL)
   app.post<{ Params: { id: string } }>(
     '/:id/image',
-    { preHandler: [authMiddleware, requireRecipesAccess('edit')] },
+    { preHandler: [authMiddleware, requireRecipesAccess('edit'), importRateLimiter] },
     async (request) => {
       // Verify recipe exists and belongs to household
       const recipe = await db.query.recipes.findFirst({
@@ -1059,7 +1066,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
   // Preview URL parsing without creating session
   app.post(
     '/import/parse-url',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireMember(), importRateLimiter] },
     async (request) => {
       const schema = z.object({
         url: z.string().url(),

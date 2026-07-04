@@ -2,7 +2,6 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { io, type Socket } from 'socket.io-client';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/authStore';
-import { useNotificationStore } from '@/stores/notificationStore';
 import { toast } from '@/hooks/useToast';
 import type { ServerToClientEvents, ClientToServerEvents } from '@/types/socket';
 
@@ -27,7 +26,6 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const [isConnected, setIsConnected] = useState(false);
   const queryClient = useQueryClient();
   const { isAuthenticated, household } = useAuthStore();
-  const { addNotification } = useNotificationStore();
 
   useEffect(() => {
     if (!isAuthenticated || !household) {
@@ -175,21 +173,9 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       queryClient.invalidateQueries({ queryKey: ['folders'] });
     });
 
-    // Notification events
+    // Notification events. The notifications UI reads from React Query, so a
+    // cache invalidation is what delivers the new item; we just refetch + toast.
     newSocket.on('notification:new', ({ notification }) => {
-      const now = new Date().toISOString();
-      addNotification({
-        id: notification.id,
-        type: notification.type as import('@/types/models').NotificationType,
-        title: notification.title,
-        body: notification.body ?? undefined,
-        data: notification.data ?? undefined,
-        userId: '',
-        householdId: household.id,
-        read: false,
-        createdAt: notification.createdAt ?? now,
-        updatedAt: notification.createdAt ?? now,
-      });
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
       toast({
         title: notification.title,
