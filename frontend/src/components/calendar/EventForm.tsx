@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/collapsible';
 import { Switch } from '@/components/ui/switch';
 import { eventSchema, type EventFormData } from '@/types/forms';
+import { useDirtyCloseGuard } from '@/hooks/useDirtyCloseGuard';
 import type { CalendarEvent, Calendar } from '@/types/models';
 import { useTheme } from '@/hooks/useTheme';
 import { getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
@@ -93,7 +94,7 @@ export function EventForm({
     setValue,
     watch,
     reset,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = useForm<EventFormData>({
     resolver: zodResolver(eventSchema),
     defaultValues: event
@@ -313,17 +314,32 @@ export function EventForm({
     reset();
   };
 
-  const handleClose = () => {
+  const doClose = () => {
     reset();
     setShowCustomRecurrence(false);
     onOpenChange(false);
   };
 
+  // Ask before discarding unsaved edits. Escape and outside-click both land
+  // in the Dialog's onOpenChange(false), so every close path is guarded.
+  const { requestClose, confirmDialog } = useDirtyCloseGuard({
+    isDirty,
+    onDiscard: doClose,
+    description: 'Your changes to this event will be discarded.',
+  });
+
   // Determine if this is a recurring event being edited
   const isRecurringEvent = isEditing && event?.recurrenceRule;
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
+    <>
+    {confirmDialog}
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) requestClose();
+      }}
+    >
       <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEditing ? 'Edit Event' : 'New Event'}</DialogTitle>
@@ -496,7 +512,7 @@ export function EventForm({
               </Button>
             )}
             <div className="flex gap-2 ml-auto">
-              <Button type="button" variant="outline" onClick={handleClose}>
+              <Button type="button" variant="outline" onClick={requestClose}>
                 Cancel
               </Button>
               <Button type="submit" disabled={isSubmitting}>
@@ -510,5 +526,6 @@ export function EventForm({
         </form>
       </DialogContent>
     </Dialog>
+    </>
   );
 }

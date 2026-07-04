@@ -71,6 +71,11 @@ export function EditListDialog({ open, onOpenChange, list }: EditListDialogProps
 
   const canSubmit = name.trim().length > 0 && !update.isPending;
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (canSubmit) update.mutate();
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -79,6 +84,7 @@ export function EditListDialog({ open, onOpenChange, list }: EditListDialogProps
           <DialogDescription>Rename and restyle this list.</DialogDescription>
         </DialogHeader>
 
+        <form onSubmit={handleSubmit} className="contents">
         <div className="space-y-4">
           <div>
             <Label htmlFor="edit-list-name">Name</Label>
@@ -123,13 +129,18 @@ export function EditListDialog({ open, onOpenChange, list }: EditListDialogProps
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+          >
             Cancel
           </Button>
-          <Button onClick={() => update.mutate()} disabled={!canSubmit}>
+          <Button type="submit" disabled={!canSubmit}>
             {update.isPending ? 'Saving…' : 'Save'}
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

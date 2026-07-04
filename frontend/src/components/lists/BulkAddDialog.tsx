@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -21,12 +21,19 @@ export function BulkAddDialog({ open, onOpenChange, onSubmit }: BulkAddDialogPro
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // Start fresh each time the dialog opens so a previously abandoned paste
+  // doesn't leak into the next bulk add.
+  useEffect(() => {
+    if (open) setText('');
+  }, [open]);
+
   const lines = text
     .split('\n')
     .map((l) => l.replace(/^[-*•\d.)\s]+/, '').trim())
     .filter(Boolean);
 
-  const submit = async () => {
+  const submit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (lines.length === 0) return;
     setBusy(true);
     try {
@@ -48,6 +55,7 @@ export function BulkAddDialog({ open, onOpenChange, onSubmit }: BulkAddDialogPro
           </DialogDescription>
         </DialogHeader>
 
+        <form onSubmit={submit} className="contents">
         <div>
           <Label htmlFor="bulk">Items</Label>
           <Textarea
@@ -64,13 +72,18 @@ export function BulkAddDialog({ open, onOpenChange, onSubmit }: BulkAddDialogPro
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+          >
             Cancel
           </Button>
-          <Button onClick={submit} disabled={lines.length === 0 || busy}>
+          <Button type="submit" disabled={lines.length === 0 || busy}>
             {busy ? 'Adding…' : `Add ${lines.length}`}
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

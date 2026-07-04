@@ -143,9 +143,17 @@ export function AddMealDialog({
 
   const mealLabel = mealType.charAt(0).toUpperCase() + mealType.slice(1);
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedRecipe && !addMealMutation.isPending) {
+      addMealMutation.mutate(selectedRecipe);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden">
+        <form onSubmit={handleSubmit} className="contents">
         <DialogHeader className="px-6 pt-6 pb-4 border-b">
           <DialogTitle className="flex items-center gap-2 text-lg">
             <UtensilsCrossed className="h-5 w-5 text-primary" />
@@ -235,11 +243,15 @@ export function AddMealDialog({
         </div>
 
         <DialogFooter className="px-6 py-4 border-t bg-muted/30 sm:justify-between gap-2">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+          >
             Done
           </Button>
           <Button
-            onClick={() => selectedRecipe && addMealMutation.mutate(selectedRecipe)}
+            type="submit"
             disabled={!selectedRecipe || addMealMutation.isPending}
           >
             {addMealMutation.isPending ? (
@@ -250,6 +262,7 @@ export function AddMealDialog({
             Add to {mealLabel}
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -289,6 +302,7 @@ function PlannedMealRow({
         ) : null}
       </div>
       <Button
+        type="button"
         variant="ghost"
         size="icon"
         className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
@@ -406,6 +420,7 @@ function ServingsStepper({
       </div>
       <div className="flex items-center gap-2">
         <Button
+          type="button"
           variant="outline"
           size="icon"
           className="h-8 w-8"
@@ -419,6 +434,7 @@ function ServingsStepper({
           {editsServings ? formatServings(value) : `${value}×`}
         </span>
         <Button
+          type="button"
           variant="outline"
           size="icon"
           className="h-8 w-8"

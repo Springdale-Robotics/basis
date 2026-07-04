@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Plus, Search, Package } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
@@ -69,6 +69,19 @@ export function AddToListDialog({
 
   // New item form state
   const [newItem, setNewItem] = useState<NewItemForm>(defaultNewItemForm);
+
+  // Reset all transient state whenever the dialog reopens so a previous add's
+  // mode/search/quantity/unit don't leak into the next one.
+  useEffect(() => {
+    if (open) {
+      setMode('select');
+      setSearch('');
+      setSelectedItemId(null);
+      setQuantity('1');
+      setUnit('');
+      setNewItem(defaultNewItemForm);
+    }
+  }, [open]);
 
   const filteredItems = useMemo(() => {
     if (!search) return inventoryItems;
@@ -162,6 +175,16 @@ export function AddToListDialog({
     }
   };
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSubmitting) return;
+    if (mode === 'select') {
+      handleAddToList();
+    } else {
+      handleCreateAndAdd();
+    }
+  };
+
   const handleAddToList = () => {
     if (!selectedItemId) return;
     addToListMutation.mutate({
@@ -177,12 +200,6 @@ export function AddToListDialog({
   };
 
   const handleClose = () => {
-    setMode('select');
-    setSearch('');
-    setSelectedItemId(null);
-    setQuantity('1');
-    setUnit('');
-    setNewItem(defaultNewItemForm);
     onOpenChange(false);
   };
 
@@ -212,6 +229,7 @@ export function AddToListDialog({
           </DialogDescription>
         </DialogHeader>
 
+        <form onSubmit={handleSubmit} className="contents">
         {mode === 'select' ? (
           <>
             {/* Search */}
@@ -233,7 +251,12 @@ export function AddToListDialog({
                   <p className="text-sm text-muted-foreground mb-3">
                     {search ? `No items matching "${search}"` : 'No items in catalog'}
                   </p>
-                  <Button variant="outline" size="sm" onClick={handleSwitchToCreate}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSwitchToCreate}
+                  >
                     <Plus className="h-4 w-4 mr-1" />
                     Create "{search || 'new item'}"
                   </Button>
@@ -294,6 +317,7 @@ export function AddToListDialog({
             {/* Create new option */}
             {filteredItems.length > 0 && (
               <Button
+                type="button"
                 variant="ghost"
                 className="text-muted-foreground"
                 onClick={handleSwitchToCreate}
@@ -456,6 +480,7 @@ export function AddToListDialog({
             </div>
 
             <Button
+              type="button"
               variant="ghost"
               className="text-muted-foreground"
               onClick={() => setMode('select')}
@@ -466,25 +491,26 @@ export function AddToListDialog({
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose}>
+          <Button type="button" variant="outline" onClick={handleClose}>
             Cancel
           </Button>
           {mode === 'select' ? (
             <Button
-              onClick={handleAddToList}
+              type="submit"
               disabled={!selectedItemId || isSubmitting}
             >
               Add to List
             </Button>
           ) : (
             <Button
-              onClick={handleCreateAndAdd}
+              type="submit"
               disabled={!newItem.name.trim() || isSubmitting}
             >
               Create & Add to List
             </Button>
           )}
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

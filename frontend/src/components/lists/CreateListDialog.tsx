@@ -87,6 +87,11 @@ export function CreateListDialog({
 
   const canSubmit = name.trim().length > 0 && !create.isPending;
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (canSubmit) create.mutate();
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -95,6 +100,7 @@ export function CreateListDialog({
           <DialogDescription>Pick a type and give it a name.</DialogDescription>
         </DialogHeader>
 
+        <form onSubmit={handleSubmit} className="contents">
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-2">
             {CREATABLE_LIST_TYPES.map((meta) => {
@@ -179,13 +185,18 @@ export function CreateListDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+          >
             Cancel
           </Button>
-          <Button onClick={() => create.mutate()} disabled={!canSubmit}>
+          <Button type="submit" disabled={!canSubmit}>
             {create.isPending ? 'Creating…' : 'Create'}
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

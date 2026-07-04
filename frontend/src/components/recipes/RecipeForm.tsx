@@ -27,6 +27,7 @@ import { recipeSchema, type RecipeFormData } from '@/types/forms';
 import { inventoryApi } from '@/api/inventory';
 import { recipesApi } from '@/api/recipes';
 import { useCategories } from '@/hooks/useCategories';
+import { useDirtyCloseGuard } from '@/hooks/useDirtyCloseGuard';
 import { getItemIcon } from '@/lib/inventory-constants';
 import { RecipeImageInput } from './RecipeImageInput';
 import { filesMediaApi } from '@/api/media';
@@ -822,12 +823,9 @@ export function RecipeForm({
   const hasUnsavedChanges = (): boolean =>
     isDirty || !!pendingImageFile || !!pendingImageUrl || imageRemoved;
 
-  const handleClose = () => {
-    // Guard against discarding a partially-filled multi-step form on a stray
-    // Escape / overlay click.
-    if (hasUnsavedChanges() && !window.confirm('Discard your changes to this recipe?')) {
-      return;
-    }
+  // Unguarded close: reset everything and dismiss. Only reachable directly
+  // when clean, or via the discard confirmation when dirty.
+  const doClose = () => {
     reset();
     // Reset image state
     setPendingImageFile(null);
@@ -843,6 +841,15 @@ export function RecipeForm({
     onOpenChange(false);
   };
 
+  // Guard against discarding a partially-filled multi-step form on a stray
+  // Escape / overlay click. Escape and outside-click both arrive via the
+  // Dialog's onOpenChange(false), so they route through this guard too.
+  const { requestClose, confirmDialog } = useDirtyCloseGuard({
+    isDirty: hasUnsavedChanges,
+    onDiscard: doClose,
+    description: 'Your changes to this recipe will be discarded.',
+  });
+
   const handleAddTag = (tag: string) => {
     if (tag && !tags.includes(tag)) {
       setValue('tags', [...tags, tag]);
@@ -857,7 +864,14 @@ export function RecipeForm({
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
+    <>
+    {confirmDialog}
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) requestClose();
+      }}
+    >
       <DialogContent className="sm:max-w-[700px] max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle>{isEditing ? 'Edit Recipe' : 'New Recipe'}</DialogTitle>
@@ -1238,7 +1252,7 @@ export function RecipeForm({
                 </Button>
               )}
               {currentStepIndex === 0 && (
-                <Button type="button" variant="outline" onClick={handleClose}>
+                <Button type="button" variant="outline" onClick={requestClose}>
                   Cancel
                 </Button>
               )}
@@ -1267,5 +1281,6 @@ export function RecipeForm({
         </form>
       </DialogContent>
     </Dialog>
+    </>
   );
 }

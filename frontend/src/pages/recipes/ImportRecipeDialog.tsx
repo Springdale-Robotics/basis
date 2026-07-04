@@ -32,6 +32,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { getItemIcon } from '@/lib/inventory-constants';
 import { FileSourcePicker } from '@/components/shared/FileSourcePicker';
+import { useDirtyCloseGuard } from '@/hooks/useDirtyCloseGuard';
 
 type ImportStep = 'source' | 'review' | 'ingredients' | 'quick-catalog' | 'confirm';
 
@@ -376,6 +377,26 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     onOpenChange(false);
   }, [onOpenChange, defaultTab]);
 
+  // Closing mid-import wipes a whole reviewed multi-step session. Guard the
+  // Escape / outside-click / X paths once the user is past the source step or
+  // has produced preview/OCR/PDF state worth keeping. A pristine source step
+  // still closes freely. Successful imports close via handleClose directly.
+  const hasImportProgress =
+    step !== 'source' ||
+    batchMode ||
+    !!sessionId ||
+    !!previewRecipe ||
+    imageRawText !== null ||
+    imageProcessing ||
+    !!pdfBase64;
+
+  const { requestClose, confirmDialog } = useDirtyCloseGuard({
+    isDirty: hasImportProgress,
+    onDiscard: handleClose,
+    title: 'Discard this import?',
+    description: 'Your progress on this recipe import will be lost.',
+  });
+
   const handlePreview = useCallback(() => {
     if (sourceType === 'url') {
       previewUrlMutation.mutate();
@@ -636,7 +657,14 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
 
   if (batchMode) {
     return (
-      <Dialog open={open} onOpenChange={handleClose}>
+      <>
+      {confirmDialog}
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (!o) requestClose();
+        }}
+      >
         <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
           <DialogHeader className="flex-shrink-0">
             <DialogTitle>Import Recipes</DialogTitle>
@@ -652,11 +680,19 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
           />
         </DialogContent>
       </Dialog>
+      </>
     );
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
+    <>
+    {confirmDialog}
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) requestClose();
+      }}
+    >
       <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle>Import Recipe</DialogTitle>
@@ -1517,5 +1553,6 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
         </div>
       </DialogContent>
     </Dialog>
+    </>
   );
 }

@@ -17,6 +17,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { AssigneePicker, type AssigneeValue } from './AssigneePicker';
 import { cn } from '@/lib/utils';
 import { useFeatureFlags } from '@/hooks/useFeatureFlags';
+import { useDirtyCloseGuard } from '@/hooks/useDirtyCloseGuard';
 import type { Task, User, RecurrenceMode, TaskKind } from '@/types/models';
 import type { Group } from '@/api/groups';
 import type { CreateTaskRequest, UpdateTaskRequest } from '@/api/tasks';
@@ -158,7 +159,34 @@ export function TaskEditDialog({
     );
   };
 
-  const submit = () => {
+  // True when any field differs from what the dialog was opened with (the
+  // loaded task, or blank defaults when creating).
+  const isDirty = () => {
+    const parsed = parseRule(task?.recurrenceRule);
+    return (
+      kind !== (task?.kind ?? defaultKind) ||
+      title !== (task?.title ?? '') ||
+      description !== (task?.description ?? '') ||
+      (assignee.userId ?? null) !== (task?.assigneeUserId ?? null) ||
+      (assignee.groupId ?? null) !== (task?.assigneeGroupId ?? null) ||
+      dueDate !== toLocalDateTime(task?.dueDate) ||
+      recurrenceChoice !== (task?.recurrenceMode ?? 'none') ||
+      scheduleFreq !== parsed.freq ||
+      scheduleInterval !== parsed.interval ||
+      scheduleByDay.join(',') !== parsed.byday.join(',') ||
+      cadenceDays !== (task?.cadenceDays ?? 7) ||
+      pinned !== (task?.pinned ?? false) ||
+      rewardPoints !== (task?.rewardPoints ?? 0)
+    );
+  };
+
+  const { requestClose, confirmDialog } = useDirtyCloseGuard({
+    isDirty,
+    onDiscard: () => onOpenChange(false),
+  });
+
+  const submit = (e?: React.FormEvent) => {
+    e?.preventDefault();
     const trimmed = title.trim();
     if (!trimmed) return;
 
@@ -201,7 +229,14 @@ export function TaskEditDialog({
     scheduleInterval === 1 ? singular : `${singular}s`;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <>
+    {confirmDialog}
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) requestClose();
+      }}
+    >
       <DialogContent className="sm:max-w-[520px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
@@ -211,6 +246,7 @@ export function TaskEditDialog({
           </DialogTitle>
         </DialogHeader>
 
+        <form onSubmit={submit} className="contents">
         <div className="space-y-4">
           {!isEditing && (
             <div className="flex gap-2 rounded-md bg-muted p-1">
@@ -475,20 +511,18 @@ export function TaskEditDialog({
             <span />
           )}
           <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
+            <Button type="button" variant="outline" onClick={requestClose}>
               Cancel
             </Button>
-            <Button onClick={submit} disabled={!title.trim() || isSubmitting}>
+            <Button type="submit" disabled={!title.trim() || isSubmitting}>
               {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {isEditing ? 'Save' : 'Create'}
             </Button>
           </div>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
+    </>
   );
 }
