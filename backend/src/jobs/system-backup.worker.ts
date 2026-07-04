@@ -5,6 +5,7 @@ import {
   pgDumpAvailable,
   createBackup,
   pruneBackups,
+  copyBackupOffHost,
 } from '../modules/system/system-backup.service.js';
 
 const QUEUE_NAME = 'system-backup';
@@ -17,7 +18,10 @@ const RETAIN_COUNT = 14;
 export const systemBackupQueue = new Queue(QUEUE_NAME, {
   connection: { url: config.REDIS_URL, ...connection },
   defaultJobOptions: {
-    attempts: 1,
+    // Retry a few times: a transient failure (brief DB lock, momentary I/O
+    // error) shouldn't silently skip the whole night's backup.
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 60_000 },
     removeOnComplete: { age: 86400, count: 10 },
     removeOnFail: { age: 604800 },
   },
@@ -43,6 +47,15 @@ export async function processSystemBackup(job: Job<SystemBackupJobData>): Promis
 
   const { filename, bytes, elapsedMs } = await createBackup();
   log.info({ filename, bytes, ms: elapsedMs }, 'Scheduled backup created');
+
+  // Copy off-host if configured. Don't let a remote-copy failure fail the whole
+  // job (and burn retries re-dumping) — the local backup already succeeded.
+  try {
+    const copied = await copyBackupOffHost(filename);
+    if (copied) log.info({ filename }, 'Backup copied off-host');
+  } catch (err) {
+    log.error({ err, filename }, 'Off-host backup copy failed (local backup is intact)');
+  }
 
   const pruned = await pruneBackups(RETAIN_COUNT);
   if (pruned.length > 0) {

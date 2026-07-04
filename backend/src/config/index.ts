@@ -43,6 +43,12 @@ const envSchema = z.object({
   STORAGE_PATH: z.string().default('./storage'),
   MAX_UPLOAD_SIZE_MB: z.coerce.number().default(100),
   STORAGE_QUOTA_GB: z.coerce.number().optional(),
+  // Optional shell command run after each successful backup so the file can be
+  // copied off-host — backups otherwise live on the same disk as the database,
+  // so a single disk failure loses both. The command runs with the backup path
+  // in $BASIS_BACKUP_FILE and its directory in $BASIS_BACKUP_DIR, e.g.
+  //   BACKUP_REMOTE_CMD='rclone copy "$BASIS_BACKUP_FILE" remote:basis-backups/'
+  BACKUP_REMOTE_CMD: z.string().optional(),
 
   // Frontend (production single-port deployment)
   // When set, the backend serves the built frontend's dist/ at / and falls
