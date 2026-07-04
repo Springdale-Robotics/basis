@@ -298,7 +298,7 @@ export function FileSourcePicker({
       <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle>
-            {step === 'library' ? 'Choose from Home Manager' : title}
+            {step === 'library' ? 'Choose from Basis' : title}
           </DialogTitle>
           <DialogDescription>
             {step === 'library'
@@ -326,7 +326,7 @@ export function FileSourcePicker({
               className="flex flex-col items-start gap-2 rounded-xl border p-5 text-left transition-colors hover:border-primary hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <HardDrive className="h-8 w-8 text-primary" />
-              <span className="font-medium">From Home Manager</span>
+              <span className="font-medium">From Basis</span>
               <span className="text-sm text-muted-foreground">
                 Pick a file already stored in your household's library.
               </span>
