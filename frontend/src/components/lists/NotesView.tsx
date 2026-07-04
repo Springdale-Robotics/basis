@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { useListMutations } from './useListMutations';
-import { cn } from '@/lib/utils';
+import { cn, hoverAction } from '@/lib/utils';
 import type { List, ListItem } from '@/types/models';
 
 interface NotesViewProps {
@@ -94,7 +94,7 @@ function NoteRow({
             )}
           </button>
         )}
-        <div className="flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
+        <div className={cn('flex justify-end', hoverAction)}>
           <Button
             variant="ghost"
             size="icon"

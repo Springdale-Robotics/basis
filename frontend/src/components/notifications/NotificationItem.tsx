@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useNotifications } from '@/hooks/useNotifications';
 import { formatRelativeTime } from '@/lib/utils';
-import { cn } from '@/lib/utils';
+import { cn, hoverAction } from '@/lib/utils';
 import type { Notification } from '@/types/models';
 import {
   Calendar,
@@ -93,7 +93,8 @@ export function NotificationItem({ notification, onClick }: NotificationItemProp
       <Button
         variant="ghost"
         size="icon"
-        className="absolute right-2 top-2 h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100"
+        className={cn('absolute right-2 top-2 h-6 w-6', hoverAction)}
+        aria-label="Dismiss notification"
         onClick={handleDelete}
       >
         <X className="h-3 w-3" />

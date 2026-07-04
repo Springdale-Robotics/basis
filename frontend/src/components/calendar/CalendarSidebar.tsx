@@ -5,7 +5,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
+import { cn, hoverAction } from '@/lib/utils';
 import { useTheme } from '@/hooks/useTheme';
 import { getColorForIndex, type ColorPalette } from '@/lib/theme-presets';
 import type { Calendar } from '@/types/models';
@@ -189,7 +189,7 @@ function CalendarItem({
         </AccessTooltip>
         {isSynced && getSyncStatusIndicator()}
       </div>
-      <div className="flex items-center opacity-0 group-hover:opacity-100">
+      <div className={cn('flex items-center', hoverAction)}>
         {onShare && (
           <Button
             variant="ghost"

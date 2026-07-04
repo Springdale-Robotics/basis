@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ChevronLeft, ChevronRight, Keyboard, PanelLeftClose, PanelLeft, Camera, Share2 } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, Keyboard, PanelLeftClose, PanelLeft, Camera, Share2, MoreVertical } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -36,7 +36,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
+import { cn, hoverAction } from '@/lib/utils';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { toast } from '@/hooks/useToast';
 import { useTheme } from '@/hooks/useTheme';
 import { getColorForIndex } from '@/lib/theme-presets';
@@ -653,26 +659,29 @@ export function CalendarPage() {
                                 </span>
                               </AccessTooltip>
                             </div>
-                            <div className="flex items-center opacity-0 group-hover:opacity-100 shrink-0">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                onClick={() => handleShareCalendar(calendar)}
-                                title="Share / access"
-                              >
-                                <Share2 className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                onClick={() => handleEditCalendar(calendar)}
-                                title="Edit calendar"
-                              >
-                                <Settings className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
+                            {/* Always-visible kebab so actions are reachable on touch */}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 shrink-0"
+                                  aria-label={`Actions for ${calendar.name}`}
+                                >
+                                  <MoreVertical className="h-3.5 w-3.5" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => handleShareCalendar(calendar)}>
+                                  <Share2 className="mr-2 h-4 w-4" />
+                                  Share / access
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleEditCalendar(calendar)}>
+                                  <Settings className="mr-2 h-4 w-4" />
+                                  Edit calendar
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                           );
                         })
@@ -727,7 +736,8 @@ export function CalendarPage() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7 opacity-0 group-hover:opacity-100 shrink-0"
+                                className={cn('h-7 w-7 shrink-0', hoverAction)}
+                                aria-label={`Edit ${calendar.name}`}
                                 onClick={() => handleEditCalendar(calendar)}
                               >
                                 <Settings className="h-3.5 w-3.5" />

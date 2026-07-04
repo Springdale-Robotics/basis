@@ -11,6 +11,7 @@ import {
   Copy,
   ListChecks,
   Layers,
+  MoreVertical,
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -249,50 +250,56 @@ function ListsGrid({
                   Updated {new Date(list.updatedAt).toLocaleDateString()}
                 </p>
               </Link>
-              <div className="mt-3 flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  title={list.isPinned ? 'Unpin' : 'Pin'}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    update.mutate({ id: list.id, data: { isPinned: !list.isPinned } });
-                  }}
-                >
-                  <Pin className={cn('h-3.5 w-3.5', list.isPinned && 'fill-current')} />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  title="Duplicate"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    duplicate.mutate(list.id);
-                  }}
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  title={list.archivedAt ? 'Restore' : 'Archive'}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    update.mutate({
-                      id: list.id,
-                      data: { archivedAt: list.archivedAt ? null : new Date().toISOString() },
-                    });
-                  }}
-                >
-                  {list.archivedAt ? (
-                    <Layers className="h-3.5 w-3.5" />
-                  ) : (
-                    <Archive className="h-3.5 w-3.5" />
-                  )}
-                </Button>
+              {/* Always-visible kebab so actions are reachable on touch */}
+              <div className="mt-3 flex justify-end">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      aria-label={`Actions for ${list.name}`}
+                    >
+                      <MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onClick={() =>
+                        update.mutate({ id: list.id, data: { isPinned: !list.isPinned } })
+                      }
+                    >
+                      <Pin className={cn('mr-2 h-4 w-4', list.isPinned && 'fill-current')} />
+                      {list.isPinned ? 'Unpin' : 'Pin'}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => duplicate.mutate(list.id)}>
+                      <Copy className="mr-2 h-4 w-4" />
+                      Duplicate
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        update.mutate({
+                          id: list.id,
+                          data: {
+                            archivedAt: list.archivedAt ? null : new Date().toISOString(),
+                          },
+                        })
+                      }
+                    >
+                      {list.archivedAt ? (
+                        <>
+                          <Layers className="mr-2 h-4 w-4" />
+                          Restore
+                        </>
+                      ) : (
+                        <>
+                          <Archive className="mr-2 h-4 w-4" />
+                          Archive
+                        </>
+                      )}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </CardContent>
           </Card>

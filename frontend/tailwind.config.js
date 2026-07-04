@@ -106,5 +106,12 @@ export default {
       },
     },
   },
-  plugins: [require('tailwindcss-animate')],
+  plugins: [
+    require('tailwindcss-animate'),
+    // `pointer-coarse:` applies on touch-primary devices (phones/tablets with
+    // no hover). Used to keep hover-revealed actions always visible on touch.
+    require('tailwindcss/plugin')(({ addVariant }) => {
+      addVariant('pointer-coarse', '@media (pointer: coarse)');
+    }),
+  ],
 };

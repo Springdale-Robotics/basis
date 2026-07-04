@@ -19,10 +19,12 @@ import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { usePlayerStore, formatDuration } from '@/stores/playerStore';
+import { useBottomStack, MUSIC_PLAYER_HEIGHT } from '@/hooks/useBottomStack';
 import { cn } from '@/lib/utils';
 
 export function MusicPlayer() {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const { navHeight } = useBottomStack();
   const {
     currentTrack,
     queue,
@@ -100,12 +102,15 @@ export function MusicPlayer() {
       {/* Hidden audio element */}
       <audio ref={audioRef} preload="auto" />
 
-      {/* Player bar */}
+      {/* Player bar — docks above the mobile bottom nav when it's present.
+          Expanded view covers the whole screen (incl. the nav; it has its own
+          collapse button). */}
       <div
         className={cn(
-          'fixed bottom-0 left-0 right-0 z-40 border-t bg-background transition-all',
-          isExpanded ? 'h-screen' : 'h-20'
+          'fixed left-0 right-0 border-t bg-background transition-all',
+          isExpanded ? 'z-50 h-screen' : 'z-40 h-20'
         )}
+        style={{ bottom: isExpanded ? 0 : navHeight }}
       >
         {/* Expanded view */}
         {isExpanded && (
@@ -290,9 +295,12 @@ export function MusicPlayer() {
         )}
       </div>
 
-      {/* Queue panel */}
+      {/* Queue panel — sits directly above the (possibly nav-offset) player bar */}
       {isQueueVisible && !isExpanded && (
-        <div className="fixed bottom-20 right-4 z-30 w-80 rounded-lg border bg-background shadow-lg">
+        <div
+          className="fixed right-4 z-40 w-80 rounded-lg border bg-background shadow-lg"
+          style={{ bottom: navHeight + MUSIC_PLAYER_HEIGHT }}
+        >
           <div className="flex items-center justify-between border-b p-3">
             <h3 className="font-semibold">Queue</h3>
             <Button variant="ghost" size="icon" onClick={() => setIsQueueVisible(false)}>

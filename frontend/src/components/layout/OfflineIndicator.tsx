@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CloudOff, RefreshCw } from 'lucide-react';
 import { announceQueueSize, onDrain } from '@/lib/offline/sync';
 import { toast } from '@/hooks/useToast';
+import { useBottomStack } from '@/hooks/useBottomStack';
 import { cn } from '@/lib/utils';
 
 const FAILURE_DISPLAY_MS = 8000;
 
 export function OfflineIndicator() {
+  const { stackHeight } = useBottomStack();
   const [online, setOnline] = useState(
     typeof navigator !== 'undefined' ? navigator.onLine : true,
   );
@@ -62,8 +64,10 @@ export function OfflineIndicator() {
 
   return (
     <div
+      // Stays above the mobile bottom nav and/or music player when present.
+      style={{ bottom: stackHeight + 12 }}
       className={cn(
-        'fixed bottom-3 right-3 z-50 flex items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-xs shadow-md',
+        'fixed right-3 z-50 flex items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-xs shadow-md',
         !online && 'border-orange-500/40 bg-orange-500/5',
         online && queued === 0 && recentFailures > 0 && 'border-destructive/40 bg-destructive/5',
       )}

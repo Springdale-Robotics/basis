@@ -14,6 +14,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import { useBottomStack } from '@/hooks/useBottomStack';
 import { toast } from '@/hooks/useToast';
 import { bugReportsApi } from '@/api/bug-reports';
 import {
@@ -31,30 +32,32 @@ interface Position {
   y: number;
 }
 
-function defaultPosition(): Position {
+function defaultPosition(bottomReserve = 0): Position {
   if (typeof window === 'undefined') return { x: 16, y: 16 };
   return {
     x: window.innerWidth - BUTTON_SIZE - 16,
-    y: window.innerHeight - BUTTON_SIZE - 96,
+    y: window.innerHeight - BUTTON_SIZE - bottomReserve - 96,
   };
 }
 
-function loadPosition(): Position {
+function loadPosition(bottomReserve = 0): Position {
   try {
     const raw = localStorage.getItem(POSITION_KEY);
-    if (!raw) return defaultPosition();
+    if (!raw) return defaultPosition(bottomReserve);
     const parsed = JSON.parse(raw) as Position;
-    return clampPosition(parsed);
+    return clampPosition(parsed, bottomReserve);
   } catch {
-    return defaultPosition();
+    return defaultPosition(bottomReserve);
   }
 }
 
-function clampPosition(p: Position): Position {
+// `bottomReserve` keeps the button clear of fixed bottom bars (mobile nav,
+// music player) — see useBottomStack.
+function clampPosition(p: Position, bottomReserve = 0): Position {
   if (typeof window === 'undefined') return p;
   return {
     x: Math.max(8, Math.min(window.innerWidth - BUTTON_SIZE - 8, p.x)),
-    y: Math.max(8, Math.min(window.innerHeight - BUTTON_SIZE - 8, p.y)),
+    y: Math.max(8, Math.min(window.innerHeight - BUTTON_SIZE - bottomReserve - 8, p.y)),
   };
 }
 
@@ -81,7 +84,8 @@ async function captureScreenshot(): Promise<string | undefined> {
 
 export function BugReportButton() {
   const location = useLocation();
-  const [position, setPosition] = useState<Position>(() => loadPosition());
+  const { stackHeight } = useBottomStack();
+  const [position, setPosition] = useState<Position>(() => loadPosition(stackHeight));
   const [open, setOpen] = useState(false);
   const [description, setDescription] = useState('');
   const [includeScreenshot, setIncludeScreenshot] = useState(true);
@@ -99,10 +103,13 @@ export function BugReportButton() {
   } | null>(null);
 
   useEffect(() => {
-    const handleResize = () => setPosition((p) => clampPosition(p));
+    const handleResize = () => setPosition((p) => clampPosition(p, stackHeight));
+    // Re-clamp immediately when the bottom stack changes (nav/player
+    // mounting), not just on window resize.
+    handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  }, [stackHeight]);
 
   // Snapshot console buffer when opening so the count shown matches what we send.
   useEffect(() => {
@@ -128,7 +135,7 @@ export function BugReportButton() {
     const dy = event.clientY - drag.startY;
     if (!drag.moved && Math.hypot(dx, dy) < 4) return;
     drag.moved = true;
-    setPosition(clampPosition({ x: drag.originX + dx, y: drag.originY + dy }));
+    setPosition(clampPosition({ x: drag.originX + dx, y: drag.originY + dy }, stackHeight));
   }
 
   function handlePointerUp(event: React.PointerEvent<HTMLButtonElement>) {

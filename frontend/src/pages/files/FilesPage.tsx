@@ -57,7 +57,7 @@ import { RestrictionDialog } from '@/components/files/RestrictionDialog';
 import { filesApi } from '@/api/files';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
-import { cn, formatDate } from '@/lib/utils';
+import { cn, formatDate, hoverAction } from '@/lib/utils';
 import type { FileItem } from '@/types/models';
 
 type ViewMode = 'grid' | 'list';
@@ -881,7 +881,7 @@ function FileGridItem({ file, thumbnailSize = 'md', onClick, onDownload, onDelet
       </div>
 
       {/* Context menu */}
-      <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className={cn('absolute right-2 top-2', hoverAction)}>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -1017,7 +1017,7 @@ function FileListItem({ file, onClick, onDownload, onDelete, onMove, onRestrict,
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+              className={cn('h-8 w-8 shrink-0', hoverAction)}
               onClick={(e) => e.stopPropagation()}
             >
               <MoreVertical className="h-4 w-4" />

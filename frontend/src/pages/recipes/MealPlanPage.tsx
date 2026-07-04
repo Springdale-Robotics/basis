@@ -293,7 +293,7 @@ export function MealPlanPage() {
                             onClick={() => handleCellClick(day, mealType)}
                             className={cn(
                               'flex items-center gap-1 self-end rounded text-[11px] text-muted-foreground opacity-0 transition-opacity',
-                              'hover:text-primary group-hover:opacity-100',
+                              'hover:text-primary group-hover:opacity-100 pointer-coarse:opacity-100',
                               'focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary/40'
                             )}
                             aria-label="Add another recipe"
@@ -313,7 +313,9 @@ export function MealPlanPage() {
                           )}
                           aria-label={`Add ${mealType} for ${day.toLocaleDateString()}`}
                         >
-                          <Plus className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" />
+                          {/* group-focus-within (not focus-visible) — focus
+                              lands on the parent button, not this icon */}
+                          <Plus className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100" />
                         </button>
                       )}
                     </div>

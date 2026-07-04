@@ -37,7 +37,7 @@ import { householdsApi } from '@/api/households';
 import { ItemDetailSheet } from './ItemDetailSheet';
 import { BulkAddDialog } from './BulkAddDialog';
 import { useListMutations } from './useListMutations';
-import { cn } from '@/lib/utils';
+import { cn, hoverAction } from '@/lib/utils';
 import type { List, ListItem, User } from '@/types/models';
 
 interface ChecklistViewProps {
@@ -113,7 +113,7 @@ function ItemRow({
           type="button"
           {...attributes}
           {...listeners}
-          className="cursor-grab text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 active:cursor-grabbing"
+          className={cn('cursor-grab text-muted-foreground active:cursor-grabbing', hoverAction)}
           aria-label="Drag to reorder"
         >
           <GripVertical className="h-4 w-4" />
@@ -157,7 +157,7 @@ function ItemRow({
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 opacity-0 group-hover:opacity-100"
+          className={cn('h-7 w-7', hoverAction)}
           onClick={onAddSubtask}
           aria-label="Add subtask"
           title="Add subtask"
@@ -168,7 +168,7 @@ function ItemRow({
       <Button
         variant="ghost"
         size="icon"
-        className="h-7 w-7 opacity-0 group-hover:opacity-100"
+        className={cn('h-7 w-7', hoverAction)}
         onClick={onDelete}
         aria-label="Delete"
       >

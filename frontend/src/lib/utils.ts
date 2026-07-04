@@ -5,6 +5,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * Classes for action controls revealed on hover inside a `group` container.
+ * Desktop keeps the quiet hover-reveal, but the control is also visible when
+ * reached via keyboard focus and is always visible on touch devices (which
+ * have no hover). Works on the control itself (focus-visible) and on wrapper
+ * elements around controls (focus-within).
+ */
+export const hoverAction =
+  'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100';
+
 export function formatDate(date: Date | string, options?: Intl.DateTimeFormatOptions): string {
   let d: Date;
   if (typeof date === 'string') {

@@ -17,7 +17,7 @@ import { householdsApi } from '@/api/households';
 import { useAuthStore } from '@/stores/authStore';
 import { useListMutations } from './useListMutations';
 import { ItemDetailSheet } from './ItemDetailSheet';
-import { cn } from '@/lib/utils';
+import { cn, hoverAction } from '@/lib/utils';
 import type { List, ListItem } from '@/types/models';
 
 interface WishlistViewProps {
@@ -108,7 +108,8 @@ export function WishlistView({ list, items }: WishlistViewProps) {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 opacity-0 group-hover:opacity-100"
+                    className={cn('h-7 w-7', hoverAction)}
+                    aria-label="Delete wish"
                     onClick={(e) => {
                       e.stopPropagation();
                       m.deleteItem.mutate(it.id);
