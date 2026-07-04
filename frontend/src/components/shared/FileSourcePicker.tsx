@@ -194,8 +194,9 @@ export function FileSourcePicker({
         folders: foldersRes.folders
           .filter((f) => !f.parentId)
           .map((f) => ({ id: f.id, name: f.name })),
-        // list() mixes folders in as pseudo-files; keep real files only.
-        files: filesRes.files.filter((f) => f.type === 'file').map(toLibraryFile),
+        // Rows are always real files (type is a media enum: photo/video/…);
+        // folders live in their own table and come from getFolders above.
+        files: filesRes.files.map(toLibraryFile),
       };
     },
     enabled: open && step === 'library' && !searching,
@@ -223,7 +224,6 @@ export function FileSourcePicker({
     if (searching) {
       const term = search.trim().toLowerCase();
       return (searchQuery.data?.files ?? [])
-        .filter((f) => f.type === 'file')
         .map(toLibraryFile)
         .filter((f) => f.name.toLowerCase().includes(term))
         .filter((f) => matchesAccept(f, acceptTokens));

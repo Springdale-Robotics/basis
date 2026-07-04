@@ -39,6 +39,7 @@ import { ShoppingCart } from 'lucide-react';
 import { recipesApi } from '@/api/recipes';
 import { inventoryApi } from '@/api/inventory';
 import { useState, useMemo } from 'react';
+import { useDirtyCloseGuard } from '@/hooks/useDirtyCloseGuard';
 import { toast } from '@/hooks/useToast';
 import { useRecipeWithIngredients } from '@/hooks/useRecipeWithIngredients';
 import {
@@ -242,7 +243,18 @@ export function RecipeDetailPage() {
       resetImageState();
     }
   };
-  const cancelEdit = () => resetEditState();
+  const isEditDirty = () =>
+    !!draft &&
+    !!recipe &&
+    (JSON.stringify(draft) !== JSON.stringify(makeDraft(recipe)) ||
+      pendingImageFile !== null ||
+      pendingImageUrl !== null ||
+      pendingImageFileId !== null ||
+      imageRemoved);
+  const { requestClose: cancelEdit, confirmDialog: cancelEditConfirm } = useDirtyCloseGuard({
+    isDirty: isEditDirty,
+    onDiscard: resetEditState,
+  });
   const saveEdit = () => { if (draft) inlineSaveMutation.mutate(draft); };
 
   const patchDraft = (patch: Partial<RecipeDraft>) => {
@@ -943,6 +955,8 @@ export function RecipeDetailPage() {
           )}
         </div>
       </div>
+
+      {cancelEditConfirm}
 
       <ConfirmDialog
         open={deleteDialogOpen}
