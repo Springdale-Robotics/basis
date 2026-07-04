@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { Disc, User, Play, Clock } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -29,15 +29,41 @@ export function MusicPage() {
   const [search, setSearch] = useState('');
   const { playTrack, currentTrack, isPlaying } = usePlayerStore();
 
-  const { data: artistsData, isLoading: artistsLoading, isError: artistsError, error: artistsErrorObj, refetch: refetchArtists } = useQuery({
+  const MUSIC_PAGE_SIZE = 100;
+  const {
+    data: artistsData,
+    isLoading: artistsLoading,
+    isError: artistsError,
+    error: artistsErrorObj,
+    refetch: refetchArtists,
+    fetchNextPage: fetchNextArtists,
+    hasNextPage: hasNextArtists,
+    isFetchingNextPage: isFetchingNextArtists,
+  } = useInfiniteQuery({
     queryKey: ['artists', search],
-    queryFn: () => musicApi.getArtists({ search: search || undefined, limit: 100 }),
+    queryFn: ({ pageParam }) =>
+      musicApi.getArtists({ search: search || undefined, limit: MUSIC_PAGE_SIZE, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.hasMore ? allPages.length * MUSIC_PAGE_SIZE : undefined,
     enabled: activeTab === 'artists',
   });
 
-  const { data: albumsData, isLoading: albumsLoading, isError: albumsError, error: albumsErrorObj, refetch: refetchAlbums } = useQuery({
+  const {
+    data: albumsData,
+    isLoading: albumsLoading,
+    isError: albumsError,
+    error: albumsErrorObj,
+    refetch: refetchAlbums,
+    fetchNextPage: fetchNextAlbums,
+    hasNextPage: hasNextAlbums,
+    isFetchingNextPage: isFetchingNextAlbums,
+  } = useInfiniteQuery({
     queryKey: ['albums'],
-    queryFn: () => musicApi.getAlbums({ limit: 100 }),
+    queryFn: ({ pageParam }) => musicApi.getAlbums({ limit: MUSIC_PAGE_SIZE, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.hasMore ? allPages.length * MUSIC_PAGE_SIZE : undefined,
     enabled: activeTab === 'albums',
   });
 
@@ -47,8 +73,8 @@ export function MusicPage() {
     enabled: activeTab === 'recent',
   });
 
-  const artists = artistsData?.artists || [];
-  const albums = albumsData?.albums || [];
+  const artists = artistsData?.pages.flatMap((p) => p.artists) || [];
+  const albums = albumsData?.pages.flatMap((p) => p.albums) || [];
   const recentTracks = recentData?.tracks || [];
 
   const handlePlayTrack = (track: Track, allTracks?: Track[]) => {
@@ -109,6 +135,7 @@ export function MusicPage() {
               description="Add music files to build your library"
             />
           ) : (
+            <>
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
               {albums.map((album) => {
                 const year = album.releaseDate
@@ -139,6 +166,18 @@ export function MusicPage() {
                 );
               })}
             </div>
+            {hasNextAlbums && (
+              <div className="mt-6 flex justify-center">
+                <Button
+                  variant="outline"
+                  onClick={() => fetchNextAlbums()}
+                  disabled={isFetchingNextAlbums}
+                >
+                  {isFetchingNextAlbums ? 'Loading…' : 'Load more'}
+                </Button>
+              </div>
+            )}
+            </>
           )}
         </TabsContent>
 
@@ -165,6 +204,7 @@ export function MusicPage() {
               }
             />
           ) : (
+            <>
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6">
               {artists.map((artist) => (
                 <MediaCard
@@ -179,6 +219,18 @@ export function MusicPage() {
                 />
               ))}
             </div>
+            {hasNextArtists && (
+              <div className="mt-6 flex justify-center">
+                <Button
+                  variant="outline"
+                  onClick={() => fetchNextArtists()}
+                  disabled={isFetchingNextArtists}
+                >
+                  {isFetchingNextArtists ? 'Loading…' : 'Load more'}
+                </Button>
+              </div>
+            )}
+            </>
           )}
         </TabsContent>
 

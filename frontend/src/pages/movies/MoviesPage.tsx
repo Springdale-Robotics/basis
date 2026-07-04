@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Film, Tv, Play, Star } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -28,15 +28,29 @@ export function MoviesPage() {
   const [genreFilter, setGenreFilter] = useState<string>('all');
   const [showUnwatched, setShowUnwatched] = useState(false);
 
-  const { data: moviesData, isLoading: moviesLoading, isError: moviesError, error: moviesErrorObj, refetch: refetchMovies } = useQuery({
+  const MOVIES_PAGE_SIZE = 100;
+  const {
+    data: moviesData,
+    isLoading: moviesLoading,
+    isError: moviesError,
+    error: moviesErrorObj,
+    refetch: refetchMovies,
+    fetchNextPage: fetchNextMovies,
+    hasNextPage: hasNextMovies,
+    isFetchingNextPage: isFetchingNextMovies,
+  } = useInfiniteQuery({
     queryKey: ['movies', sortBy, genreFilter, showUnwatched],
-    queryFn: () =>
+    queryFn: ({ pageParam }) =>
       moviesApi.list({
         sortBy,
         genre: genreFilter === 'all' ? undefined : genreFilter,
         unwatched: showUnwatched || undefined,
-        limit: 100,
+        limit: MOVIES_PAGE_SIZE,
+        offset: pageParam,
       }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.hasMore ? allPages.length * MOVIES_PAGE_SIZE : undefined,
     enabled: contentType === 'movies',
   });
 
@@ -56,7 +70,7 @@ export function MoviesPage() {
     queryFn: () => moviesApi.getGenres(),
   });
 
-  const movies = moviesData?.movies || [];
+  const movies = moviesData?.pages.flatMap((p) => p.movies) || [];
   const tvShows = tvShowsData?.shows || [];
   const continueWatching = continueData?.items || [];
   const genres = genresData?.genres || [];
@@ -160,6 +174,7 @@ export function MoviesPage() {
               description="Add video files and they'll appear here"
             />
           ) : (
+            <>
             <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
               {movies.map((movie) => {
                 const year = movie.releaseDate
@@ -208,6 +223,18 @@ export function MoviesPage() {
                 );
               })}
             </div>
+            {hasNextMovies && (
+              <div className="mt-6 flex justify-center">
+                <Button
+                  variant="outline"
+                  onClick={() => fetchNextMovies()}
+                  disabled={isFetchingNextMovies}
+                >
+                  {isFetchingNextMovies ? 'Loading…' : 'Load more'}
+                </Button>
+              </div>
+            )}
+            </>
           )}
         </TabsContent>
 
