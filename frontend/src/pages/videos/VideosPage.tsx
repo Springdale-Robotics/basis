@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { Video, Calendar, Grid, Play, ArrowUpDown } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -31,9 +31,23 @@ export function VideosPage() {
   const [selectedMonth, setSelectedMonth] = useState<number | undefined>();
   const [previewVideo, setPreviewVideo] = useState<VideoType | null>(null);
 
-  const { data: videosData, isLoading: videosLoading, isError: videosError, error: videosErrorObj, refetch: refetchVideos } = useQuery({
+  const VIDEOS_PAGE_SIZE = 100;
+  const {
+    data: videosData,
+    isLoading: videosLoading,
+    isError: videosError,
+    error: videosErrorObj,
+    refetch: refetchVideos,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: ['videos', sort, order],
-    queryFn: () => videosApi.list({ limit: 200, sort, order }),
+    queryFn: ({ pageParam }) =>
+      videosApi.list({ limit: VIDEOS_PAGE_SIZE, offset: pageParam, sort, order }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) =>
+      lastPage.hasMore ? allPages.length * VIDEOS_PAGE_SIZE : undefined,
     enabled: viewMode === 'grid',
   });
 
@@ -43,9 +57,9 @@ export function VideosPage() {
     enabled: viewMode === 'timeline',
   });
 
-  const videos = videosData?.videos || [];
+  const videos = videosData?.pages.flatMap((p) => p.videos) || [];
   const timeline = timelineData?.timeline || [];
-  const total = videosData?.total || videos.length;
+  const total = videosData?.pages[0]?.total || videos.length;
 
   const years = Array.from(
     new Set(timeline.map((t) => new Date(t.date).getFullYear()))
@@ -168,15 +182,28 @@ export function VideosPage() {
               description="Upload some videos to get started"
             />
           ) : (
-            <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-              {videos.map((video) => (
-                <VideoThumbnail
-                  key={video.id}
-                  video={video}
-                  onClick={() => setPreviewVideo(video)}
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                {videos.map((video) => (
+                  <VideoThumbnail
+                    key={video.id}
+                    video={video}
+                    onClick={() => setPreviewVideo(video)}
+                  />
+                ))}
+              </div>
+              {hasNextPage && (
+                <div className="mt-6 flex justify-center">
+                  <Button
+                    variant="outline"
+                    onClick={() => fetchNextPage()}
+                    disabled={isFetchingNextPage}
+                  >
+                    {isFetchingNextPage ? 'Loading…' : 'Load more'}
+                  </Button>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
