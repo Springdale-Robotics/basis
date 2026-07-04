@@ -29,19 +29,6 @@ export const syncQueue = new Queue('sync', {
   },
 });
 
-export const backupQueue = new Queue('backup', {
-  connection: redis,
-  defaultJobOptions: {
-    removeOnComplete: 50,
-    removeOnFail: 100,
-    attempts: 3,
-    backoff: {
-      type: 'exponential',
-      delay: 5000,
-    },
-  },
-});
-
 export const cleanupQueue = new Queue('cleanup', {
   connection: redis,
   defaultJobOptions: {
@@ -149,13 +136,6 @@ export interface SyncJobData {
   operation: 'share' | 'update' | 'delete';
 }
 
-export interface BackupJobData {
-  householdId: string;
-  scheduleId?: string;
-  includeFiles: boolean;
-  encryptionKey?: string;
-}
-
 export interface CleanupJobData {
   type: 'expired_sessions' | 'old_notifications' | 'old_audit_logs' | 'orphaned_files' | 'old_leftovers';
   householdId?: string;
@@ -231,24 +211,6 @@ export async function initializeWorkers(): Promise<void> {
 
   syncWorker.on('failed', (job, error) => {
     logger.error({ jobId: job?.id, type: job?.name, error }, 'Sync job failed');
-  });
-
-  // Backup worker
-  const backupWorker = new Worker(
-    'backup',
-    async (job: Job<BackupJobData>) => {
-      const { processBackupJob } = await import('./backup.worker.js');
-      return processBackupJob(job);
-    },
-    { connection: redis, concurrency: 1 }
-  );
-
-  backupWorker.on('completed', (job) => {
-    logger.info({ jobId: job.id, householdId: job.data.householdId }, 'Backup job completed');
-  });
-
-  backupWorker.on('failed', (job, error) => {
-    logger.error({ jobId: job?.id, householdId: job?.data.householdId, error }, 'Backup job failed');
   });
 
   // Cleanup worker
@@ -377,7 +339,7 @@ export async function initializeWorkers(): Promise<void> {
     logger.error({ jobId: job?.id, reportId: job?.data.reportId, error }, 'Bug report delivery failed');
   });
 
-  workers = [notificationWorker, syncWorker, backupWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, mediaWorker, imageParseWorker, bugReportWorker];
+  workers = [notificationWorker, syncWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, mediaWorker, imageParseWorker, bugReportWorker];
   logger.info('Background workers initialized');
 }
 
@@ -469,7 +431,6 @@ export async function shutdownWorkers(): Promise<void> {
 
   await notificationQueue.close();
   await syncQueue.close();
-  await backupQueue.close();
   await cleanupQueue.close();
   await inventoryQueue.close();
   await calendarReminderQueue.close();

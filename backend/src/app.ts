@@ -33,7 +33,6 @@ import { filesRoutes } from './modules/files/files.routes.js';
 import { listsRoutes } from './modules/lists/lists.routes.js';
 import { notificationsRoutes } from './modules/notifications/notifications.routes.js';
 import { settingsRoutes } from './modules/settings/settings.routes.js';
-import { backupRoutes } from './modules/backup/backup.routes.js';
 import { connectionsRoutes } from './modules/connections/connections.routes.js';
 import { healthRoutes } from './modules/health/health.routes.js';
 import { setupRoutes } from './modules/setup/setup.routes.js';
@@ -213,7 +212,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     await apiScope.register(listsRoutes, { prefix: '/api/v1/lists' });
     await apiScope.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
     await apiScope.register(settingsRoutes, { prefix: '/api/v1/settings' });
-    await apiScope.register(backupRoutes, { prefix: '/api/v1/backup' });
     await apiScope.register(connectionsRoutes, { prefix: '/api/v1/connections' });
     await apiScope.register(photosRoutes, { prefix: '/api/v1/photos' });
     await apiScope.register(videosRoutes, { prefix: '/api/v1/videos' });
