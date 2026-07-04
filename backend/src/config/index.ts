@@ -82,6 +82,12 @@ const envSchema = z.object({
   // Allow user-driven outbound fetches (recipe import) to reach private/
   // loopback addresses. Off by default (SSRF guard); enable only in dev.
   SSRF_ALLOW_PRIVATE: z.coerce.boolean().default(false),
+  // The admin Terminal page opens a freeform shell as the backend user. That
+  // is host-level access, appropriate for the intended single-household,
+  // one-owner-admin install. Set false to disable the freeform shell (e.g. if
+  // more than one household shares an install, where every admin would
+  // otherwise get a host shell). Fixed-argv installer commands are unaffected.
+  ENABLE_ADMIN_TERMINAL: z.coerce.boolean().default(true),
 
   // Ollama connection (used by VLM-LLM service)
   OLLAMA_HOST: z.string().default('http://localhost:11434'),
