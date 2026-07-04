@@ -10,8 +10,106 @@ permissions:
   contents: write
 
 jobs:
+  # Gate the release on a full pre-flight: the exact artifact must typecheck,
+  # pass tests, build, migrate a fresh database, and actually boot and serve
+  # health — all before a tarball is published for the prod self-updater to
+  # pull. A red verify blocks the release entirely.
+  verify:
+    name: Verify build (typecheck, tests, build, migrate, boot)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:ci@localhost:5432/ci
+      REDIS_URL: redis://localhost:6379
+      SESSION_SECRET: ci-session-secret-not-used-in-ci-000000
+      ENCRYPTION_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Backend install
+        working-directory: backend
+        run: npm ci --no-audit --no-fund
+
+      - name: Backend typecheck
+        working-directory: backend
+        run: npx tsc --noEmit
+
+      - name: Backend unit tests
+        working-directory: backend
+        run: npx vitest run src/lib/units.test.ts src/lib/confidence.test.ts src/services/crf-ingredient-parser.test.ts test/lib/tailscale.test.ts
+
+      - name: Backend build
+        working-directory: backend
+        run: npm run build
+
+      - name: Migrations apply on a fresh database
+        working-directory: backend
+        run: npm run db:migrate
+
+      - name: Boot smoke test (build boots + serves health)
+        working-directory: backend
+        env:
+          NODE_ENV: production
+          PORT: '3000'
+          WORKERS_IN_PROCESS: 'true'
+        run: |
+          node dist/index.js &
+          APP_PID=$!
+          ok=0
+          for i in $(seq 1 45); do
+            if curl -fsS http://localhost:3000/api/v1/health/live >/dev/null 2>&1; then
+              echo "App booted and is serving /health/live"
+              ok=1
+              break
+            fi
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "::error::Backend process exited during boot"
+              wait "$APP_PID" || true
+              exit 1
+            fi
+            sleep 1
+          done
+          kill "$APP_PID" 2>/dev/null || true
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::Backend did not become healthy within 45s"
+            exit 1
+          fi
+
+      - name: Frontend build
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
   release:
     name: Build tarball + publish release
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
