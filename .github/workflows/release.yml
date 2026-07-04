@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - 'v*'
+  # Allow running the pre-flight verify on demand (from any branch) without
+  # cutting a release — the publish job below is guarded to tags only.
+  workflow_dispatch:
 
 # Permissions for creating the GitHub Release and uploading assets.
 permissions:
@@ -110,6 +113,8 @@ jobs:
   release:
     name: Build tarball + publish release
     needs: verify
+    # Only publish for real tag pushes; a manual workflow_dispatch just runs verify.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
