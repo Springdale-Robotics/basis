@@ -666,7 +666,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
           if (!o) requestClose();
         }}
       >
-        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
           <DialogHeader className="flex-shrink-0">
             <DialogTitle>Import Recipes</DialogTitle>
           </DialogHeader>
@@ -694,7 +694,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
         if (!o) requestClose();
       }}
     >
-      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle>Import Recipe</DialogTitle>
         </DialogHeader>
@@ -907,9 +907,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                           description="Pick one photo for a single recipe, or several to import them all."
                         />
                         <p className="text-xs text-muted-foreground">
-                          {true
-                            ? 'Pick one photo for a single recipe, or several to process them all at once. Supports JPG, PNG, GIF, WebP, HEIC (max 10MB each).'
-                            : 'Take a photo of a handwritten recipe card, printed recipe, or screenshot. Supports JPG, PNG, GIF, WebP, HEIC (max 10MB).'}
+                          Pick one photo for a single recipe, or several to process them all at once. Supports JPG, PNG, GIF, WebP, HEIC (max 10MB each).
                         </p>
                       </div>
                     )}

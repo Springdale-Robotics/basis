@@ -78,7 +78,7 @@ export function AddTimerDialog({ onAdd, trigger }: AddTimerDialogProps) {
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[400px]">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Add Timer</DialogTitle>
           <DialogDescription>

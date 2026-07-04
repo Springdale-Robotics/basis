@@ -1,7 +1,7 @@
 import { DEFAULT_COLOR } from '@/components/calendar/calendar-utils';
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, ChevronLeft, ChevronRight, Keyboard, PanelLeftClose, PanelLeft, Camera, Share2, MoreVertical } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, Keyboard, PanelLeftClose, PanelLeft, Camera, Share2, MoreVertical, MonitorSmartphone } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -753,7 +753,18 @@ export function CalendarPage() {
                 </div>
               </ScrollArea>
 
-              <div className="mt-3 border-t pt-3">
+              <div className="mt-3 space-y-1 border-t pt-3">
+                <Button
+                  asChild
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start text-muted-foreground"
+                >
+                  <Link to="/calendar/connect">
+                    <MonitorSmartphone className="mr-2 h-3.5 w-3.5" />
+                    Connect a device
+                  </Link>
+                </Button>
                 <Button
                   asChild
                   variant="ghost"

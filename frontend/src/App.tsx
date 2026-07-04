@@ -43,6 +43,7 @@ import { MusicPage } from './pages/music/MusicPage';
 import { AlbumDetailPage } from './pages/music/AlbumDetailPage';
 import { ArtistDetailPage } from './pages/music/ArtistDetailPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
+import { NotFoundPage } from './pages/NotFoundPage';
 
 export function App() {
   return (
@@ -110,10 +111,10 @@ export function App() {
 
                   {/* Settings */}
                   <Route path="settings/*" element={<SettingsPage />} />
-                </Route>
 
-                {/* Catch-all */}
-                <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                  {/* Catch-all: unknown routes get a proper 404 inside the shell */}
+                  <Route path="*" element={<NotFoundPage />} />
+                </Route>
               </Routes>
               </ErrorBoundary>
               <Toaster />

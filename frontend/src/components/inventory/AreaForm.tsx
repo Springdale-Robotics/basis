@@ -82,7 +82,7 @@ export function AreaForm({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[450px]">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
             {isEditing ? 'Edit Storage Area' : 'Add Storage Area'}

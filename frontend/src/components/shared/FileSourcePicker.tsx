@@ -295,7 +295,7 @@ export function FileSourcePicker({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !isPreparing && onOpenChange(o)}>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+      <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle>
             {step === 'library' ? 'Choose from Home Manager' : title}

@@ -388,13 +388,14 @@ export function getRecurrenceSummary(rruleString: string, startDate: Date): stri
           : `Every ${interval} months on the ${day}${getOrdinalSuffix(day)}`);
       }
       break;
-    case 'yearly':
+    case 'yearly': {
       const month = startDate.toLocaleString('default', { month: 'long' });
       const day = startDate.getDate();
       parts.push(interval === 1
         ? `Every year on ${month} ${day}`
         : `Every ${interval} years on ${month} ${day}`);
       break;
+    }
   }
 
   // Termination

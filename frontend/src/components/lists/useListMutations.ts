@@ -141,21 +141,41 @@ export function useListMutations(listId: string) {
 
   const toggleItem = useMutation({
     mutationFn: (itemId: string) => resilientListsApi.toggleItem(listId, itemId),
-    onSuccess: (res, itemId) =>
-      settle(res, () =>
-        patchItems((items) =>
-          items.map((i) =>
-            i.id === itemId
-              ? {
-                  ...i,
-                  isChecked: !i.isChecked,
-                  checkedAt: !i.isChecked ? new Date().toISOString() : null,
-                  updatedAt: new Date().toISOString(),
-                }
-              : i,
-          ),
+    // Optimistic: flip the checkbox immediately so slow connections can't
+    // double-fire. Queued-offline results keep this patch (settle's ghost
+    // apply is a no-op because the cache is already flipped); online results
+    // invalidate so server truth wins.
+    onMutate: async (itemId) => {
+      await queryClient.cancelQueries({ queryKey: detailKey });
+      const prev = queryClient.getQueryData<ListDetail>(detailKey);
+      patchItems((items) =>
+        items.map((i) =>
+          i.id === itemId
+            ? {
+                ...i,
+                isChecked: !i.isChecked,
+                checkedAt: !i.isChecked ? new Date().toISOString() : null,
+                updatedAt: new Date().toISOString(),
+              }
+            : i,
         ),
-      ),
+      );
+      return { prev };
+    },
+    onError: (_err, _itemId, ctx) => {
+      if (!ctx?.prev) return;
+      queryClient.setQueryData(detailKey, ctx.prev);
+      offlineDb
+        .putList(listId, {
+          list: ctx.prev.list,
+          items: ctx.prev.items,
+          cachedAt: Date.now(),
+        })
+        .catch(() => {
+          /* snapshot is best-effort */
+        });
+    },
+    onSuccess: (res) => settle(res, () => {}),
   });
 
   const claimItem = useMutation({

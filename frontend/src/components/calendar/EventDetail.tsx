@@ -164,7 +164,7 @@ export function EventDetail({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[450px] p-0 gap-0 max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-md p-0 gap-0 max-h-[90vh] overflow-y-auto">
         {/* Header with colored bar */}
         <div
           className="h-2 rounded-t-lg"

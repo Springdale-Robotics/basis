@@ -36,26 +36,35 @@ export const NAV_ITEMS = [
   { label: 'Files', href: '/files', icon: 'FolderOpen' },
 ] as const;
 
-export const SETTINGS_NAV = [
-  { label: 'Profile', href: '/settings/profile' },
-  { label: 'Theme', href: '/settings/theme' },
-  { label: 'Notifications', href: '/settings/notifications' },
-  { label: 'Household', href: '/settings/household' },
-  { label: 'Members', href: '/settings/members' },
-  { label: 'Groups', href: '/settings/groups' },
-  { label: 'Feature Permissions', href: '/settings/permissions' },
-  { label: 'Storage', href: '/settings/storage' },
-  { label: 'Calendars', href: '/settings/calendars' },
-  { label: 'Devices', href: '/settings/devices' },
-  { label: 'Remote Access', href: '/settings/remote-access' },
-  { label: 'Backup', href: '/settings/backup' },
-  { label: 'Features', href: '/settings/features' },
-  { label: 'Sessions', href: '/settings/sessions' },
-  { label: 'Updates', href: '/settings/updates' },
-  { label: 'System', href: '/settings/system' },
-  { label: 'Bug Reports', href: '/settings/bug-reports' },
-  { label: 'Terminal', href: '/settings/terminal' },
-] as const;
+export interface SettingsNavItem {
+  label: string;
+  href: string;
+  /** One-line summary shown under the section heading. */
+  description: string;
+  /** Marks a stub section that isn't built yet ("Soon" badge in the nav). */
+  soon?: boolean;
+}
+
+export const SETTINGS_NAV: SettingsNavItem[] = [
+  { label: 'Profile', href: '/settings/profile', description: 'Your name, photo, and password' },
+  { label: 'Theme', href: '/settings/theme', description: 'Colors, font size, and appearance' },
+  { label: 'Notifications', href: '/settings/notifications', description: 'Push, email, and in-app alerts', soon: true },
+  { label: 'Household', href: '/settings/household', description: 'Household name and details' },
+  { label: 'Members', href: '/settings/members', description: 'Invite and manage household members' },
+  { label: 'Groups', href: '/settings/groups', description: 'Organize members into groups' },
+  { label: 'Feature Permissions', href: '/settings/permissions', description: 'Who can view and edit each feature' },
+  { label: 'Storage', href: '/settings/storage', description: 'Disk usage and storage limits' },
+  { label: 'Calendars', href: '/settings/calendars', description: 'Calendar sources, sync, and export' },
+  { label: 'Devices', href: '/settings/devices', description: 'Phones, tablets, and desktops connected to this household', soon: true },
+  { label: 'Remote Access', href: '/settings/remote-access', description: 'Reach your household from outside your home network' },
+  { label: 'Backup', href: '/settings/backup', description: 'Automatic backups and restore' },
+  { label: 'Features', href: '/settings/features', description: 'Turn household features on or off' },
+  { label: 'Sessions', href: '/settings/sessions', description: 'Where you are signed in', soon: true },
+  { label: 'Updates', href: '/settings/updates', description: 'App version and available updates' },
+  { label: 'System', href: '/settings/system', description: 'Server status and diagnostics' },
+  { label: 'Bug Reports', href: '/settings/bug-reports', description: 'Reports submitted from this household' },
+  { label: 'Terminal', href: '/settings/terminal', description: 'Run server commands from the browser' },
+];
 
 export const FEATURES = [
   { id: 'recipes', label: 'Recipes', description: 'Access to recipe database' },

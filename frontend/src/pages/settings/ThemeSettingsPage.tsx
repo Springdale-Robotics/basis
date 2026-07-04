@@ -118,7 +118,7 @@ export function ThemeSettingsPage() {
       {/* Appearance */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-medium">Appearance</CardTitle>
+          <CardTitle>Appearance</CardTitle>
           <CardDescription>Choose how Basis looks to you</CardDescription>
         </CardHeader>
         <CardContent>
@@ -145,7 +145,7 @@ export function ThemeSettingsPage() {
       {/* Theme Presets */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-medium">Theme</CardTitle>
+          <CardTitle>Theme</CardTitle>
           <CardDescription>Choose a complete color scheme or create your own</CardDescription>
         </CardHeader>
         <CardContent>
@@ -284,7 +284,7 @@ export function ThemeSettingsPage() {
       {/* Font Size */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-medium">Font Size</CardTitle>
+          <CardTitle>Font Size</CardTitle>
           <CardDescription>Adjust the base font size</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -308,7 +308,7 @@ export function ThemeSettingsPage() {
       {/* Border Radius */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-medium">Border Radius</CardTitle>
+          <CardTitle>Border Radius</CardTitle>
           <CardDescription>Adjust the roundness of elements</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

@@ -151,7 +151,7 @@ export function AddMealDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden">
+      <DialogContent className="sm:max-w-lg p-0 gap-0 overflow-hidden">
         <form onSubmit={handleSubmit} className="contents">
         <DialogHeader className="px-6 pt-6 pb-4 border-b">
           <DialogTitle className="flex items-center gap-2 text-lg">
@@ -238,10 +238,10 @@ export function AddMealDialog({
           </div>
         </div>
 
-        <DialogFooter className="px-6 py-4 border-t bg-muted/30 sm:justify-between gap-2">
+        <DialogFooter className="px-6 py-4 border-t bg-muted/30 gap-2">
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             onClick={() => onOpenChange(false)}
           >
             Done

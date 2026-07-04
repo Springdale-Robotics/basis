@@ -190,7 +190,7 @@ export function FinishCookingDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-lg">
         {step === 'confirm' ? (
           <>
             <DialogHeader>

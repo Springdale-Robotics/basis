@@ -202,7 +202,7 @@ export function MoveFileDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[450px]">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Move to Folder</DialogTitle>
           <DialogDescription>

@@ -885,7 +885,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           if (!item) continue;
 
           // Calculate quantity to deduct
-          let quantityToDeduct = adjustment?.actualQuantityUsed
+          const quantityToDeduct = adjustment?.actualQuantityUsed
             ?? (parseFloat(ingredient.quantity || '0') * servingsMultiplier);
 
           if (quantityToDeduct <= 0) continue;

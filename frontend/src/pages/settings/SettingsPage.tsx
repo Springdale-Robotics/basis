@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { NavLink, Routes, Route, Navigate } from 'react-router-dom';
+import { NavLink, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +26,7 @@ import { BugReportsSettingsPage } from './BugReportsSettingsPage';
 
 export function SettingsPage() {
   const { canAdmin } = useFeaturePermissions();
+  const { pathname } = useLocation();
   const isSettingsAdmin = canAdmin('settings');
 
   // Filter settings navigation to hide admin-only sections from non-admins
@@ -34,6 +35,13 @@ export function SettingsPage() {
       ADMIN_ONLY_SETTINGS.includes(item.href) ? isSettingsAdmin : true
     );
   }, [isSettingsAdmin]);
+
+  // Active section, for the heading above the sub-page content. Especially
+  // important on mobile where the nav list scrolls away.
+  const activeSection = useMemo(
+    () => SETTINGS_NAV.find((item) => pathname.startsWith(item.href)),
+    [pathname]
+  );
 
   return (
     <div>
@@ -50,7 +58,7 @@ export function SettingsPage() {
                   to={item.href}
                   className={({ isActive }) =>
                     cn(
-                      'block rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                      'flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                       isActive
                         ? 'bg-secondary text-secondary-foreground'
                         : 'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -58,6 +66,11 @@ export function SettingsPage() {
                   }
                 >
                   {item.label}
+                  {item.soon && (
+                    <Badge variant="secondary" className="text-[10px] font-medium">
+                      Soon
+                    </Badge>
+                  )}
                 </NavLink>
               ))}
             </nav>
@@ -66,6 +79,16 @@ export function SettingsPage() {
 
         {/* Content area */}
         <div className="flex-1">
+          {activeSection && (
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold tracking-tight">
+                {activeSection.label}
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                {activeSection.description}
+              </p>
+            </div>
+          )}
           <Routes>
             <Route index element={<Navigate to="profile" replace />} />
             <Route path="profile" element={<ProfileSettingsPage />} />
@@ -74,7 +97,6 @@ export function SettingsPage() {
               path="notifications"
               element={
                 <PlaceholderSettings
-                  title="Notifications"
                   description="Choose which household events trigger push notifications, emails, or in-app toasts — per category, per quiet-hours window."
                 />
               }
@@ -89,7 +111,6 @@ export function SettingsPage() {
               path="devices"
               element={
                 <PlaceholderSettings
-                  title="Devices"
                   description="Manage the iOS, Android, and desktop clients that have been provisioned for this household — view last-seen, revoke access, rename, or push a fresh CalDAV/ICS profile."
                 />
               }
@@ -101,7 +122,6 @@ export function SettingsPage() {
               path="sessions"
               element={
                 <PlaceholderSettings
-                  title="Sessions"
                   description="See where you're currently signed in (browser, OS, last activity) and sign out individual sessions or all other devices at once."
                 />
               }
@@ -117,23 +137,14 @@ export function SettingsPage() {
   );
 }
 
-function PlaceholderSettings({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
+function PlaceholderSettings({ description }: { description: string }) {
   return (
     <Card>
       <CardContent className="p-6">
-        <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold">{title}</h2>
-          <Badge variant="secondary" className="font-medium text-muted-foreground">
-            Coming soon
-          </Badge>
-        </div>
-        <p className="mt-2 text-sm text-muted-foreground">{description}</p>
+        <Badge variant="secondary" className="font-medium text-muted-foreground">
+          Coming soon
+        </Badge>
+        <p className="mt-3 text-sm text-muted-foreground">{description}</p>
       </CardContent>
     </Card>
   );

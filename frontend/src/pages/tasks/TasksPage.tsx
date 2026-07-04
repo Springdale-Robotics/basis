@@ -460,7 +460,7 @@ export function TasksPage() {
   return (
     <div>
       <PageHeader
-        title="Tasks & Chores"
+        title="Tasks"
         description="One-shot tasks live alongside the chores that keep coming back."
         actions={
           <EditGate feature="tasks">

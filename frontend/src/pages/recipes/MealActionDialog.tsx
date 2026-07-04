@@ -146,7 +146,7 @@ export function MealActionDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-md p-0 gap-0 overflow-hidden">
+      <DialogContent className="sm:max-w-md p-0 gap-0 overflow-hidden">
         {/* Recipe banner */}
         <div className="relative aspect-[16/9] w-full overflow-hidden bg-muted">
           {imageSrc ? (

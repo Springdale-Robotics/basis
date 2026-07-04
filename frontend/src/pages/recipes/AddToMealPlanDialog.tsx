@@ -69,7 +69,7 @@ export function AddToMealPlanDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Add to Meal Plan</DialogTitle>
           <DialogDescription>{recipeTitle}</DialogDescription>

@@ -764,7 +764,7 @@ export function RecipeForm({
     if (currentParseLinkItems.length > 0) {
       // Create new items first
       const toCreate = currentParseLinkItems.filter(p => p.action === 'create' && p.suggestedName.trim());
-      let nameToId: Record<string, string> = {};
+      const nameToId: Record<string, string> = {};
 
       if (toCreate.length > 0) {
         try {
@@ -872,7 +872,7 @@ export function RecipeForm({
         if (!o) requestClose();
       }}
     >
-      <DialogContent className="sm:max-w-[700px] max-h-[90vh] flex flex-col overflow-hidden">
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle>{isEditing ? 'Edit Recipe' : 'New Recipe'}</DialogTitle>
           <DialogDescription>

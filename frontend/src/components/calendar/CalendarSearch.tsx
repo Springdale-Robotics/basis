@@ -136,7 +136,7 @@ export const CalendarSearch = forwardRef<CalendarSearchRef, CalendarSearchProps>
           Search Events
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl max-h-[80vh]">
+      <DialogContent className="sm:max-w-2xl max-h-[80vh]">
         <DialogHeader>
           <DialogTitle>Search Events</DialogTitle>
         </DialogHeader>
