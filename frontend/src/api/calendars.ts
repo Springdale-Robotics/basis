@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from './client';
+import { apiGet, apiPost, apiPut, apiPatch, apiDelete, getCsrfToken, CSRF_HEADER } from './client';
 import type {
   Calendar,
   CalendarEvent,
@@ -228,10 +228,12 @@ export const calendarsApi = {
   importIcs: async (calendarId: string, file: File) => {
     const formData = new FormData();
     formData.append('file', file);
+    const csrfToken = await getCsrfToken();
     const response = await fetch(`/api/v1/calendars/${calendarId}/import`, {
       method: 'POST',
       body: formData,
       credentials: 'include',
+      headers: csrfToken ? { [CSRF_HEADER]: csrfToken } : undefined,
     });
     if (!response.ok) {
       const error = await response.json();

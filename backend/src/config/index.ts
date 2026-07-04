@@ -79,6 +79,9 @@ const envSchema = z.object({
   // Development
   DISABLE_RATE_LIMIT: z.coerce.boolean().default(false),
   DISABLE_CSRF: z.coerce.boolean().default(false),
+  // Allow user-driven outbound fetches (recipe import) to reach private/
+  // loopback addresses. Off by default (SSRF guard); enable only in dev.
+  SSRF_ALLOW_PRIVATE: z.coerce.boolean().default(false),
 
   // Ollama connection (used by VLM-LLM service)
   OLLAMA_HOST: z.string().default('http://localhost:11434'),

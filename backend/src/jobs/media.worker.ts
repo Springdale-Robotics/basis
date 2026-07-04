@@ -1,10 +1,38 @@
 import { Job } from 'bullmq';
 import { db } from '../config/database.js';
 import { files, mediaProcessingJobs } from '../db/schema/index.js';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { logger } from '../lib/logger.js';
 import { thumbnailService } from '../services/thumbnail.service.js';
 import { exifService } from '../services/exif.service.js';
+
+/**
+ * Atomically merge partial keys into files.metadata at the DB level.
+ *
+ * The thumbnail/exif/video_info jobs for one file run concurrently (worker
+ * concurrency > 1) and all touch this single jsonb column. A read-modify-write
+ * in JS loses whichever writer commits last; a SQL `||` merge lets each writer
+ * contribute its own keys without clobbering the others.
+ */
+async function mergeFileMetadata(fileId: string, partial: Record<string, unknown>): Promise<void> {
+  await db
+    .update(files)
+    .set({
+      metadata: sql`COALESCE(${files.metadata}, '{}'::jsonb) || ${JSON.stringify(partial)}::jsonb`,
+      updatedAt: new Date(),
+    })
+    .where(eq(files.id, fileId));
+}
+
+/** Parse an ffprobe r_frame_rate like "30000/1001" into a number, safely. */
+function parseFrameRate(value: unknown): number {
+  if (typeof value !== 'string') return 0;
+  const [num, den] = value.split('/').map(Number);
+  if (!Number.isFinite(num)) return 0;
+  if (den === undefined) return num;
+  if (!Number.isFinite(den) || den === 0) return 0;
+  return num / den;
+}
 
 export interface MediaJobData {
   type: 'thumbnail' | 'exif' | 'video_info';
@@ -74,15 +102,7 @@ async function processThumbnailJob(
     // Update file metadata with small thumbnail path
     const smThumbnail = results.find((r) => r.size === 'sm');
     if (smThumbnail) {
-      await db
-        .update(files)
-        .set({
-          metadata: {
-            thumbnailPath: smThumbnail.storagePath,
-          },
-          updatedAt: new Date(),
-        })
-        .where(eq(files.id, fileId));
+      await mergeFileMetadata(fileId, { thumbnailPath: smThumbnail.storagePath });
     }
   }
 
@@ -105,24 +125,11 @@ async function processExifJob(
 
     // Update file metadata with dimensions
     if (exifData.width && exifData.height) {
-      const file = await db.query.files.findFirst({
-        where: eq(files.id, fileId),
+      await mergeFileMetadata(fileId, {
+        width: exifData.width,
+        height: exifData.height,
+        exif: exifData.rawExif,
       });
-
-      if (file) {
-        await db
-          .update(files)
-          .set({
-            metadata: {
-              ...(file.metadata || {}),
-              width: exifData.width,
-              height: exifData.height,
-              exif: exifData.rawExif,
-            },
-            updatedAt: new Date(),
-          })
-          .where(eq(files.id, fileId));
-      }
     }
   }
 
@@ -162,7 +169,7 @@ async function processVideoInfoJob(
           width: videoStream?.width || 0,
           height: videoStream?.height || 0,
           codec: videoStream?.codec_name || '',
-          framerate: eval(videoStream?.r_frame_rate) || 0,
+          framerate: parseFrameRate(videoStream?.r_frame_rate),
           hasAudio: !!audioStream,
         });
       });
@@ -171,27 +178,14 @@ async function processVideoInfoJob(
     await job.updateProgress(70);
 
     // Update file metadata
-    const file = await db.query.files.findFirst({
-      where: eq(files.id, fileId),
+    await mergeFileMetadata(fileId, {
+      duration: videoInfo.duration,
+      width: videoInfo.width,
+      height: videoInfo.height,
+      codec: videoInfo.codec,
+      framerate: videoInfo.framerate,
+      hasAudio: videoInfo.hasAudio,
     });
-
-    if (file) {
-      await db
-        .update(files)
-        .set({
-          metadata: {
-            ...(file.metadata || {}),
-            duration: videoInfo.duration,
-            width: videoInfo.width,
-            height: videoInfo.height,
-            codec: videoInfo.codec,
-            framerate: videoInfo.framerate,
-            hasAudio: videoInfo.hasAudio,
-          },
-          updatedAt: new Date(),
-        })
-        .where(eq(files.id, fileId));
-    }
   } catch (err) {
     logger.warn({ err, fileId }, 'ffprobe not available for video info extraction');
   }

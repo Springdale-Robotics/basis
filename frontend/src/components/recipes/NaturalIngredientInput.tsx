@@ -8,6 +8,7 @@ import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { useQuery } from '@tanstack/react-query';
 import { inventoryApi } from '@/api/inventory';
 import { recipesApi } from '@/api/recipes';
+import { getCsrfToken, CSRF_HEADER } from '@/api/client';
 import { getItemIcon } from '@/lib/inventory-constants';
 import { cn } from '@/lib/utils';
 
@@ -74,9 +75,13 @@ export function NaturalIngredientInput({
 
     try {
       // Parse with CRF via backend
+      const csrfToken = await getCsrfToken();
       const response = await fetch(`/api/v1/recipes/import/parse-text`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { [CSRF_HEADER]: csrfToken } : {}),
+        },
         credentials: 'include',
         body: JSON.stringify({ text }),
       });

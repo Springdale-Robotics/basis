@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
 import type { ParsedRecipe, ParsedIngredient } from '../../db/schema/recipes.js';
+import { assertPublicUrl } from '../../lib/ssrf.js';
 // Raw-string emission. URL extractors return ingredients as
 // `{name: rawString}` only — the downstream session re-parses each via CRF
 // (see processUrlImportSession). Keeping URL parsing regex-free here means
@@ -25,6 +26,9 @@ export interface UrlParseResult {
  */
 export async function parseRecipeFromUrl(url: string): Promise<UrlParseResult> {
   const warnings: string[] = [];
+
+  // Reject internal/loopback targets before fetching (SSRF guard).
+  await assertPublicUrl(url);
 
   // Fetch the URL
   let html: string;
