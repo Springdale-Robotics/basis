@@ -41,17 +41,70 @@ jobs:
         # module validates env on load (and exits if it's missing), so provide
         # syntactically-valid dummy values.
         #
-        # The CalDAV integration suite (test/caldav/*) is intentionally NOT run
-        # here: it needs a migrated + seeded DB and, more importantly, its tests
-        # mutate shared seed state and assert on accumulated sync-tokens, so they
-        # are not yet hermetic enough to run unattended. Making them isolated
-        # (per-test DB reset) is the prerequisite for adding them.
+        # The CalDAV integration suite runs in the `caldav` job below (it needs
+        # Postgres + Redis). This job stays infra-free for fast feedback.
         env:
           DATABASE_URL: postgres://ci:ci@localhost:5432/ci
           REDIS_URL: redis://localhost:6379
           SESSION_SECRET: ci-session-secret-not-used-in-ci-000000
           ENCRYPTION_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
         run: npx vitest run src/lib/units.test.ts src/lib/confidence.test.ts src/lib/semver.test.ts src/services/crf-ingredient-parser.test.ts test/lib/tailscale.test.ts
+        working-directory: backend
+
+  caldav:
+    name: CalDAV integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:ci@localhost:5432/ci
+      REDIS_URL: redis://localhost:6379
+      SESSION_SECRET: ci-session-secret-not-used-in-ci-000000
+      ENCRYPTION_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install deps
+        run: npm ci --no-audit --no-fund
+        working-directory: backend
+
+      # The suite creates its own isolated household/user/calendar per run, so a
+      # migrated DB is all it needs — no seed. It also exercises the sync
+      # triggers (migration 0004), so a fresh migrate that omitted them would
+      # fail here.
+      - name: Apply migrations
+        run: npm run db:migrate
+        working-directory: backend
+
+      - name: CalDAV tests
+        run: npx vitest run test/caldav
         working-directory: backend
 
   frontend:
