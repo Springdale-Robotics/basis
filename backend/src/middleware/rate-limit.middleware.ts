@@ -54,15 +54,42 @@ function defaultKeyGenerator(request: FastifyRequest): string {
   return `ip:${ip}`;
 }
 
-// Stricter rate limiter for auth endpoints
-export const authRateLimiter = createRateLimiter({
-  max: 10,
-  windowMs: 60 * 1000, // 1 minute
-  keyGenerator: (request) => {
-    const ip = request.ip || request.headers['x-forwarded-for'] || 'unknown';
-    return `auth:${ip}`;
-  },
-});
+// Stricter rate limiter for auth endpoints. Throttles per source IP AND per
+// targeted account (email in the request body), so credential brute-forcing a
+// single account can't be bypassed by rotating/spoofing the client IP (the app
+// runs behind proxies, so request.ip is not fully trustworthy). Per-account
+// throttling can briefly delay a legitimate user being targeted, but the window
+// is short and resets each minute.
+const AUTH_RATE_MAX = 10;
+const AUTH_RATE_WINDOW_MS = 60 * 1000; // 1 minute
+
+export async function authRateLimiter(
+  request: FastifyRequest,
+  _reply: FastifyReply
+): Promise<void> {
+  if (config.DISABLE_RATE_LIMIT) {
+    return;
+  }
+
+  const windowSeconds = Math.ceil(AUTH_RATE_WINDOW_MS / 1000);
+  const ip = request.ip || request.headers['x-forwarded-for'] || 'unknown';
+
+  const keys = [`ratelimit:auth:ip:${ip}`];
+  const body = request.body as { email?: unknown } | undefined;
+  if (typeof body?.email === 'string' && body.email) {
+    keys.push(`ratelimit:auth:email:${body.email.toLowerCase()}`);
+  }
+
+  for (const key of keys) {
+    const current = await redis.incr(key);
+    if (current === 1) {
+      await redis.expire(key, windowSeconds);
+    }
+    if (current > AUTH_RATE_MAX) {
+      throw Errors.rateLimit();
+    }
+  }
+}
 
 // Rate limiter for API endpoints
 export const apiRateLimiter = createRateLimiter();
