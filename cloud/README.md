@@ -47,8 +47,9 @@ End-to-end without a VPS (`lvh.me` and all its subdomains resolve to
 
 ```bash
 # 1. sign up + claim "smith" via http://localhost:5174, comp the account
-#    (server/scripts/comp.ts), generate a claim code — or exercise the boxes
-#    API directly. You end up with a tenantId + tunnelToken.
+#    (npm run comp -- --email you@example.com --tier streaming), generate a
+#    claim code — or exercise the boxes API directly. You end up with a
+#    tenantId + tunnelToken.
 # 2. run a stand-in for the customer box:
 ./dev.sh frpc-demo --token <tunnelToken> --tenant <tenantId> --subdomain smith --local-port 3000
 # 3. request through the tunnel:
@@ -101,6 +102,21 @@ To point a local main-app checkout at this control plane, run it with
 
 5. Watch the wildcard cert issue (`journalctl -u caddy -f`), then set
    `BACKUP_REMOTE_CMD` in `/opt/basis-cloud/.env` for offsite backups (below).
+
+## Comping accounts (beta)
+
+To give someone free access without Stripe: have them sign up and claim a
+subdomain at home-basis.com, then on the VPS:
+
+```bash
+sudo basis-comp --email family@example.com --tier streaming   # or --tier basic
+sudo basis-comp --email family@example.com --remove           # revoke the comp
+```
+
+The wrapper (installed by `provision.sh`) loads the service env and runs the
+CLI shipped in the release. Comped subscriptions carry no Stripe objects and
+the webhook state machine never touches them. Locally, use
+`npm run comp -- --email … --tier …` against the dev database.
 
 ## Release & update
 

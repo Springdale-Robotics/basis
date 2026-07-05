@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Comp/un-comp a Basis Remote account for beta access. Installed to
+# /usr/local/bin/basis-comp by provision.sh. Loads the service env (for
+# DATABASE_URL etc.) then runs the built CLI shipped in the release.
+#
+#   sudo basis-comp --email family@example.com --tier streaming
+#   sudo basis-comp --email family@example.com --remove
+set -euo pipefail
+
+ENV_FILE=/opt/basis-cloud/.env
+CLI=/opt/basis-cloud/current/server/dist/cli/comp.js
+
+[ -f "$ENV_FILE" ] || { echo "Missing $ENV_FILE — is this box provisioned?" >&2; exit 1; }
+[ -f "$CLI" ] || { echo "Missing $CLI — deploy the app first (update.sh)." >&2; exit 1; }
+
+# Load the generated environment (DATABASE_URL, Stripe keys the config
+# validates at startup, etc.) without echoing secrets.
+set -a
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+set +a
+
+exec node "$CLI" "$@"
