@@ -120,9 +120,18 @@ function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
               onChange={(event) => setPassword(event.target.value)}
               className={inputClasses()}
             />
-            {isSignup && (
+            {isSignup ? (
               <p className="mt-1.5 text-xs text-stone-500">
                 At least {MIN_PASSWORD_LENGTH} characters.
+              </p>
+            ) : (
+              <p className="mt-1.5 text-right text-sm">
+                <Link
+                  to="/app/forgot-password"
+                  className="font-medium text-pine-700 hover:text-pine-800"
+                >
+                  Forgot password?
+                </Link>
               </p>
             )}
           </div>

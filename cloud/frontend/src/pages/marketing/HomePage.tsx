@@ -4,16 +4,16 @@ import { GITHUB_URL, INSTALL_SNIPPET } from '@/lib/site';
 
 const pitch = [
   {
-    title: 'One install command, then UI for everything else.',
-    body: 'Paste a single command on a box you control. After that, every piece of configuration — remote access, updates, backups, even a system shell — happens in the browser. No SSH, no YAML.',
+    title: 'One command to install, then the browser for the rest.',
+    body: 'Run one command on your server. After that you set everything up in the browser: remote access, updates, backups, even a shell. No SSH, no YAML.',
   },
   {
-    title: 'Designed for households, not enterprises.',
-    body: 'Per-member permissions, group overrides, a rewards & chore chart mode you can turn off when the kids grow up, and sensible defaults for the way real families use things.',
+    title: 'Made for households.',
+    body: 'Per-member permissions and group overrides. There is a chore chart with rewards for the kids, and you can switch it off when you no longer need it.',
   },
   {
     title: 'Yours to keep.',
-    body: 'MIT-licensed, runs entirely on hardware you own. No cloud account required. Remote access is optional — and you choose how: Basis Remote, Tailscale, Cloudflare Tunnel, or your own domain.',
+    body: 'MIT-licensed and runs on your own hardware. No cloud account needed. Remote access is optional, and you pick how: Basis Remote, Tailscale, Cloudflare Tunnel, or your own domain.',
   },
 ];
 
@@ -28,7 +28,7 @@ const features = [
   },
   {
     title: 'Tasks & chores',
-    body: 'Assignable tasks with due dates and real recurrence. Rewards mode awards points for chores — built for households with kids, easy to switch off.',
+    body: 'Assignable tasks with due dates and recurrence. Rewards mode gives points for chores; handy with kids, easy to switch off.',
   },
   {
     title: 'Inventory & shopping list',
@@ -47,8 +47,8 @@ const features = [
     body: 'Admin, member, kid, visitor. Override any feature per user or per group: "kid can view but not edit the calendar."',
   },
   {
-    title: 'Remote access, minus the hard parts',
-    body: 'Pick a mode in settings and the guided setup does the rest — including installing what is missing — from a terminal you watch in the browser.',
+    title: 'Remote access setup',
+    body: 'Pick a mode in settings. The guided setup installs whatever is missing, in a terminal you watch in the browser.',
   },
 ];
 
@@ -60,7 +60,7 @@ function TerminalCard() {
         <span className="h-2.5 w-2.5 rounded-full bg-stone-700" aria-hidden="true" />
         <span className="h-2.5 w-2.5 rounded-full bg-stone-700" aria-hidden="true" />
         <span className="ml-2 font-mono text-xs text-stone-500">
-          your box in the closet
+          your server
         </span>
       </div>
       <div className="overflow-x-auto p-4 font-mono text-[13px] leading-relaxed">
@@ -93,13 +93,13 @@ export function HomePage() {
             Self-hosted · MIT-licensed
           </p>
           <h1 className="text-4xl font-bold leading-tight tracking-tight text-stone-900 sm:text-5xl">
-            Everything your household runs on, in one app you actually own.
+            Everything your household runs on, in one app you own.
           </h1>
           <p className="mt-5 max-w-xl text-lg leading-relaxed text-stone-600">
             Basis is a self-hosted household app: calendar with CalDAV sync,
             recipes with meal planning, chores and tasks, inventory and
-            shopping lists, photos and files. One install command on a box you
-            control — everything after that is configured in the web UI.
+            shopping lists, photos and files. Install it with one command, then
+            set everything up in the web UI.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
@@ -143,8 +143,8 @@ export function HomePage() {
           The whole household, one app
         </h2>
         <p className="mt-2 max-w-2xl text-stone-600">
-          Not a plugin platform, not a smart-home hub — the logistics your
-          family already runs on, done properly.
+          The everyday logistics a household runs on: calendars, meals, chores,
+          lists, and your files and photos.
         </p>
         <div className="mt-10 grid gap-px overflow-hidden rounded-xl border border-stone-200 bg-stone-200 sm:grid-cols-2 lg:grid-cols-4">
           {features.map((feature) => (
@@ -169,10 +169,9 @@ export function HomePage() {
                 Installed in about five minutes
               </h2>
               <p className="mt-3 leading-relaxed text-stone-600">
-                Runs comfortably on a Raspberry Pi 4, a mini PC, or that old
-                laptop in the drawer. Ubuntu or Debian, one command, and the
-                installer handles packages, the database, secrets, and systemd.
-                Updates and backups ship in the UI.
+                Runs on a Raspberry Pi 4, a mini PC, or a spare laptop. On
+                Ubuntu or Debian, one command sets up the packages, database,
+                secrets, and systemd. Updates and backups are in the UI.
               </p>
               <p className="mt-3 text-sm text-stone-500">
                 Prefer Docker? That works too —{' '}
@@ -204,7 +203,7 @@ export function HomePage() {
             Basis Remote
           </p>
           <h2 className="mt-4 text-3xl font-bold tracking-tight text-white sm:text-4xl">
-            Your house, at your family's name
+            Your house at your own address
           </h2>
           <div className="mx-auto mt-8 max-w-full overflow-x-auto">
             <p className="whitespace-nowrap font-mono text-2xl sm:text-4xl">
@@ -215,11 +214,10 @@ export function HomePage() {
             </p>
           </div>
           <p className="mx-auto mt-8 max-w-2xl leading-relaxed text-pine-100">
-            Basis Remote gives your install a permanent address on the
-            internet. Your box opens an outbound tunnel to our relay — no port
-            forwarding, no router settings, nothing exposed. Paste one code
-            into Basis settings and the calendar, recipes, and photos work from
-            anywhere, for everyone in the household.
+            Basis Remote gives your install its own web address. Your box makes
+            an outbound connection to our relay, so there is no port forwarding
+            or router setup. Paste one code into Basis settings, and everyone in
+            the household can reach it from anywhere.
           </p>
           <p className="mx-auto mt-4 max-w-2xl text-sm text-pine-300">
             From $20/year. Prefer to keep everything free? Tailscale mode is

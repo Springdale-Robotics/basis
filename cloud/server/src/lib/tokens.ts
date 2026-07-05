@@ -14,6 +14,11 @@ export function newTunnelToken(): string {
   return `brt_${randomBytes(32).toString('base64url')}`;
 }
 
+/** Password-reset token: 32 random bytes, base64url. Only its sha256 is stored. */
+export function newResetToken(): string {
+  return randomBytes(32).toString('base64url');
+}
+
 /** Claim code XXXX-XXXX-XXXX from an unambiguous alphabet (no 0/O/1/I). */
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 

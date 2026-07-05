@@ -10,6 +10,8 @@ import { HomePage } from '@/pages/marketing/HomePage';
 import { PricingPage } from '@/pages/marketing/PricingPage';
 import { SecurityPage } from '@/pages/marketing/SecurityPage';
 import { LoginPage, SignupPage } from '@/pages/app/AuthPage';
+import { ForgotPasswordPage } from '@/pages/app/ForgotPasswordPage';
+import { ResetPasswordPage } from '@/pages/app/ResetPasswordPage';
 import { DashboardPage } from '@/pages/app/DashboardPage';
 
 function ScrollToTop() {
@@ -58,6 +60,8 @@ export function App() {
 
         <Route path="/app/login" element={<LoginPage />} />
         <Route path="/app/signup" element={<SignupPage />} />
+        <Route path="/app/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/app/reset-password" element={<ResetPasswordPage />} />
         <Route
           path="/app"
           element={

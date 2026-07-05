@@ -3,11 +3,20 @@ import { config } from '../../config/index.js';
 import { fail } from '../../lib/errors.js';
 import { authMiddleware } from '../../middleware/auth.middleware.js';
 import { rateLimit } from '../../middleware/rate-limit.middleware.js';
-import { loginSchema, signupSchema } from './auth.schema.js';
+import { logger } from '../../lib/logger.js';
+import { sendMail } from '../../lib/email.js';
+import {
+  forgotPasswordSchema,
+  loginSchema,
+  resetPasswordSchema,
+  signupSchema,
+} from './auth.schema.js';
 import {
   createAccount,
+  createPasswordResetToken,
   createSession,
   destroySession,
+  resetPassword,
   verifyCredentials,
 } from './auth.service.js';
 
@@ -76,6 +85,58 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     reply.clearCookie('session', { path: '/' });
     return { success: true, data: {} };
   });
+
+  app.post(
+    '/forgot-password',
+    { preHandler: [authLimiter] },
+    async (request) => {
+      const parsed = forgotPasswordSchema.safeParse(request.body);
+      // Always respond the same way, even on bad input — no enumeration signal.
+      if (parsed.success) {
+        const result = await createPasswordResetToken(parsed.data.email);
+        if (result) {
+          const link = `${config.APP_ORIGIN}/app/reset-password?token=${encodeURIComponent(result.token)}`;
+          try {
+            await sendMail({
+              to: result.account.email,
+              subject: 'Reset your Basis Remote password',
+              text:
+                `Hi,\n\n` +
+                `We got a request to reset the password for your Basis Remote account.\n` +
+                `Use this link to set a new password:\n\n` +
+                `${link}\n\n` +
+                `This link expires in 1 hour. If you didn't request this, you can ignore this email — your password won't change.\n\n` +
+                `— Basis Remote`,
+            });
+          } catch (error) {
+            logger.error({ err: error }, 'Failed to send password-reset email');
+          }
+        }
+      }
+      return { success: true, data: { sent: true } };
+    },
+  );
+
+  app.post(
+    '/reset-password',
+    { preHandler: [authLimiter] },
+    async (request, reply) => {
+      const parsed = resetPasswordSchema.safeParse(request.body);
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        const code = issue?.path[0] === 'password' ? 'WEAK_PASSWORD' : 'INVALID_INPUT';
+        return fail(reply, 400, code, issue?.message ?? 'Invalid input');
+      }
+      const result = await resetPassword(parsed.data.token, parsed.data.password);
+      if (result === 'expired') {
+        return fail(reply, 400, 'RESET_TOKEN_EXPIRED', 'This reset link has expired');
+      }
+      if (result === 'invalid') {
+        return fail(reply, 400, 'RESET_TOKEN_INVALID', 'This reset link is invalid or already used');
+      }
+      return { success: true, data: {} };
+    },
+  );
 
   app.get('/me', { preHandler: [authMiddleware] }, async (request) => {
     return {

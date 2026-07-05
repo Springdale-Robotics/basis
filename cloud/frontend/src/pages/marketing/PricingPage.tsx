@@ -6,7 +6,7 @@ const faqs = [
   {
     question: 'What happens when I hit the transfer cap?',
     answer:
-      'On Basic, transfers are throttled to 4 Mbps for the rest of the month — the app stays perfectly usable for calendars, tasks, recipes, and photos, but streaming your movie library becomes impractical. Nothing is cut off, and the cap resets on the first of the month. Streaming’s 2 TB is a fair-use cap: we don’t auto-throttle, and we’ll reach out before doing anything if usage is consistently far beyond it.',
+      'On Basic, transfers are throttled to 4 Mbps for the rest of the month. The app stays usable for calendars, tasks, recipes, and photos, but streaming your movie library gets impractical. Nothing is cut off, and the cap resets on the first of the month. Streaming’s 2 TB is a fair-use cap: we don’t auto-throttle, and we’ll get in touch before doing anything if usage stays far beyond it.',
   },
   {
     question: 'What happens if I cancel?',

@@ -65,7 +65,7 @@ done
 [ "$EUID" -eq 0 ] || err "Run as root: sudo bash $0 ..."
 for f in frps.toml Caddyfile basis-cloud.service frps.service \
          basis-cloud-backup.service basis-cloud-backup.timer backup.sh \
-         sudoers-basis-cloud; do
+         basis-comp sudoers-basis-cloud; do
   [ -f "$DEPLOY_DIR/$f" ] || err "Missing $DEPLOY_DIR/$f — run from a full cloud/deploy/ directory"
 done
 
@@ -275,6 +275,7 @@ cp "$DEPLOY_DIR/frps.service"               /etc/systemd/system/
 cp "$DEPLOY_DIR/basis-cloud-backup.service" /etc/systemd/system/
 cp "$DEPLOY_DIR/basis-cloud-backup.timer"   /etc/systemd/system/
 install -m 755 "$DEPLOY_DIR/backup.sh" /usr/local/bin/basis-cloud-backup
+install -m 755 "$DEPLOY_DIR/basis-comp" /usr/local/bin/basis-comp
 systemctl daemon-reload
 
 log "Installing /etc/sudoers.d/basis-cloud"

@@ -25,6 +25,15 @@ const envSchema = z.object({
   /** When set, serve the built SPA (cloud/frontend/dist) with index.html fallback. */
   FRONTEND_DIST: z.string().optional(),
 
+  // Email (SMTP) — optional. When unset, outbound mail (e.g. password-reset
+  // links) is logged instead of sent, so dev and an unconfigured prod still
+  // function. Configure with a single connection URL, e.g.
+  //   smtps://user:pass@smtp.example.com:465   (implicit TLS)
+  //   smtp://user:pass@smtp.example.com:587     (STARTTLS)
+  SMTP_URL: z.string().optional(),
+  /** From header on outbound mail. */
+  EMAIL_FROM: z.string().default('Basis Remote <noreply@home-basis.com>'),
+
   // Session
   SESSION_MAX_AGE_MS: z.coerce.number().default(604800000), // 7 days
 

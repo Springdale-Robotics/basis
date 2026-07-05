@@ -21,3 +21,14 @@ export function logout() {
 export function getMe() {
   return api.get<{ account: Account }>('/api/auth/me');
 }
+
+export function forgotPassword(email: string) {
+  return api.post<{ sent: true }>('/api/auth/forgot-password', { email });
+}
+
+export function resetPassword(token: string, password: string) {
+  return api.post<Record<string, never>>('/api/auth/reset-password', {
+    token,
+    password,
+  });
+}
