@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
 # Comp/un-comp a Basis Remote account for beta access. Installed to
-# /usr/local/bin/basis-comp by provision.sh. Loads the service env (for
-# DATABASE_URL etc.) then runs the built CLI shipped in the release.
+# /usr/local/bin/basis-comp by provision.sh.
 #
 #   sudo basis-comp --email family@example.com --tier streaming
 #   sudo basis-comp --email family@example.com --remove
+#
+# The env file is systemd-format (literal KEY=VALUE, values may contain spaces
+# and shell metacharacters like the "<>" in EMAIL_FROM), so we must NOT bash-
+# source it. Instead we run from /opt/basis-cloud so the CLI's dotenv loads it,
+# parsing values safely without shell evaluation.
 set -euo pipefail
 
-ENV_FILE=/opt/basis-cloud/.env
-CLI=/opt/basis-cloud/current/server/dist/cli/comp.js
+APP_ROOT=/opt/basis-cloud
+ENV_FILE="$APP_ROOT/.env"
+CLI="$APP_ROOT/current/server/dist/cli/comp.js"
 
 [ -f "$ENV_FILE" ] || { echo "Missing $ENV_FILE — is this box provisioned?" >&2; exit 1; }
 [ -f "$CLI" ] || { echo "Missing $CLI — deploy the app first (update.sh)." >&2; exit 1; }
 
-# Load the generated environment (DATABASE_URL, Stripe keys the config
-# validates at startup, etc.) without echoing secrets.
-set -a
-# shellcheck disable=SC1090
-. "$ENV_FILE"
-set +a
-
+cd "$APP_ROOT"   # so dotenv (imported by the CLI's config) finds ./.env
 exec node "$CLI" "$@"
