@@ -29,7 +29,7 @@
     "pino": "^8.19.0",
     "postgres": "^3.4.4",
     "stripe": "^17.5.0",
-    "zod": "^3.22.5"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
