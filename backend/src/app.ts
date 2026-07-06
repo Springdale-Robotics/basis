@@ -12,6 +12,7 @@ import { resolve as resolvePath, sep } from 'path';
 import { existsSync } from 'fs';
 
 import { config, isDev } from './config/index.js';
+import { beginRequestDbContext } from './config/database.js';
 import { logger } from './lib/logger.js';
 import { requestIdMiddleware } from './middleware/request-id.middleware.js';
 import { csrfMiddleware, issueCsrfToken } from './middleware/csrf.middleware.js';
@@ -199,9 +200,29 @@ export async function buildApp(): Promise<FastifyInstance> {
     });
     await apiScope.register(fastifyCompress);
 
+    // Establish the per-request DB context holder as early as possible. Must be
+    // an onRequest hook so the AsyncLocalStorage store propagates to the
+    // handler; auth fills in the RLS-scoped connection once it knows the
+    // household. Until then (and for unauthenticated routes) db uses the base
+    // handle. See config/database.ts.
+    apiScope.addHook('onRequest', async () => {
+      beginRequestDbContext();
+    });
+
     // CSRF: seed a token cookie on safe requests, enforce the double-submit
     // header on state-changing ones. Scoped to the browser API only.
     apiScope.addHook('onRequest', csrfMiddleware);
+
+    // Release the request's RLS-scoped DB connection (reserved when auth
+    // resolved the household). onResponse fires at the end of every request —
+    // success or error — so the reserved connection is always returned to the
+    // pool with its role/GUC reset.
+    apiScope.addHook('onResponse', async (request) => {
+      if (request.rlsRelease) {
+        await request.rlsRelease();
+        request.rlsRelease = undefined;
+      }
+    });
 
     // Bootstrap endpoint so the SPA can obtain a token before its first
     // mutation (and refresh it after a 403). Also sets the cookie.

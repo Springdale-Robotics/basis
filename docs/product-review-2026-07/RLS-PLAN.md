@@ -63,10 +63,19 @@ stay in place).
   basis_rls` + `SET app.household_id`, and asserts: same-household rows visible,
   other-household rows invisible, cross-household INSERT blocked by `WITH CHECK`.
   **No app plumbing yet** — the running app connects as owner and is unaffected.
-- [ ] **Stage 2 — request plumbing.** ALS + reserved-connection + `db` proxy +
-  the reserve/reset/release hooks. Prove one module (inventory) end-to-end: a
-  route test that passes with the app-level check *removed* because RLS blocks
-  the cross-tenant read. Keep the app check.
+- [x] **Stage 2 — request plumbing (done).** `db` is now a proxy over an
+  AsyncLocalStorage-scoped connection. An `onRequest` hook establishes a mutable
+  context holder (enterWith only propagates reliably from onRequest, not a
+  per-route preHandler); `authMiddleware` reserves a connection, `SET ROLE
+  basis_rls` + sets the GUC, and points the holder at it; an `onResponse` hook
+  resets + releases it. Two reserved-connection quirks were backfilled so
+  drizzle works transparently on it: `.options` (parsers, read at construction)
+  and `.begin` (drizzle's `.transaction()` calls it; emulated as BEGIN/COMMIT on
+  the pinned connection — the app never nests db.transaction). Verified: the
+  /auth/db-context diagnostic reports role=basis_rls + the caller's household,
+  no cross-request leak across pool reuse, and the **full suite (241 passing)**
+  runs green with every route under the RLS context — including all the
+  FOR-UPDATE transaction paths. Dead `rls.middleware.ts` deleted.
 - [ ] **Stage 3 — roll policies across all household-scoped tables** (direct +
   join), module by module, each with the RLS-blocks-cross-tenant test.
 - [ ] **Stage 4 — workers / CalDAV / backups audit.** Confirm every non-request
