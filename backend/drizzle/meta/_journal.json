@@ -43,6 +43,13 @@
       "when": 1783307100000,
       "tag": "0005_rewards_unique_user",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783307200000,
+      "tag": "0006_synced_calendars_readonly",
+      "breakpoints": true
     }
   ]
 }

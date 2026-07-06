@@ -6,6 +6,7 @@ import { eq, and } from 'drizzle-orm';
 import { config } from '../../config/index.js';
 import { encrypt, decrypt } from '../../lib/crypto.js';
 import { logger } from '../../lib/logger.js';
+import { syncedEventUnchanged, missingEventInsideWindow } from './sync-reconcile.js';
 
 const SCOPES = [
   'Calendars.Read',
@@ -389,13 +390,16 @@ export async function syncCalendarFromOutlook(
     };
 
     if (existing) {
-      // Update existing event
-      await db
-        .update(calendarEvents)
-        .set(eventData)
-        .where(eq(calendarEvents.id, existing.id));
       externalIdToDbId[outlookEvent.id] = existing.id;
-      updated++;
+      // Skip no-op writes: rewriting unchanged rows churns revisions/ETags
+      // and appends calendar_changes journal rows on every hourly sync.
+      if (!syncedEventUnchanged(existing, eventData)) {
+        await db
+          .update(calendarEvents)
+          .set(eventData)
+          .where(eq(calendarEvents.id, existing.id));
+        updated++;
+      }
     } else {
       // Create new event
       const [inserted] = await db.insert(calendarEvents).values({
@@ -453,12 +457,13 @@ export async function syncCalendarFromOutlook(
     };
 
     if (existing) {
-      // Update existing exception
-      await db
-        .update(calendarEvents)
-        .set(eventData)
-        .where(eq(calendarEvents.id, existing.id));
-      updated++;
+      if (!syncedEventUnchanged(existing, eventData)) {
+        await db
+          .update(calendarEvents)
+          .set(eventData)
+          .where(eq(calendarEvents.id, existing.id));
+        updated++;
+      }
     } else {
       // Create new exception
       await db.insert(calendarEvents).values({
@@ -469,9 +474,16 @@ export async function syncCalendarFromOutlook(
     }
   }
 
-  // Delete events that no longer exist in Outlook
+  // Delete events the provider no longer has — but ONLY inside the fetched
+  // window. We only asked for a window of events, so absence outside it means
+  // nothing; deleting on absence purged all synced history older than the
+  // window on every run.
   for (const existing of existingEvents) {
-    if (existing.externalId && !outlookEventIds.has(existing.externalId)) {
+    if (
+      existing.externalId &&
+      !outlookEventIds.has(existing.externalId) &&
+      missingEventInsideWindow(existing, threeMonthsAgo, null)
+    ) {
       await db.delete(calendarEvents).where(eq(calendarEvents.id, existing.id));
       deleted++;
     }
