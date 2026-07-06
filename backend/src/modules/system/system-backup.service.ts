@@ -225,14 +225,40 @@ export async function copyBackupOffHost(filename: string): Promise<boolean> {
   return true;
 }
 
+/** Prefix the update script gives pre-update rollback snapshots. */
+export const PRE_UPDATE_PREFIX = 'pre-update-';
+
 /**
- * Delete all but the `keep` newest backups. Returns the filenames removed.
- * A non-positive `keep` is treated as "keep everything" (no pruning).
+ * Delete all but the `keep` newest *nightly* backups. Returns the filenames
+ * removed.
+ *
+ * Pre-update rollback snapshots (`pre-update-*`) are excluded: they share the
+ * `.sql.gz` suffix and directory with nightly dumps, so pruning by recency
+ * across everything silently aged out the documented rollback point in ≤14
+ * days (and a burst of updates crowded out nightly backups). They have their
+ * own retention via prunePreUpdateSnapshots.
  */
 export async function pruneBackups(keep: number): Promise<string[]> {
   if (keep <= 0) return [];
-  const backups = await listBackups(); // newest first
+  const backups = (await listBackups()).filter(
+    (b) => !b.filename.startsWith(PRE_UPDATE_PREFIX)
+  ); // newest first
   const stale = backups.slice(keep);
+  await Promise.all(
+    stale.map((b) => fs.unlink(resolvePath(BACKUP_DIR, b.filename)).catch(() => {}))
+  );
+  return stale.map((b) => b.filename);
+}
+
+/**
+ * Retention for pre-update rollback snapshots, independent of nightly backups.
+ */
+export async function prunePreUpdateSnapshots(keep: number): Promise<string[]> {
+  if (keep <= 0) return [];
+  const snapshots = (await listBackups()).filter((b) =>
+    b.filename.startsWith(PRE_UPDATE_PREFIX)
+  ); // newest first
+  const stale = snapshots.slice(keep);
   await Promise.all(
     stale.map((b) => fs.unlink(resolvePath(BACKUP_DIR, b.filename)).catch(() => {}))
   );
