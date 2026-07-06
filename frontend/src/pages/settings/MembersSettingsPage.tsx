@@ -10,6 +10,7 @@ import {
   Link as LinkIcon,
   Clock,
   Check,
+  KeyRound,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -40,7 +41,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { householdsApi, type MemberInvite } from '@/api/households';
+import { usersApi } from '@/api/users';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
 import { copyToClipboard } from '@/lib/clipboard';
@@ -84,9 +87,11 @@ export function MembersSettingsPage() {
   const [changeRoleDialogOpen, setChangeRoleDialogOpen] = useState(false);
   const [removeMemberDialogOpen, setRemoveMemberDialogOpen] = useState(false);
   const [revokeInviteDialogOpen, setRevokeInviteDialogOpen] = useState(false);
+  const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = useState(false);
   const [selectedMember, setSelectedMember] = useState<User | null>(null);
   const [selectedInvite, setSelectedInvite] = useState<MemberInvite | null>(null);
   const [newRole, setNewRole] = useState<UserRole>('member');
+  const [newPassword, setNewPassword] = useState('');
   const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null);
 
   const isAdmin = user?.role === 'admin';
@@ -151,6 +156,24 @@ export function MembersSettingsPage() {
     },
   });
 
+  // Admin reset of a member's password
+  const resetPasswordMutation = useMutation({
+    mutationFn: ({ userId, password }: { userId: string; password: string }) =>
+      usersApi.resetPassword(userId, password),
+    onSuccess: () => {
+      toast({
+        title: 'Password reset',
+        description: 'The member was signed out everywhere. Share the new password with them.',
+      });
+      setResetPasswordDialogOpen(false);
+      setSelectedMember(null);
+      setNewPassword('');
+    },
+    onError: (err) => {
+      toast({ title: 'Error', description: getErrorMessage(err), variant: 'destructive' });
+    },
+  });
+
   // Revoke invite mutation
   const revokeInviteMutation = useMutation({
     mutationFn: householdsApi.revokeInvite,
@@ -185,6 +208,12 @@ export function MembersSettingsPage() {
   const handleOpenRemoveMember = (member: User) => {
     setSelectedMember(member);
     setRemoveMemberDialogOpen(true);
+  };
+
+  const handleOpenResetPassword = (member: User) => {
+    setSelectedMember(member);
+    setNewPassword('');
+    setResetPasswordDialogOpen(true);
   };
 
   const handleOpenRevokeInvite = (invite: MemberInvite) => {
@@ -246,6 +275,10 @@ export function MembersSettingsPage() {
                         <DropdownMenuItem onClick={() => handleOpenChangeRole(member)}>
                           <Shield className="mr-2 h-4 w-4" />
                           Change Role
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleOpenResetPassword(member)}>
+                          <KeyRound className="mr-2 h-4 w-4" />
+                          Reset Password
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
@@ -440,6 +473,53 @@ export function MembersSettingsPage() {
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               )}
               Update Role
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Password Dialog */}
+      <Dialog open={resetPasswordDialogOpen} onOpenChange={setResetPasswordDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reset Password</DialogTitle>
+            <DialogDescription>
+              Set a new password for {selectedMember?.displayName}. They'll be signed
+              out of all their devices — share the new password with them directly.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="new-member-password">New password</Label>
+              <Input
+                id="new-member-password"
+                type="text"
+                autoComplete="off"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="At least 8 characters"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResetPasswordDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (selectedMember) {
+                  resetPasswordMutation.mutate({
+                    userId: selectedMember.id,
+                    password: newPassword,
+                  });
+                }
+              }}
+              disabled={resetPasswordMutation.isPending || newPassword.length < 8}
+            >
+              {resetPasswordMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Reset Password
             </Button>
           </DialogFooter>
         </DialogContent>

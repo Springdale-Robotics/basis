@@ -1,13 +1,12 @@
 import argon2 from 'argon2';
 import { randomBytes } from 'crypto';
 import { db } from '../../config/database.js';
-import { redis } from '../../config/redis.js';
 import { users, sessions, households, memberInvites } from '../../db/schema/index.js';
 import { eq, and, ne } from 'drizzle-orm';
 import { config } from '../../config/index.js';
 import { Errors } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
-import type { LoginInput, RegisterInput, RegisterWithInviteInput } from './auth.schema.js';
+import type { LoginInput, RegisterWithInviteInput } from './auth.schema.js';
 import type { User, Session, Household, MemberInvite } from '../../db/schema/index.js';
 
 export interface AuthResult {
@@ -54,63 +53,6 @@ export async function login(
 
   // Return user without password hash
   const { passwordHash, ...userWithoutPassword } = user;
-
-  return {
-    user: userWithoutPassword,
-    session,
-    household,
-  };
-}
-
-export async function register(input: RegisterInput): Promise<AuthResult> {
-  const { email, password, displayName, householdId } = input;
-
-  // Check if household exists
-  const household = await db.query.households.findFirst({
-    where: eq(households.id, householdId),
-  });
-
-  if (!household) {
-    throw Errors.notFound('Household', householdId);
-  }
-
-  // Email must be globally unique (login looks a user up by email alone).
-  const existingUser = await db.query.users.findFirst({
-    where: eq(users.email, email.toLowerCase()),
-  });
-
-  if (existingUser) {
-    throw Errors.duplicate('email');
-  }
-
-  // Hash password
-  const passwordHash = await argon2.hash(password);
-
-  // Check if this is the first user (make them admin)
-  const existingUsers = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.householdId, householdId))
-    .limit(1);
-
-  const isFirstUser = existingUsers.length === 0;
-
-  // Create user
-  const [user] = await db
-    .insert(users)
-    .values({
-      householdId,
-      email: email.toLowerCase(),
-      passwordHash,
-      displayName,
-      role: isFirstUser ? 'admin' : 'member',
-    })
-    .returning();
-
-  // Create session
-  const session = await createSession(user.id);
-
-  const { passwordHash: _, ...userWithoutPassword } = user;
 
   return {
     user: userWithoutPassword,
@@ -197,33 +139,24 @@ export async function revokeSession(
     .where(and(eq(sessions.id, sessionId), eq(sessions.userId, userId)));
 }
 
-export async function createPasswordResetToken(email: string): Promise<string | null> {
-  const user = await db.query.users.findFirst({
-    where: eq(users.email, email.toLowerCase()),
+/**
+ * Admin-initiated password reset for a member of the same household.
+ *
+ * This is the recovery path for a locked-out family member: the instance has
+ * no mailer, so emailed reset links can't work. Revokes every session of the
+ * target user so a stolen session doesn't survive the reset.
+ */
+export async function adminResetPassword(
+  adminHouseholdId: string,
+  targetUserId: string,
+  newPassword: string
+): Promise<void> {
+  const target = await db.query.users.findFirst({
+    where: and(eq(users.id, targetUserId), eq(users.householdId, adminHouseholdId)),
   });
 
-  if (!user) {
-    return null;
-  }
-
-  const token = randomBytes(32).toString('hex');
-  const key = `password-reset:${token}`;
-
-  // Store token in Redis for 1 hour
-  await redis.set(key, user.id, 'EX', 3600);
-
-  return token;
-}
-
-export async function resetPassword(
-  token: string,
-  newPassword: string
-): Promise<boolean> {
-  const key = `password-reset:${token}`;
-  const userId = await redis.get(key);
-
-  if (!userId) {
-    return false;
+  if (!target) {
+    throw Errors.notFound('User');
   }
 
   const passwordHash = await argon2.hash(newPassword);
@@ -231,15 +164,9 @@ export async function resetPassword(
   await db
     .update(users)
     .set({ passwordHash, updatedAt: new Date() })
-    .where(eq(users.id, userId));
+    .where(eq(users.id, targetUserId));
 
-  // Delete token
-  await redis.del(key);
-
-  // Invalidate all sessions
-  await db.delete(sessions).where(eq(sessions.userId, userId));
-
-  return true;
+  await db.delete(sessions).where(eq(sessions.userId, targetUserId));
 }
 
 export async function changePassword(

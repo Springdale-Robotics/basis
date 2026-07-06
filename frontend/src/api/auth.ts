@@ -12,13 +12,6 @@ export interface LoginResponse {
   household: Household;
 }
 
-export interface RegisterRequest {
-  email: string;
-  password: string;
-  displayName: string;
-  householdId: string;
-}
-
 export interface RegisterWithInviteRequest {
   inviteCode: string;
   email: string;
@@ -32,15 +25,6 @@ export interface ValidateInviteResponse {
     householdName: string;
     expiresAt: string;
   };
-}
-
-export interface ForgotPasswordRequest {
-  email: string;
-}
-
-export interface ResetPasswordRequest {
-  token: string;
-  password: string;
 }
 
 export interface Session {
@@ -59,9 +43,6 @@ export const authApi = {
   logout: () =>
     apiPost<{ message: string }>('/auth/logout', {}),
 
-  register: (data: RegisterRequest) =>
-    apiPost<LoginResponse>('/auth/register', data),
-
   validateInvite: (code: string) =>
     apiGet<ValidateInviteResponse>(`/auth/invite/${code}`),
 
@@ -70,12 +51,6 @@ export const authApi = {
 
   me: () =>
     apiGet<{ user: User }>('/auth/me'),
-
-  forgotPassword: (data: ForgotPasswordRequest) =>
-    apiPost<{ message: string }>('/auth/forgot-password', data),
-
-  resetPassword: (data: ResetPasswordRequest) =>
-    apiPost<{ message: string }>('/auth/reset-password', data),
 
   refreshSession: () =>
     apiPost<{ expiresAt: string }>('/auth/refresh', {}),

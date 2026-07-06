@@ -23,9 +23,7 @@ const lazyPage = <T extends Record<string, React.ComponentType<unknown>>>(
   name: keyof T
 ) => lazy(() => loader().then((m) => ({ default: m[name] })));
 
-const RegisterPage = lazyPage(() => import('./pages/auth/RegisterPage'), 'RegisterPage');
 const ForgotPasswordPage = lazyPage(() => import('./pages/auth/ForgotPasswordPage'), 'ForgotPasswordPage');
-const ResetPasswordPage = lazyPage(() => import('./pages/auth/ResetPasswordPage'), 'ResetPasswordPage');
 const JoinPage = lazyPage(() => import('./pages/auth/JoinPage'), 'JoinPage');
 const SetupPage = lazyPage(() => import('./pages/setup/SetupPage'), 'SetupPage');
 const DashboardPage = lazyPage(() => import('./pages/dashboard/DashboardPage'), 'DashboardPage');
@@ -65,10 +63,8 @@ export function App() {
               <Routes>
                 {/* Public routes */}
                 <Route path="/login" element={<LoginPage />} />
-                <Route path="/register" element={<RegisterPage />} />
                 <Route path="/join/:inviteCode" element={<JoinPage />} />
                 <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-                <Route path="/reset-password" element={<ResetPasswordPage />} />
                 <Route path="/setup" element={<SetupPage />} />
 
                 {/* Protected routes */}
