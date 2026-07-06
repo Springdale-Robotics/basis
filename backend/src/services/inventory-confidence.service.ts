@@ -22,6 +22,7 @@ import {
   type DepletionPlan,
 } from '../lib/confidence.js';
 import { convert, resolveUnit } from '../lib/units.js';
+import { sumStock } from '../lib/stock-total.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,16 +78,56 @@ export async function getItemConfidence(
     };
   }
 
-  // Group by area and compute per-tranche confidence, then aggregate
-  // Use the first area for confidence calc (if items span areas, we take a weighted approach)
-  // For now, compute per-tranche confidence using each tranche's own area
+  // Compute per-tranche confidence using each tranche's own area, weighting
+  // by quantity *converted to the item's default unit* — a raw mixed-unit sum
+  // (500 g + 1 kg = "501 g") corrupted every consumer of totalQuantity.
   const now = new Date();
+  const confidence = aggregateTrancheConfidence(
+    stockEntries.map((entry) => ({ stock: entry.stock, area: entry.area })),
+    item,
+    now,
+  );
+
+  return {
+    itemId,
+    confidence: confidence.confidence,
+    band: getConfidenceBand(confidence.confidence, thresholds),
+    totalQuantity: confidence.totalQuantity,
+    unit: item.defaultUnit || 'each',
+  };
+}
+
+/**
+ * Shared tranche aggregation for the single-item and household-map paths.
+ * Quantities are converted to the item's default unit via the shared
+ * lib/stock-total logic; tranches that can't be bridged count at face value
+ * (best-effort) so an unconvertible unit never makes stock disappear.
+ */
+function aggregateTrancheConfidence(
+  entries: Array<{
+    stock: typeof inventoryStock.$inferSelect;
+    area: typeof inventoryAreas.$inferSelect;
+  }>,
+  item: { defaultUnit: string | null; density: string | null; quantityUnitSizes: unknown },
+  now: Date,
+): { confidence: number; totalQuantity: number } {
+  const density = item.density ? parseFloat(item.density) : null;
+  const sizes = (item.quantityUnitSizes as Record<string, { quantity: number; unit: string }>) || {};
+
   let totalQuantity = 0;
   let weightedConfSum = 0;
 
-  for (const entry of stockEntries) {
+  for (const entry of entries) {
     const qty = parseFloat(entry.stock.quantity);
     if (qty <= 0) continue;
+
+    const { convertedTotal, unconvertedRaw } = sumStock(
+      [{ quantity: qty, unit: entry.stock.unit }],
+      item.defaultUnit,
+      density,
+      sizes,
+    );
+    const qtyInDefaultUnit = convertedTotal + unconvertedRaw;
 
     const area: AreaInfo = {
       locationType: entry.area.locationType as 'pantry' | 'fridge' | 'freezer' | 'other',
@@ -105,18 +146,13 @@ export async function getItemConfidence(
     };
 
     const conf = calculateTrancheConfidence(tranche, area, now);
-    weightedConfSum += conf * qty;
-    totalQuantity += qty;
+    weightedConfSum += conf * qtyInDefaultUnit;
+    totalQuantity += qtyInDefaultUnit;
   }
 
-  const confidence = totalQuantity > 0 ? Math.round(weightedConfSum / totalQuantity) : 0;
-
   return {
-    itemId,
-    confidence,
-    band: getConfidenceBand(confidence, thresholds),
+    confidence: totalQuantity > 0 ? Math.round(weightedConfSum / totalQuantity) : 0,
     totalQuantity,
-    unit: item.defaultUnit || 'each',
   };
 }
 
@@ -173,40 +209,12 @@ export async function getInventoryConfidenceMap(
       continue;
     }
 
-    let totalQuantity = 0;
-    let weightedConfSum = 0;
-
-    for (const entry of entries) {
-      const qty = parseFloat(entry.stock.quantity);
-      if (qty <= 0) continue;
-
-      const area: AreaInfo = {
-        locationType: entry.area.locationType as 'pantry' | 'fridge' | 'freezer' | 'other',
-        confidenceDecayRate: entry.area.confidenceDecayRate ? parseFloat(entry.area.confidenceDecayRate) : null,
-      };
-
-      const tranche: Tranche = {
-        id: entry.stock.id,
-        quantity: qty,
-        unit: entry.stock.unit,
-        confidence: entry.stock.confidence,
-        addedAt: entry.stock.addedAt,
-        verifiedAt: entry.stock.verifiedAt,
-        expiryDate: entry.stock.expiryDate ? new Date(entry.stock.expiryDate) : null,
-        source: entry.stock.source,
-      };
-
-      const conf = calculateTrancheConfidence(tranche, area, now);
-      weightedConfSum += conf * qty;
-      totalQuantity += qty;
-    }
-
-    const confidence = totalQuantity > 0 ? Math.round(weightedConfSum / totalQuantity) : 0;
+    const aggregated = aggregateTrancheConfidence(entries, item, now);
     results.set(item.id, {
       itemId: item.id,
-      confidence,
-      band: getConfidenceBand(confidence, thresholds),
-      totalQuantity,
+      confidence: aggregated.confidence,
+      band: getConfidenceBand(aggregated.confidence, thresholds),
+      totalQuantity: aggregated.totalQuantity,
       unit: item.defaultUnit || 'each',
     });
   }

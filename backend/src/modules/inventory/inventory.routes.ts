@@ -8,6 +8,7 @@ import { requireInventoryAccess, requireShoppingListAccess } from '../../middlew
 import { Errors } from '../../lib/errors.js';
 import { randomBytes } from 'crypto';
 import { convertWithDensity, normalizeUnit, getUnitCategory, isNegligible, type QuantityUnitSizes } from '../../lib/unit-conversions.js';
+import { sumStock } from '../../lib/stock-total.js';
 import { inArray } from 'drizzle-orm';
 import {
   getItemConfidence,
@@ -19,8 +20,10 @@ import {
 import { emitInventoryEvent, emitShoppingListUpdate } from '../../websocket/events.js';
 
 /**
- * Calculate total stock quantity for an item, converting all stock entries to the target unit.
- * Uses density for weight↔volume and quantityUnitSizes for custom count units.
+ * Calculate total stock quantity for an item, converting all stock entries to
+ * the target unit (shared implementation in lib/stock-total.ts). The total
+ * counts convertible tranches only; unconverted units are reported so the UI
+ * can flag them.
  */
 function calculateTotalStockWithConversions(
   stockEntries: Array<{ quantity: string; unit: string | null }>,
@@ -28,30 +31,13 @@ function calculateTotalStockWithConversions(
   density: number | null,
   quantityUnitSizes: QuantityUnitSizes = {}
 ): { total: number; allConverted: boolean; unconvertedUnits: string[] } {
-  let total = 0;
-  let allConverted = true;
-  const unconvertedUnits: string[] = [];
-
-  for (const entry of stockEntries) {
-    const qty = parseFloat(entry.quantity);
-    const entryUnit = entry.unit || targetUnit;
-
-    if (normalizeUnit(entryUnit) === normalizeUnit(targetUnit)) {
-      total += qty;
-    } else {
-      const converted = convertWithDensity(qty, entryUnit, targetUnit, density, quantityUnitSizes);
-      if (converted !== null) {
-        total += converted;
-      } else {
-        allConverted = false;
-        if (!unconvertedUnits.includes(entryUnit)) {
-          unconvertedUnits.push(entryUnit);
-        }
-      }
-    }
-  }
-
-  return { total, allConverted, unconvertedUnits };
+  const { convertedTotal, allConverted, unconvertedUnits } = sumStock(
+    stockEntries,
+    targetUnit,
+    density,
+    quantityUnitSizes
+  );
+  return { total: convertedTotal, allConverted, unconvertedUnits };
 }
 
 /**
