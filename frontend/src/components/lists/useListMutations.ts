@@ -140,12 +140,16 @@ export function useListMutations(listId: string) {
   });
 
   const toggleItem = useMutation({
-    mutationFn: (itemId: string) => resilientListsApi.toggleItem(listId, itemId),
+    // Callers pass the explicit target state (not "toggle") so the write is
+    // idempotent and, when queued offline, replays as a set — a replayed
+    // *toggle* would invert changes other devices made in the meantime.
+    mutationFn: ({ itemId, isChecked }: { itemId: string; isChecked: boolean }) =>
+      resilientListsApi.toggleItem(listId, itemId, isChecked),
     // Optimistic: flip the checkbox immediately so slow connections can't
     // double-fire. Queued-offline results keep this patch (settle's ghost
     // apply is a no-op because the cache is already flipped); online results
     // invalidate so server truth wins.
-    onMutate: async (itemId) => {
+    onMutate: async ({ itemId, isChecked }) => {
       await queryClient.cancelQueries({ queryKey: detailKey });
       const prev = queryClient.getQueryData<ListDetail>(detailKey);
       patchItems((items) =>
@@ -153,8 +157,8 @@ export function useListMutations(listId: string) {
           i.id === itemId
             ? {
                 ...i,
-                isChecked: !i.isChecked,
-                checkedAt: !i.isChecked ? new Date().toISOString() : null,
+                isChecked,
+                checkedAt: isChecked ? new Date().toISOString() : null,
                 updatedAt: new Date().toISOString(),
               }
             : i,
@@ -162,7 +166,7 @@ export function useListMutations(listId: string) {
       );
       return { prev };
     },
-    onError: (_err, _itemId, ctx) => {
+    onError: (_err, _vars, ctx) => {
       if (!ctx?.prev) return;
       queryClient.setQueryData(detailKey, ctx.prev);
       offlineDb

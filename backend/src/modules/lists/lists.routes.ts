@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../../config/database.js';
 import { lists, listItems, permissions } from '../../db/schema/index.js';
-import { eq, and, ilike, isNull, isNotNull, inArray } from 'drizzle-orm';
+import { eq, and, or, ilike, isNull, isNotNull, inArray, sql } from 'drizzle-orm';
 import { authMiddleware } from '../../middleware/auth.middleware.js';
 import { requireListAccess, requireListsAccess } from '../../middleware/permission.middleware.js';
 import { setResourceDefaults } from '../../services/permission.service.js';
@@ -48,6 +48,19 @@ const updateListItemSchema = itemFieldsSchema.partial();
 const bulkCreateItemsSchema = z.object({
   items: z.array(itemFieldsSchema.partial().extend({ content: z.string().min(1) })).min(1),
 });
+
+/**
+ * Fetch a list, asserting it belongs to the caller's household. All item
+ * subroutes must go through this — filtering on (itemId, listId) alone lets
+ * any authenticated user mutate another household's list items.
+ */
+async function getHouseholdList(listId: string, householdId: string) {
+  const list = await db.query.lists.findFirst({
+    where: and(eq(lists.id, listId), eq(lists.householdId, householdId)),
+  });
+  if (!list) throw Errors.notFound('List');
+  return list;
+}
 
 /**
  * Strip claim metadata from an item when the requester is the wishlist
@@ -441,6 +454,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
     '/:id/items/:itemId',
     { preHandler: [authMiddleware, requireListAccess('edit')] },
     async (request) => {
+      const list = await getHouseholdList(request.params.id, request.user!.householdId);
       const input = updateListItemSchema.parse(request.body);
 
       const patch: Record<string, unknown> = { updatedAt: new Date() };
@@ -466,21 +480,28 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
         itemId: updated.id,
         action: 'updated',
       });
-      return { success: true, data: { item: updated } };
+      // Don't leak claim metadata to the wishlist recipient in the response
+      const hideClaim = list.recipientUserId === request.user!.id;
+      return { success: true, data: { item: maybeHideClaim(updated, hideClaim) } };
     },
   );
 
-  // Delete list item
+  // Delete list item (subtasks of the deleted item go with it)
   app.delete<{ Params: { id: string; itemId: string } }>(
     '/:id/items/:itemId',
     { preHandler: [authMiddleware, requireListAccess('edit')] },
     async (request) => {
+      await getHouseholdList(request.params.id, request.user!.householdId);
+
       await db
         .delete(listItems)
         .where(
           and(
-            eq(listItems.id, request.params.itemId),
             eq(listItems.listId, request.params.id),
+            or(
+              eq(listItems.id, request.params.itemId),
+              eq(listItems.parentItemId, request.params.itemId),
+            ),
           ),
         );
 
@@ -493,26 +514,39 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  // Toggle item checked status (awards rewardPoints if rewards feature on)
+  // Set (or toggle) an item's checked state.
+  //
+  // Clients should send an explicit target state `{ isChecked: true|false }`:
+  // it's idempotent, safe to replay from the offline queue, and can't invert
+  // another device's change (a queued *toggle* replayed after reconnect
+  // unchecks what someone else checked in the meantime — the two-phones-in-a-
+  // store bug). A body-less call still toggles for compatibility.
   app.post<{ Params: { id: string; itemId: string } }>(
     '/:id/items/:itemId/toggle',
     { preHandler: [authMiddleware, requireListAccess('edit')] },
     async (request) => {
-      const item = await db.query.listItems.findFirst({
-        where: and(
-          eq(listItems.id, request.params.itemId),
-          eq(listItems.listId, request.params.id),
-        ),
-      });
-      if (!item) throw Errors.notFound('List item');
+      const list = await getHouseholdList(request.params.id, request.user!.householdId);
+      const { isChecked: target } = z
+        .object({ isChecked: z.boolean().optional() })
+        .parse(request.body ?? {});
 
+      const now = new Date();
       const [updated] = await db
         .update(listItems)
-        .set({
-          isChecked: !item.isChecked,
-          checkedAt: !item.isChecked ? new Date() : null,
-          updatedAt: new Date(),
-        })
+        .set(
+          target !== undefined
+            ? {
+                isChecked: target,
+                checkedAt: target ? now : null,
+                updatedAt: now,
+              }
+            : {
+                // Legacy toggle — atomic single UPDATE, no read-then-write race
+                isChecked: sql`NOT ${listItems.isChecked}`,
+                checkedAt: sql`CASE WHEN ${listItems.isChecked} THEN NULL ELSE now() END`,
+                updatedAt: now,
+              },
+        )
         .where(
           and(
             eq(listItems.id, request.params.itemId),
@@ -521,12 +555,15 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
         )
         .returning();
 
+      if (!updated) throw Errors.notFound('List item');
+
       emitListEvent(request.user!.householdId, {
         listId: request.params.id,
         itemId: request.params.itemId,
         action: 'item_checked',
       });
-      return { success: true, data: { item: updated } };
+      const hideClaim = list.recipientUserId === request.user!.id;
+      return { success: true, data: { item: maybeHideClaim(updated, hideClaim) } };
     },
   );
 
@@ -557,22 +594,39 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
       });
       if (!item) throw Errors.notFound('List item');
 
-      // Toggle: if I claimed it, unclaim. If someone else claimed it, refuse.
-      // If unclaimed, take it.
-      let next: { claimedByUserId: string | null; claimedAt: Date | null };
-      if (item.claimedByUserId === request.user!.id) {
-        next = { claimedByUserId: null, claimedAt: null };
-      } else if (item.claimedByUserId) {
-        throw Errors.validation('Already claimed by another member');
+      // Toggle intent: if I claimed it, unclaim. If someone else claimed it,
+      // refuse. If unclaimed, take it. The UPDATE is guarded on the expected
+      // current claimant so two simultaneous claims can't both "win" (the
+      // duplicate-gift race) — the loser's UPDATE matches zero rows.
+      const userId = request.user!.id;
+      let updated;
+      if (item.claimedByUserId === userId) {
+        [updated] = await db
+          .update(listItems)
+          .set({ claimedByUserId: null, claimedAt: null, updatedAt: new Date() })
+          .where(
+            and(
+              eq(listItems.id, request.params.itemId),
+              eq(listItems.claimedByUserId, userId),
+            ),
+          )
+          .returning();
       } else {
-        next = { claimedByUserId: request.user!.id, claimedAt: new Date() };
+        [updated] = await db
+          .update(listItems)
+          .set({ claimedByUserId: userId, claimedAt: new Date(), updatedAt: new Date() })
+          .where(
+            and(
+              eq(listItems.id, request.params.itemId),
+              isNull(listItems.claimedByUserId),
+            ),
+          )
+          .returning();
       }
 
-      const [updated] = await db
-        .update(listItems)
-        .set({ ...next, updatedAt: new Date() })
-        .where(eq(listItems.id, request.params.itemId))
-        .returning();
+      if (!updated) {
+        throw Errors.conflict('Already claimed by another member');
+      }
 
       emitListEvent(request.user!.householdId, {
         listId: request.params.id,
@@ -588,6 +642,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
     '/:id/items/reorder',
     { preHandler: [authMiddleware, requireListAccess('edit')] },
     async (request) => {
+      await getHouseholdList(request.params.id, request.user!.householdId);
       const { order } = z
         .object({
           order: z.array(z.object({ id: z.string().uuid(), sortOrder: z.number().int() })),
@@ -616,6 +671,7 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
     '/:id/items/checked',
     { preHandler: [authMiddleware, requireListAccess('edit')] },
     async (request) => {
+      await getHouseholdList(request.params.id, request.user!.householdId);
       await db
         .delete(listItems)
         .where(

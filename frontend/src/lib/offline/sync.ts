@@ -1,4 +1,5 @@
 import { listsApi } from '@/api/lists';
+import { ApiError } from '@/lib/api-error';
 import { queryClient } from '@/providers/QueryProvider';
 import { offlineDb, type QueuedMutation } from './db';
 
@@ -72,9 +73,18 @@ async function replay(mut: QueuedMutation): Promise<boolean> {
         );
         return true;
       case 'toggleItem':
+        // Legacy entries from before explicit-state queuing; still replayed
+        // as a toggle for queues persisted across the upgrade.
         await listsApi.toggleItem(
           mut.payload.listId as string,
           mut.payload.itemId as string,
+        );
+        return true;
+      case 'setChecked':
+        await listsApi.toggleItem(
+          mut.payload.listId as string,
+          mut.payload.itemId as string,
+          mut.payload.isChecked as boolean,
         );
         return true;
       case 'claimItem':
@@ -107,10 +117,18 @@ async function replay(mut: QueuedMutation): Promise<boolean> {
         return true;
     }
   } catch (err) {
-    // Surface error to caller — they'll decide retry vs discard.
+    // Classify: transient errors return false (retry on next reconnect);
+    // permanent ones throw so the caller discards the mutation.
+    // - Network failures: transient.
+    // - 5xx (server hiccup, restart mid-deploy): transient — discarding a
+    //   user's queued writes because the server had a bad moment loses data.
+    // - 4xx: permanent (auth/validation/not-found) — replaying won't help.
+    if (ApiError.isApiError(err)) {
+      if (err.status >= 500) return false;
+      throw err;
+    }
     const msg = err instanceof Error ? err.message : String(err);
-    // 4xx is permanent (auth/validation); 5xx and network errors are transient.
-    if (msg.includes('NetworkError') || msg.includes('Failed to fetch')) {
+    if (/NetworkError|Failed to fetch|TypeError/i.test(msg)) {
       return false;
     }
     throw err;
@@ -119,6 +137,20 @@ async function replay(mut: QueuedMutation): Promise<boolean> {
 }
 
 let draining = false;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Schedule a re-drain while the browser is online but the server answered
+ * 5xx (e.g. restarting mid-update). Network-down recovery already rides the
+ * 'online' event; this covers the online-but-unhealthy case.
+ */
+function scheduleRetry() {
+  if (retryTimer) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    if (navigator.onLine) void drainQueue();
+  }, 30_000);
+}
 
 /**
  * Drain the queue oldest-first. Stops on first transient failure. Pops on
@@ -155,8 +187,10 @@ export async function drainQueue(): Promise<void> {
         continue;
       }
       if (!ok) {
-        // Transient — stop draining, try again on next reconnect.
+        // Transient — stop draining, try again on next reconnect (or after
+        // a short delay if we're online but the server is unhealthy).
         notify({ remaining, discarded });
+        if (navigator.onLine) scheduleRetry();
         break;
       }
       await offlineDb.queue.pop(head.id);

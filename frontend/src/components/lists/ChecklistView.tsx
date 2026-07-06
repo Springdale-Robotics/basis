@@ -330,7 +330,9 @@ export function ChecklistView({ list, items }: ChecklistViewProps) {
                                 item={it}
                                 list={list}
                                 members={members}
-                                onToggle={() => m.toggleItem.mutate(it.id)}
+                                onToggle={() =>
+                                  m.toggleItem.mutate({ itemId: it.id, isChecked: !it.isChecked })
+                                }
                                 onDelete={() => m.deleteItem.mutate(it.id)}
                                 onOpen={() => setDetailItem(it)}
                                 onAddSubtask={() => {
@@ -347,7 +349,12 @@ export function ChecklistView({ list, items }: ChecklistViewProps) {
                                   list={list}
                                   members={members}
                                   isSubtask
-                                  onToggle={() => m.toggleItem.mutate(child.id)}
+                                  onToggle={() =>
+                                    m.toggleItem.mutate({
+                                      itemId: child.id,
+                                      isChecked: !child.isChecked,
+                                    })
+                                  }
                                   onDelete={() => m.deleteItem.mutate(child.id)}
                                   onOpen={() => setDetailItem(child)}
                                   onAddSubtask={() => {}}

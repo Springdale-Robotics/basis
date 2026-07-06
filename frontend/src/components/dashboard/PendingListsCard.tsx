@@ -47,8 +47,10 @@ export function PendingListsCard() {
   type ItemsSearchResult = NonNullable<typeof itemsData>;
 
   const toggle = useMutation({
+    // The card only lists unchecked items, so the target state is always
+    // "checked" — explicit so a slow double-tap can't uncheck it again.
     mutationFn: ({ listId, itemId }: { listId: string; itemId: string }) =>
-      listsApi.toggleItem(listId, itemId),
+      listsApi.toggleItem(listId, itemId, true),
     // Optimistic: the card only shows unchecked items, so checking one
     // removes it immediately (prevents double-fires on slow connections).
     onMutate: async ({ itemId }) => {
