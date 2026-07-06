@@ -50,6 +50,13 @@
       "when": 1783307200000,
       "tag": "0006_synced_calendars_readonly",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783312800000,
+      "tag": "0007_rls_foundation",
+      "breakpoints": true
     }
   ]
 }
