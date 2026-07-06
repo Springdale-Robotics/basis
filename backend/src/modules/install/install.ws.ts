@@ -81,13 +81,13 @@ export function registerInstallNamespace(io: Server): void {
     let term: pty.IPty | null = null;
     let currentId: string | null = null;
 
-    socket.on('start', async (payload: { id: string; cols?: number; rows?: number }) => {
+    socket.on('start', async (payload: { id: string; cols?: number; rows?: number; prerelease?: boolean }) => {
       if (term) {
         socket.emit('error', { message: 'A PTY is already running on this socket' });
         return;
       }
       try {
-        const argv = await buildArgv(payload.id);
+        const argv = await buildArgv(payload.id, { prerelease: payload.prerelease });
         currentId = payload.id;
         log.info({ id: payload.id }, 'Spawning guided install PTY');
 

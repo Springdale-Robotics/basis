@@ -6,37 +6,7 @@ import { config } from '../../config/index.js';
 import { logger } from '../../lib/logger.js';
 import { getAppVersion } from '../../lib/app-version.js';
 import { compareVersions } from '../../lib/semver.js';
-
-interface GitHubRelease {
-  tag_name: string;
-  name: string;
-  body: string;
-  prerelease: boolean;
-  published_at: string;
-  html_url: string;
-  assets: Array<{ name: string; browser_download_url: string; size: number }>;
-}
-
-const GITHUB_REPO = 'Springdale-Robotics/basis';
-
-async function fetchLatestRelease(includePrerelease: boolean): Promise<GitHubRelease | null> {
-  const url = `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=10`;
-  const res = await fetch(url, {
-    headers: { Accept: 'application/vnd.github+json' },
-    signal: AbortSignal.timeout(8_000),
-  });
-  if (!res.ok) {
-    throw new Error(`GitHub API returned ${res.status}`);
-  }
-  const releases = (await res.json()) as GitHubRelease[];
-  const filtered = includePrerelease ? releases : releases.filter((r) => !r.prerelease);
-  // Don't trust GitHub's array order — pick the genuinely highest version.
-  return (
-    filtered
-      .slice()
-      .sort((a, b) => compareVersions(b.tag_name, a.tag_name))[0] ?? null
-  );
-}
+import { resolveLatestRelease, type ResolvedRelease } from './github-release.js';
 
 export async function installRoutes(app: FastifyInstance): Promise<void> {
   // Surface host platform / arch / distro so the frontend can pick the right
@@ -98,10 +68,10 @@ export async function installRoutes(app: FastifyInstance): Promise<void> {
       const productionInstall = !!config.FRONTEND_DIST && current !== 'dev';
 
       const includePrerelease = (request.query as any)?.prerelease !== 'false';
-      let latest: GitHubRelease | null = null;
+      let resolved: ResolvedRelease | null = null;
       let checkError: string | undefined;
       try {
-        latest = await fetchLatestRelease(includePrerelease);
+        resolved = await resolveLatestRelease(includePrerelease);
       } catch (err) {
         checkError = err instanceof Error ? err.message : String(err);
         logger.warn({ err }, 'GitHub release check failed');
@@ -110,7 +80,8 @@ export async function installRoutes(app: FastifyInstance): Promise<void> {
       // Only offer an update when the latest release is genuinely NEWER than
       // what's installed — a semver comparison, never a string diff (which
       // would rank 0.1.9 above 0.1.14 and offer a downgrade as an "update").
-      const latestVersion = latest?.tag_name.replace(/^v/, '') ?? null;
+      const latest = resolved?.release ?? null;
+      const latestVersion = resolved?.version ?? null;
       const updateAvailable =
         productionInstall &&
         latestVersion !== null &&
@@ -130,7 +101,7 @@ export async function installRoutes(app: FastifyInstance): Promise<void> {
             prerelease: latest.prerelease,
             publishedAt: latest.published_at,
             url: latest.html_url,
-            tarball: latest.assets.find((a) => a.name.endsWith('.tar.gz'))?.browser_download_url,
+            tarball: resolved?.tarballUrl ?? undefined,
           },
           updateAvailable,
           checkError,
