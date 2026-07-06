@@ -12,4 +12,13 @@ Branch: `fix/product-review-remediation`. One line per finding: `[done|skipped|b
 
 ## P1
 
-(in progress)
+- [done] lists: toggle → explicit target state end-to-end; wishlist claim → guarded conditional UPDATE (409 on race); offline drain classifies 5xx as transient w/ 30s retry; subtask cascade on delete; claim-mask on PATCH/toggle responses; handler-level household checks — 853e486; 7 tests
+- [done] websocket: task:completed/assigned/reward:earned + other emit-only events now have listeners; event-contract test prevents recurrence — 8b7f5ac; 32 tests
+- [done] recipes: cook flow wired end-to-end (scaler → cook mode → finish deduction at Nx; mealPlanId → cookedAt); /cook + /cooking/:id household-scoped — adeb74c; 4 tests
+- [done] inventory: worker notification dedupe (weekly low-stock, per-tranche-per-urgency expiry, -7d floor) + per-household error isolation; single sumStock() total computation (fixes "501 g" confidence bug + v2 subtraction density/sizes + flag flapping) — 4306472; 9 tests
+- [done] caldav: sync-collection sync-token inside multistatus (RFC 6578) + XML-parsing test — (see log)
+- [done] calendar: timezone-aware recurrence expansion + exact-instant EXDATE/exception matching — 8 unit tests
+- [done] calendar: reminder overhaul (per-occurrence recurring, stale skip, per-user CalDAV VALARMs) — 3 tests
+- [done] calendar: pull sync non-destructive (window-scoped deletes) + no-op update skip; synced calendars read-only (migration 0006) — 6 tests
+- [done] calendar: exception-row scope anchoring to master; exception upsert (no more drag 409) — 5 tests
+- [done] calendar FE: location sent on create; 'all' scope applies time deltas
