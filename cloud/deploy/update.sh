@@ -135,9 +135,17 @@ sudo -u basis-cloud -H bash -c "cd '$VERSION_DIR/server' && node --check dist/in
   || err "dist/index.js failed to parse — aborting before migrations/swap"
 
 # ─── migrations ───────────────────────────────────────────────────────────
+# migrate.js needs only DATABASE_URL. Extract it rather than bash-sourcing the
+# whole env file: it's systemd-format, and values like
+# EMAIL_FROM="Basis Remote <noreply@…>" (spaces + shell metacharacters) make
+# `. .env` a syntax error. A postgres URL has no shell-special chars, so
+# passing it explicitly is safe. (migrate.js also imports dotenv/config, a
+# harmless no-op here since there's no .env in the server dir.)
 log "Running database migrations"
-sudo -u basis-cloud -H bash -c \
-  "cd '$VERSION_DIR/server' && set -a && . '$ENV_FILE' && set +a && node dist/migrate.js" \
+DB_URL="$(grep -E '^DATABASE_URL=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+[ -n "$DB_URL" ] || err "No DATABASE_URL in $ENV_FILE"
+sudo -u basis-cloud -H DATABASE_URL="$DB_URL" bash -c \
+  "cd '$VERSION_DIR/server' && node dist/migrate.js" \
   || err "Migrations failed — the current symlink was NOT swapped; the running version is untouched"
 
 # ─── atomic swap + restart ────────────────────────────────────────────────
