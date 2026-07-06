@@ -9,6 +9,7 @@ import {
   rewardHistory,
   groupMembers,
   groups,
+  households,
 } from '../../db/schema/index.js';
 import { eq, and, or, inArray, sql, asc, desc } from 'drizzle-orm';
 import {
@@ -96,6 +97,21 @@ const listQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(200).optional(),
   page: z.coerce.number().int().positive().optional(),
 });
+
+// "Same day" in a household's local timezone — used to make chore/recurring
+// completion idempotent per day (the UI shows chores as "Done today").
+function localDayKey(date: Date, timeZone: string | null): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timeZone || 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
 
 // Compute the next dueDate after a chore completion.
 function computeNextDueDate(input: {
@@ -305,97 +321,142 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
       const userId = request.user!.id;
       const now = new Date();
 
-      const task = await db.query.tasks.findFirst({
-        where: and(
-          eq(tasks.id, request.params.id),
-          eq(tasks.householdId, householdId),
-        ),
+      const household = await db.query.households.findFirst({
+        where: eq(households.id, householdId),
+        columns: { settings: true },
       });
-      if (!task) throw Errors.notFound('Task');
+      const householdTz = household?.settings?.timezone ?? null;
 
-      let nextDueDate: Date | null = task.dueDate;
-      let nextStatus: 'pending' | 'completed' = 'completed';
+      // Completion runs in a transaction with the task row locked so a replay
+      // (double-click, bulk-complete firing twice, a farming kid) can neither
+      // re-award points nor re-advance the due date. Reward updates are
+      // SQL-level increments upserting against rewards(household_id, user_id).
+      const result = await db.transaction(async (tx) => {
+        const [task] = await tx
+          .select()
+          .from(tasks)
+          .where(
+            and(
+              eq(tasks.id, request.params.id),
+              eq(tasks.householdId, householdId),
+            ),
+          )
+          .for('update');
+        if (!task) throw Errors.notFound('Task');
 
-      if (task.kind === 'chore') {
-        // Chores stay pending; the next due date moves forward.
-        nextStatus = 'pending';
-        if (task.recurrenceMode) {
+        const repeats = task.kind === 'chore' || task.recurrenceMode !== null;
+
+        // Idempotency: a one-shot task that's already completed is a no-op;
+        // a chore/recurring task completed again on the same (household-local)
+        // day is a no-op — the UI presents chores as "Done today".
+        if (!repeats && task.status === 'completed') {
+          return { task, replay: true as const };
+        }
+        if (
+          repeats &&
+          task.lastCompletedAt &&
+          localDayKey(task.lastCompletedAt, householdTz) ===
+            localDayKey(now, householdTz)
+        ) {
+          return { task, replay: true as const };
+        }
+
+        let nextDueDate: Date | null = task.dueDate;
+        let nextStatus: 'pending' | 'completed' = 'completed';
+
+        if (task.kind === 'chore') {
+          // Chores stay pending; the next due date moves forward.
+          nextStatus = 'pending';
+          if (task.recurrenceMode) {
+            nextDueDate = computeNextDueDate({
+              recurrenceMode: task.recurrenceMode,
+              recurrenceRule: task.recurrenceRule,
+              cadenceDays: task.cadenceDays,
+              completedAt: now,
+            });
+          } else {
+            // Non-recurring chore — just record the completion and clear the due date.
+            nextDueDate = null;
+          }
+        } else if (task.recurrenceMode) {
+          // Recurring one-off task — keep it alive and bump due date.
+          nextStatus = 'pending';
           nextDueDate = computeNextDueDate({
             recurrenceMode: task.recurrenceMode,
             recurrenceRule: task.recurrenceRule,
             cadenceDays: task.cadenceDays,
             completedAt: now,
           });
-        } else {
-          // Non-recurring chore — just record the completion and clear the due date.
-          nextDueDate = null;
         }
-      } else if (task.recurrenceMode) {
-        // Recurring one-off task — keep it alive and bump due date.
-        nextStatus = 'pending';
-        nextDueDate = computeNextDueDate({
-          recurrenceMode: task.recurrenceMode,
-          recurrenceRule: task.recurrenceRule,
-          cadenceDays: task.cadenceDays,
-          completedAt: now,
-        });
-      }
 
-      const [updated] = await db
-        .update(tasks)
-        .set({
-          status: nextStatus,
-          lastCompletedAt: now,
-          lastCompletedBy: userId,
-          dueDate: nextDueDate,
-          updatedAt: now,
-        })
-        .where(eq(tasks.id, task.id))
-        .returning();
-
-      // Award points to whoever actually completed it.
-      if (task.rewardPoints > 0) {
-        let userReward = await db.query.rewards.findFirst({
-          where: and(
-            eq(rewards.householdId, householdId),
-            eq(rewards.userId, userId),
-          ),
-        });
-        if (!userReward) {
-          [userReward] = await db
-            .insert(rewards)
-            .values({ householdId, userId, points: 0, lifetimePoints: 0 })
-            .returning();
-        }
-        const newPoints = userReward.points + task.rewardPoints;
-        const newLifetime = userReward.lifetimePoints + task.rewardPoints;
-        await db
-          .update(rewards)
+        const [updated] = await tx
+          .update(tasks)
           .set({
-            points: newPoints,
-            lifetimePoints: newLifetime,
+            status: nextStatus,
+            lastCompletedAt: now,
+            lastCompletedBy: userId,
+            dueDate: nextDueDate,
             updatedAt: now,
           })
-          .where(eq(rewards.id, userReward.id));
-        await db.insert(rewardHistory).values({
-          rewardId: userReward.id,
-          taskId: task.id,
-          pointsChange: task.rewardPoints,
-          reason: `Completed: ${task.title}`,
-        });
+          .where(eq(tasks.id, task.id))
+          .returning();
+
+        // Award points to whoever actually completed it.
+        let reward: { points: number; lifetimePoints: number } | null = null;
+        if (task.rewardPoints > 0) {
+          const [userReward] = await tx
+            .insert(rewards)
+            .values({
+              householdId,
+              userId,
+              points: task.rewardPoints,
+              lifetimePoints: task.rewardPoints,
+              updatedAt: now,
+            })
+            .onConflictDoUpdate({
+              target: [rewards.householdId, rewards.userId],
+              set: {
+                points: sql`${rewards.points} + ${task.rewardPoints}`,
+                lifetimePoints: sql`${rewards.lifetimePoints} + ${task.rewardPoints}`,
+                updatedAt: now,
+              },
+            })
+            .returning();
+
+          await tx.insert(rewardHistory).values({
+            rewardId: userReward.id,
+            taskId: task.id,
+            pointsChange: task.rewardPoints,
+            reason: `Completed: ${task.title}`,
+          });
+          reward = {
+            points: userReward.points,
+            lifetimePoints: userReward.lifetimePoints,
+          };
+        }
+
+        return { task: updated, replay: false as const, reward };
+      });
+
+      if (result.replay) {
+        // Nothing changed — don't re-emit or re-award.
+        return { success: true, data: { task: result.task } };
+      }
+
+      if (result.reward) {
         emitRewardEvent(householdId, userId, {
-          points: newPoints,
-          lifetimePoints: newLifetime,
-          reason: `Completed: ${task.title}`,
+          points: result.reward.points,
+          lifetimePoints: result.reward.lifetimePoints,
+          reason: `Completed: ${result.task.title}`,
         });
       }
 
       emitTaskCompleted(householdId, {
-        taskId: task.id,
+        taskId: result.task.id,
         action: 'completed',
-        task: updated,
+        task: result.task,
       });
-      return { success: true, data: { task: updated } };
+      return { success: true, data: { task: result.task } };
     },
   );
 
