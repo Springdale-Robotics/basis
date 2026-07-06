@@ -395,17 +395,20 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         })
         .parse(request.body);
 
-      for (const item of order) {
-        await db
-          .update(inventoryAreas)
-          .set({ sortOrder: item.sortOrder })
-          .where(
-            and(
-              eq(inventoryAreas.id, item.id),
-              eq(inventoryAreas.householdId, request.user!.householdId)
-            )
-          );
-      }
+      // One transaction so concurrent reorders can't interleave
+      await db.transaction(async (tx) => {
+        for (const item of order) {
+          await tx
+            .update(inventoryAreas)
+            .set({ sortOrder: item.sortOrder })
+            .where(
+              and(
+                eq(inventoryAreas.id, item.id),
+                eq(inventoryAreas.householdId, request.user!.householdId)
+              )
+            );
+        }
+      });
 
       emitInventoryEvent(request.user!.householdId, { action: 'updated' });
       return { success: true, data: { message: 'Areas reordered' } };
@@ -1455,31 +1458,39 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.notFound('Shopping list item');
       }
 
-      // Add to inventory
-      if (splits && splits.length > 0) {
-        for (const split of splits) {
-          await db.insert(inventoryStock).values({
-            itemId: item.itemId,
-            areaId: split.areaId,
-            quantity: split.quantity.toString(),
-            unit: item.unit,
-            expiryDate: split.expiryDate?.toISOString().split('T')[0],
-          });
-        }
-      } else if (areaId) {
-        await db.insert(inventoryStock).values({
-          itemId: item.itemId,
-          areaId,
-          quantity: (quantity || parseFloat(item.quantity || '1')).toString(),
-          unit: item.unit,
-          expiryDate: expiryDate?.toISOString().split('T')[0],
-        });
+      // Caller-supplied area ids must belong to the household
+      for (const targetAreaId of splits?.map((s) => s.areaId) ?? (areaId ? [areaId] : [])) {
+        await assertHouseholdArea(targetAreaId, request.user!.householdId);
       }
 
-      // Remove from shopping list
-      await db
-        .delete(shoppingList)
-        .where(eq(shoppingList.id, request.params.id));
+      // Insert stock + remove from list atomically — a failure between the
+      // two either duplicated stock on retry or lost the list row.
+      await db.transaction(async (tx) => {
+        if (splits && splits.length > 0) {
+          for (const split of splits) {
+            await tx.insert(inventoryStock).values({
+              itemId: item.itemId!,
+              areaId: split.areaId,
+              quantity: split.quantity.toString(),
+              unit: item.unit,
+              expiryDate: split.expiryDate?.toISOString().split('T')[0],
+            });
+          }
+        } else if (areaId) {
+          await tx.insert(inventoryStock).values({
+            itemId: item.itemId!,
+            areaId,
+            quantity: (quantity || parseFloat(item.quantity || '1')).toString(),
+            unit: item.unit,
+            expiryDate: expiryDate?.toISOString().split('T')[0],
+          });
+        }
+
+        // Remove from shopping list
+        await tx
+          .delete(shoppingList)
+          .where(eq(shoppingList.id, request.params.id));
+      });
 
       emitShoppingListUpdate(request.user!.householdId);
       emitInventoryEvent(request.user!.householdId, { itemId: item.itemId, action: 'quantity_changed' });
@@ -1565,16 +1576,16 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           continue;
         }
 
-        // Add to inventory stock
-        await db.insert(inventoryStock).values({
-          itemId: item.itemId,
-          areaId,
-          quantity: item.quantity || '1',
-          unit: item.unit,
+        // Insert stock + delete the list row atomically per item
+        await db.transaction(async (tx) => {
+          await tx.insert(inventoryStock).values({
+            itemId: item.itemId!,
+            areaId,
+            quantity: item.quantity || '1',
+            unit: item.unit,
+          });
+          await tx.delete(shoppingList).where(eq(shoppingList.id, item.id));
         });
-
-        // Delete the shopping list item
-        await db.delete(shoppingList).where(eq(shoppingList.id, item.id));
 
         movedCount++;
       }
