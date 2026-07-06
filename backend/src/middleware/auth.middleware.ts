@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { db } from '../config/database.js';
+import { db, enterRlsContext } from '../config/database.js';
 import { sessions, users } from '../db/schema/index.js';
 import { eq, and, gt } from 'drizzle-orm';
 import { Errors } from '../lib/errors.js';
@@ -18,6 +18,8 @@ export interface AuthUser {
 declare module 'fastify' {
   interface FastifyRequest {
     user?: AuthUser;
+    /** Releases the request's RLS-scoped DB connection; set once auth resolves. */
+    rlsRelease?: () => Promise<void>;
   }
 }
 
@@ -86,6 +88,16 @@ export async function authMiddleware(
     sessionId: session.id,
     deviceId: session.deviceId ?? undefined,
   };
+
+  // Establish the per-request RLS context now that we know the household. From
+  // here on, `db` queries in this request run as `basis_rls` scoped to this
+  // household — a DB-level backstop under the app's own `where householdId`
+  // checks. The connection is released by the onResponse hook in app.ts.
+  // The session lookup above deliberately ran BEFORE this, on the base handle,
+  // because we didn't yet know the household. Idempotent if auth runs twice.
+  if (!request.rlsRelease) {
+    request.rlsRelease = await enterRlsContext(user.householdId);
+  }
 }
 
 export async function optionalAuthMiddleware(

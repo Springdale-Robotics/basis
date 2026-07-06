@@ -9,6 +9,8 @@ import {
 } from './auth.schema.js';
 import * as authService from './auth.service.js';
 import { config } from '../../config/index.js';
+import { db } from '../../config/database.js';
+import { sql as drizzleSql } from 'drizzle-orm';
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   // Login
@@ -199,6 +201,22 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
           },
         },
       };
+    }
+  );
+
+  // Diagnostic: report the DB role + household context this request's queries
+  // actually run under. Proves the RLS backstop is live (role = basis_rls,
+  // household = the caller's) — a broken context would fall back to the owner
+  // and this would show that. Handy for ops; asserted by the RLS plumbing test.
+  app.get(
+    '/db-context',
+    { preHandler: [authMiddleware] },
+    async () => {
+      const rows = await db.execute(
+        drizzleSql`SELECT current_user AS role, current_setting('app.household_id', true) AS household`
+      );
+      const row = (rows as unknown as Array<{ role: string; household: string | null }>)[0];
+      return { success: true, data: { role: row?.role ?? null, household: row?.household ?? null } };
     }
   );
 
