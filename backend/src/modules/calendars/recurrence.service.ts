@@ -203,67 +203,162 @@ export function parseRDates(rDatesJson: string | null): Date[] {
   }
 }
 
-/**
- * Check if a date is in the exclusion list (EXDATE)
- */
-export function isExcluded(date: Date, exDates: Date[]): boolean {
-  const dateStr = date.toISOString().split('T')[0];
-  return exDates.some(exDate => {
-    return exDate.toISOString().split('T')[0] === dateStr;
-  });
+// ---------------------------------------------------------------------------
+// Timezone helpers
+//
+// `rrule` computes in UTC only, but recurrence is a wall-clock concept: a
+// "weekly on Monday, 8 PM" event in Los Angeles is Tuesday 04:00 UTC, so a
+// UTC expansion recurs on the wrong local day and every occurrence shifts an
+// hour across DST. We expand in "fake UTC" — the event's wall-clock time in
+// the calendar timezone re-labeled as UTC — then convert each occurrence back
+// to a real instant.
+// ---------------------------------------------------------------------------
+
+/** Offset (ms) of `tz` from UTC at the given instant. Invalid tz → 0 (UTC). */
+function tzOffsetMs(tz: string, atUtc: Date): number {
+  try {
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false,
+    });
+    const parts: Record<string, string> = {};
+    for (const p of dtf.formatToParts(atUtc)) parts[p.type] = p.value;
+    const asUtc = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      parts.hour === '24' ? 0 : Number(parts.hour),
+      Number(parts.minute),
+      Number(parts.second),
+    );
+    return asUtc - atUtc.getTime();
+  } catch {
+    return 0;
+  }
+}
+
+/** Re-label a real instant as its wall-clock time in `tz`, expressed as UTC. */
+function toFakeUtc(real: Date, tz: string): Date {
+  return new Date(real.getTime() + tzOffsetMs(tz, real));
+}
+
+/** Inverse of toFakeUtc: wall-clock-as-UTC back to the real instant in `tz`. */
+function fromFakeUtc(fake: Date, tz: string): Date {
+  // First guess uses the offset at the fake instant; re-derive once so DST
+  // transitions land on the correct side.
+  let real = new Date(fake.getTime() - tzOffsetMs(tz, fake));
+  real = new Date(fake.getTime() - tzOffsetMs(tz, real));
+  return real;
+}
+
+/** Calendar-date key of an instant in `tz` (for legacy day-granular matching). */
+function localDayKey(date: Date, tz: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(date);
+  } catch {
+    return date.toISOString().split('T')[0];
+  }
 }
 
 /**
- * Find exception event for a given instance date
+ * Check if an occurrence is in the exclusion list (EXDATE). Exact-instant
+ * match first; falls back to same-local-day so exclusions recorded before
+ * expansion was timezone-aware keep working.
+ */
+export function isExcluded(date: Date, exDates: Date[], timezone = 'UTC'): boolean {
+  return exDates.some(exDate =>
+    exDate.getTime() === date.getTime() ||
+    localDayKey(exDate, timezone) === localDayKey(date, timezone)
+  );
+}
+
+/**
+ * Find exception event for a given instance date. Exact-instant match first,
+ * with the same legacy local-day fallback as isExcluded.
  */
 export function findException(
   instanceDate: Date,
-  exceptions: CalendarEvent[]
+  exceptions: CalendarEvent[],
+  timezone = 'UTC'
 ): CalendarEvent | undefined {
-  const dateStr = instanceDate.toISOString().split('T')[0];
+  const exact = exceptions.find(
+    ex => ex.originalStartTime &&
+      new Date(ex.originalStartTime).getTime() === instanceDate.getTime()
+  );
+  if (exact) return exact;
+
+  const dayKey = localDayKey(instanceDate, timezone);
   return exceptions.find(ex => {
     if (!ex.originalStartTime) return false;
-    const exDateStr = new Date(ex.originalStartTime).toISOString().split('T')[0];
-    return exDateStr === dateStr;
+    return localDayKey(new Date(ex.originalStartTime), timezone) === dayKey;
   });
 }
 
 /**
- * Expand a recurring event to instances within a date range
+ * Expand a recurring event to instances within a date range.
+ *
+ * `timezone` is the calendar's IANA timezone — the frame the recurrence rule
+ * is anchored to. Defaults to UTC, which preserves old behavior for callers
+ * that don't pass it.
  */
 export function expandRecurrence(
   masterEvent: CalendarEvent,
   rangeStart: Date,
   rangeEnd: Date,
-  exceptions: CalendarEvent[] = []
+  exceptions: CalendarEvent[] = [],
+  timezone = 'UTC'
 ): ExpandedInstance[] {
   if (!masterEvent.recurrenceRule) return [];
 
   const instances: ExpandedInstance[] = [];
-  const dtstart = new Date(masterEvent.startTime);
-  const duration = new Date(masterEvent.endTime).getTime() - dtstart.getTime();
+  const realStart = new Date(masterEvent.startTime);
+  const duration = new Date(masterEvent.endTime).getTime() - realStart.getTime();
 
   try {
-    // Create RRuleSet to handle EXDATE/RDATE
     const rruleSet = new RRuleSet();
 
-    // Add main rule - rrulestr needs the full RRULE with dtstart to respect UNTIL/COUNT
+    // Expand in the calendar timezone's wall-clock frame (see helpers above).
+    const dtstart = toFakeUtc(realStart, timezone);
     const mainRule = rrulestr(masterEvent.recurrenceRule, { dtstart });
     rruleSet.rrule(mainRule);
 
-    // Add EXDATE (excluded dates)
+    // Pad the range by a day on each side: the fake-UTC frame can differ from
+    // real UTC by up to ±14h, and we filter precisely after converting back.
+    const DAY = 24 * 60 * 60 * 1000;
+    const fakeOccurrences = rruleSet.between(
+      new Date(toFakeUtc(rangeStart, timezone).getTime() - DAY),
+      new Date(toFakeUtc(rangeEnd, timezone).getTime() + DAY),
+      true
+    );
+
+    // Convert to real instants and filter to the requested range.
+    let occurrences = fakeOccurrences
+      .map(fake => fromFakeUtc(fake, timezone))
+      .filter(d => d >= rangeStart && d <= rangeEnd);
+
+    // EXDATE: stored as real instants; applied here (not via rruleSet) so
+    // matching is instant/local-day-based rather than fake-UTC-based.
     const exDates = parseExDates(masterEvent.recurrenceExDates ?? null);
-    exDates.forEach(date => rruleSet.exdate(date));
+    if (exDates.length > 0) {
+      occurrences = occurrences.filter(d => !isExcluded(d, exDates, timezone));
+    }
 
-    // Add RDATE (additional dates)
+    // RDATE: extra real instants, added directly.
     const rDates = parseRDates(masterEvent.recurrenceRDates ?? null);
-    rDates.forEach(date => rruleSet.rdate(date));
-
-    // Get occurrences within range
-    const occurrences = rruleSet.between(rangeStart, rangeEnd, true);
+    for (const rd of rDates) {
+      if (rd >= rangeStart && rd <= rangeEnd && !occurrences.some(o => o.getTime() === rd.getTime())) {
+        occurrences.push(rd);
+      }
+    }
+    occurrences.sort((a, b) => a.getTime() - b.getTime());
 
     for (const date of occurrences) {
-      const exception = findException(date, exceptions);
+      const exception = findException(date, exceptions, timezone);
 
       if (exception && exception.recurrenceStatus === 'cancelled') {
         // Instance was cancelled, skip it
