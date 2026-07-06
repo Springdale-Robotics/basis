@@ -1,6 +1,72 @@
 # Fix Log — July 2026 Product Review Remediation
 
-Branch: `fix/product-review-remediation`. One line per finding: `[done|skipped|blocked] <area> <desc> — <sha/reason>`.
+Branch: `fix/product-review-remediation` (off `main`, linear history, unmerged).
+One line per finding: `[done|skipped|blocked] <area> <desc> — <sha/reason>`.
+
+---
+
+## SUMMARY
+
+**Status: P0 + P1 complete and verified; P2 substantially complete.** 21 commits.
+Backend test suite grew from 119 passing (review baseline) to **226 passing /
+10 skipped** (the skips are the pre-existing CRF tests needing the Python
+sidecar). Backend `typecheck` + `lint` clean (0 errors; 119 pre-existing
+warnings, none in new code). Frontend `tsc` clean. Two hand-authored migrations
+(0005 rewards-unique, 0006 synced-calendars-readonly) applied to the dev DB.
+
+### Fixed and verified (safe to merge after your review)
+
+Every item below has a test that fails without the fix (or, for pure wiring/UI,
+a typecheck + the behavior traced end-to-end). Highlights:
+
+- **All flagged cross-tenant holes closed** with route-level denial tests:
+  inventory (8 routes), permissions mutation scoping, lists item routes, recipe
+  cook-sessions, media album/genre/listen, device rules. New shared
+  session-cookie route-test harness (`backend/test/helpers/route-harness.ts`)
+  makes these cheap to write.
+- **Task completion** idempotent + atomic rewards (unique constraint, upsert).
+- **`/auth/register` closed** (invite-only), **fake password reset replaced**
+  with an admin action (backend + Members UI + honest forgot-password page).
+- **Offline lists** replay-safe (explicit target state, race-safe claim, 5xx
+  transient classification).
+- **WebSocket** task:completed and other emit-only events now wired, guarded by
+  a contract test.
+- **Recipe cook flow** scales deductions and reaches the cooked state.
+- **Inventory** notification spam fixed; one shared conversion-aware total.
+- **Calendar**: timezone-aware recurrence, reminder overhaul, non-destructive
+  external sync, exception-scope fixes, malformed sync XML.
+- **Media**: scanner FK bug, range-request hardening (416/suffix/streaming),
+  bulk + album + music permission/tenancy scoping.
+- **Transactions** wrapped around the multi-statement writes (cook-finish
+  pattern).
+
+### Awaiting your review (decisions logged in DECISIONS.md)
+
+- **RLS: left out this pass** per your pre-made call — replaced with explicit
+  household checks + tests, and CLAUDE.md corrected. The architectural in/out
+  call is still yours.
+- Small autonomous calls (permission gate on inventory confidence routes; 404
+  vs 403 for tenancy; admin-reset UX) — all in DECISIONS.md.
+
+### Still open (deliberately not done — see "Left for you" and P3)
+
+- **Update-self release resolution + version-dir pruning** (platform HIGH #1,
+  MEDIUM #2): the fix lives in a 130-line bash program embedded in a TS template
+  literal that only runs on the prod box. Per your "don't touch deploys/box"
+  rule and because it can't be exercised here, I did the low-risk adjacent items
+  (snapshot retention separation) and left the release-resolution rewrite for
+  you. It's real and worth doing — unify on the semver-resolved URL from
+  `/version`.
+- **Video transcoding / HLS, HEIC conversion** — explicitly your call (net-new).
+- **Backup media inclusion + restore verification + maintenance-mode restore**
+  (platform MEDIUM #3, #4) — touches the backup/restore path that runs on the
+  box; left for you.
+- **Dead inventory schema deletion**, the **AI roadmap** — per your instructions.
+- Numerous MEDIUM/LOW usability items (touch drag-and-drop, virtualized photo
+  grid, reminder/attendee UI, upload chunking, etc.) — not correctness bugs;
+  left for a UX pass.
+
+---
 
 ## P0
 
@@ -16,9 +82,21 @@ Branch: `fix/product-review-remediation`. One line per finding: `[done|skipped|b
 - [done] websocket: task:completed/assigned/reward:earned + other emit-only events now have listeners; event-contract test prevents recurrence — 8b7f5ac; 32 tests
 - [done] recipes: cook flow wired end-to-end (scaler → cook mode → finish deduction at Nx; mealPlanId → cookedAt); /cook + /cooking/:id household-scoped — adeb74c; 4 tests
 - [done] inventory: worker notification dedupe (weekly low-stock, per-tranche-per-urgency expiry, -7d floor) + per-household error isolation; single sumStock() total computation (fixes "501 g" confidence bug + v2 subtraction density/sizes + flag flapping) — 4306472; 9 tests
-- [done] caldav: sync-collection sync-token inside multistatus (RFC 6578) + XML-parsing test — (see log)
+- [done] caldav: sync-collection sync-token inside multistatus (RFC 6578) + XML-parsing test
 - [done] calendar: timezone-aware recurrence expansion + exact-instant EXDATE/exception matching — 8 unit tests
 - [done] calendar: reminder overhaul (per-occurrence recurring, stale skip, per-user CalDAV VALARMs) — 3 tests
 - [done] calendar: pull sync non-destructive (window-scoped deletes) + no-op update skip; synced calendars read-only (migration 0006) — 6 tests
 - [done] calendar: exception-row scope anchoring to master; exception upsert (no more drag 409) — 5 tests
 - [done] calendar FE: location sent on create; 'all' scope applies time deltas
+
+## P2
+
+- [done] transactions: deplete (FOR UPDATE) + reconcile (atomic delete+insert) + shopping to-inventory/put-away + lists duplicate + lists/areas reorder + invite acceptance (conditional claim) — depletion concurrency test
+- [done] media: scanner FK bug (uploadedBy → admin user) + music/musics dir & breakdown-key mismatch; shared RFC 7233 range parser (suffix ranges, 416, streaming download, filename sanitize); bulk delete/move per-file permission checks; album add/remove + music genres/listen household scoping — 6 range tests
+- [done] platform: device-rules tenancy (GET/DELETE); /health/ready decoupled from optional CRF sidecar; pre-update rollback snapshots retained separately from nightly (own prune) — device-rules tenancy test
+- [skipped] platform: update-self release resolution unify + version-dir prune — runs only on prod box (bash-in-TS), unverifiable here + "don't touch deploys" rule; left for review
+- [skipped] platform: backup media inclusion + restore verification + maintenance-mode restore — box/deploy backup path; left for review
+
+## P3 (not started — per instructions)
+
+- [skipped] AI roadmap (Stage 0→1), video transcoding/HLS, HEIC conversion, dead inventory schema deletion, RLS wire-in — explicitly left for you
