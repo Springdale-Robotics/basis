@@ -257,6 +257,7 @@ export function CalendarPage() {
       calendarId: data.calendarId,
       title: data.title,
       description: data.description,
+      location: data.location,
       startTime: data.startTime,
       endTime: data.endTime,
       allDay: data.allDay,
@@ -295,16 +296,33 @@ export function CalendarPage() {
           });
           return { event: result.exception };
         } else if (scope === 'all') {
-          // Update master event but preserve original start/end times for the series
-          // Only update recurrence rule and non-time fields
-          return calendarsApi.updateEvent(calendarId, eventId, {
+          // "All events": apply a time-of-day change to the whole series by
+          // shifting the master's start/end by the same delta the user
+          // applied to this occurrence, keeping the series anchor date.
+          // (Previously time changes were silently dropped for this scope.)
+          const payload: Parameters<typeof calendarsApi.updateEvent>[2] = {
             title: data.title,
             description: data.description,
             location: data.location,
             allDay: data.allDay,
             recurrenceRule: recurrenceToRRule(data.recurrence),
             scope: 'all',
-          });
+          };
+          if (masterEvent && data.startTime && data.endTime) {
+            const deltaStart =
+              new Date(data.startTime).getTime() - new Date(selectedEvent.startTime).getTime();
+            const deltaEnd =
+              new Date(data.endTime).getTime() - new Date(selectedEvent.endTime).getTime();
+            if (deltaStart !== 0 || deltaEnd !== 0) {
+              payload.startTime = new Date(
+                new Date(masterEvent.startTime).getTime() + deltaStart
+              ).toISOString();
+              payload.endTime = new Date(
+                new Date(masterEvent.endTime).getTime() + deltaEnd
+              ).toISOString();
+            }
+          }
+          return calendarsApi.updateEvent(calendarId, eventId, payload);
         } else {
           // 'following' - update this and future events
           return calendarsApi.updateEvent(calendarId, eventId, {
