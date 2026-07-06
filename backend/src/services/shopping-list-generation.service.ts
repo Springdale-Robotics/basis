@@ -381,6 +381,32 @@ async function applyInventorySubtraction(
   // UPDATE statements when the same item appears in multiple recipes.
   const flaggedItemIds = new Set<string>();
 
+  // Density / custom unit sizes are needed to bridge inventory units to
+  // recipe units (weight↔volume, "bottle" → ml). Converting without them made
+  // every such bridge fail here — flagging correctly-configured items as
+  // needsConversion — while the reconcile pass on GET /items (which does use
+  // them) cleared it again: the "flapping badge" bug.
+  const linkedItemIds = [...new Set(aggregated.map((a) => a.itemId).filter((v): v is string => !!v))];
+  const itemRows = linkedItemIds.length
+    ? await db
+        .select({
+          id: inventoryItems.id,
+          density: inventoryItems.density,
+          quantityUnitSizes: inventoryItems.quantityUnitSizes,
+        })
+        .from(inventoryItems)
+        .where(inArray(inventoryItems.id, linkedItemIds))
+    : [];
+  const conversionInfo = new Map(
+    itemRows.map((r) => [
+      r.id,
+      {
+        density: r.density ? parseFloat(r.density) : null,
+        sizes: (r.quantityUnitSizes as Record<string, { quantity: number; unit: string }>) || {},
+      },
+    ]),
+  );
+
   for (const item of aggregated) {
     // No inventory item linked — pass through as full amount
     if (!item.itemId) {
@@ -417,7 +443,14 @@ async function applyInventorySubtraction(
 
     // Convert inventory quantity to recipe unit if needed
     if (item.unit && confidence.unit && resolveUnit(confidence.unit) !== resolveUnit(item.unit || '')) {
-      const converted = convert(confidence.totalQuantity, confidence.unit, item.unit || confidence.unit);
+      const info = conversionInfo.get(item.itemId);
+      const converted = convert(
+        confidence.totalQuantity,
+        confidence.unit,
+        item.unit || confidence.unit,
+        info?.density ?? null,
+        info?.sizes ?? {},
+      );
       if (converted != null) {
         inventoryQtyInRecipeUnit = converted;
       } else {

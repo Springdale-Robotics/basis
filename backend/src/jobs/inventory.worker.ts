@@ -1,10 +1,10 @@
 import { Job } from 'bullmq';
 import { db } from '../config/database.js';
-import { inventoryItems, inventoryStock, leftovers } from '../db/schema/index.js';
-import { eq, and, lte, isNotNull, isNull, inArray } from 'drizzle-orm';
+import { inventoryItems, inventoryStock, leftovers, notifications } from '../db/schema/index.js';
+import { eq, and, lte, gte, isNotNull, isNull, inArray, sql } from 'drizzle-orm';
 import { queueNotification } from './index.js';
 import { emitLowStockAlert, emitExpiringAlert } from '../websocket/events.js';
-import { convertWithDensity, normalizeUnit } from '../lib/unit-conversions.js';
+import { sumStock } from '../lib/stock-total.js';
 import { logger } from '../lib/logger.js';
 import type { InventoryJobData } from './index.js';
 
@@ -19,8 +19,12 @@ export async function processInventoryJob(job: Job<InventoryJobData>): Promise<v
     ? [householdId]
     : (await db.query.households.findMany({ columns: { id: true } })).map((h) => h.id);
 
-  try {
-    for (const hid of householdIds) {
+  // One household's failure must not abort (or, via BullMQ's whole-job
+  // retry, re-run) the others — the old first-error throw re-notified every
+  // household that had already succeeded, three times.
+  let firstError: unknown = null;
+  for (const hid of householdIds) {
+    try {
       switch (type) {
         case 'check_low_stock':
           await checkLowStock(hid);
@@ -32,20 +36,55 @@ export async function processInventoryJob(job: Job<InventoryJobData>): Promise<v
           await checkLeftoversExpiring(hid);
           break;
       }
+    } catch (error) {
+      log.error({ error, failedHouseholdId: hid }, 'Inventory check failed for household');
+      firstError = firstError ?? error;
     }
-    log.debug('Inventory job completed');
-  } catch (error) {
-    log.error({ error }, 'Inventory job failed');
-    throw error;
   }
+  log.debug('Inventory job completed');
+  // Still surface the failure to BullMQ; the dedupe checks make a retry safe.
+  if (firstError) throw firstError;
 }
 
 /**
- * Total on-hand quantity for an item, expressed in its default unit. Stock
- * lives in tranches (inventory_stock) that may be recorded in different units,
- * so each is converted using the item's density / custom unit sizes. Tranches
- * whose unit can't be bridged are added at face value (best-effort) rather than
- * dropped, so we never under-count and raise a false "low stock".
+ * Has an equivalent notification already been created since `since`?
+ * Matches on type + householdId + the given data fields (jsonb ->> lookups).
+ * This is what stops the daily worker from re-notifying about the same low
+ * item or long-expired tranche every single day, forever.
+ */
+export async function alreadyNotified(
+  householdId: string,
+  type: 'low_stock' | 'expiring_soon' | 'leftover_expiring',
+  dataMatch: Record<string, string>,
+  since: Date,
+): Promise<boolean> {
+  const conditions = [
+    eq(notifications.householdId, householdId),
+    eq(notifications.type, type),
+    gte(notifications.createdAt, since),
+  ];
+  for (const [key, value] of Object.entries(dataMatch)) {
+    conditions.push(sql`${notifications.data}->>${key} = ${value}`);
+  }
+  const rows = await db
+    .select({ id: notifications.id })
+    .from(notifications)
+    .where(and(...conditions))
+    .limit(1);
+  return rows.length > 0;
+}
+
+function daysAgo(days: number): Date {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d;
+}
+
+/**
+ * Total on-hand quantity for an item, expressed in its default unit (shared
+ * implementation in lib/stock-total.ts). Tranches whose unit can't be bridged
+ * are added at face value (best-effort) rather than dropped, so we never
+ * under-count and raise a false "low stock".
  */
 function totalInDefaultUnit(
   stock: Array<{ quantity: string; unit: string | null }>,
@@ -53,19 +92,8 @@ function totalInDefaultUnit(
   density: number | null,
   quantityUnitSizes: Record<string, { quantity: number; unit: string }> | null
 ): number {
-  let total = 0;
-  for (const s of stock) {
-    const qty = parseFloat(s.quantity);
-    if (Number.isNaN(qty)) continue;
-    const from = s.unit || defaultUnit;
-    if (!from || !defaultUnit || normalizeUnit(from) === normalizeUnit(defaultUnit)) {
-      total += qty;
-      continue;
-    }
-    const converted = convertWithDensity(qty, from, defaultUnit, density, quantityUnitSizes ?? {});
-    total += converted ?? qty;
-  }
-  return total;
+  const { convertedTotal, unconvertedRaw } = sumStock(stock, defaultUnit, density, quantityUnitSizes);
+  return convertedTotal + unconvertedRaw;
 }
 
 async function checkLowStock(householdId: string): Promise<void> {
@@ -101,6 +129,11 @@ async function checkLowStock(householdId: string): Promise<void> {
       item.quantityUnitSizes as Record<string, { quantity: number; unit: string }> | null
     );
     if (total > min) continue;
+
+    // Remind at most weekly per item, not every day it stays low.
+    if (await alreadyNotified(householdId, 'low_stock', { itemId: item.id }, daysAgo(7))) {
+      continue;
+    }
     lowCount += 1;
 
     emitLowStockAlert(householdId, {
@@ -147,6 +180,7 @@ async function checkExpiringItems(householdId: string): Promise<void> {
       )
     );
 
+  let notified = 0;
   for (const stock of expiring) {
     const name = nameById.get(stock.itemId) ?? 'An item';
     const [y, m, d] = stock.expiryDate!.split('-').map(Number);
@@ -154,6 +188,24 @@ async function checkExpiringItems(householdId: string): Promise<void> {
     const daysUntilExpiry = Math.ceil((expiry.getTime() - now.getTime()) / 86400000);
     const isExpired = daysUntilExpiry <= 0;
     const urgency = isExpired ? 'expired' : daysUntilExpiry <= 3 ? 'urgent' : 'warning';
+
+    // Floor: a tranche that expired over a week ago has been announced (or
+    // predates notifications entirely) — stop notifying about it forever.
+    if (daysUntilExpiry < -7) continue;
+
+    // One notification per tranche per urgency level (warning → urgent →
+    // expired), not one per day it sits in the window.
+    if (
+      await alreadyNotified(
+        householdId,
+        'expiring_soon',
+        { stockId: stock.id, urgency },
+        daysAgo(60),
+      )
+    ) {
+      continue;
+    }
+    notified += 1;
 
     emitExpiringAlert(householdId, {
       itemId: stock.itemId,
@@ -168,11 +220,11 @@ async function checkExpiringItems(householdId: string): Promise<void> {
       message: isExpired
         ? `${name} has expired`
         : `${name} expires in ${daysUntilExpiry} day${daysUntilExpiry === 1 ? '' : 's'}`,
-      data: { itemId: stock.itemId, itemName: name, daysUntilExpiry },
+      data: { itemId: stock.itemId, itemName: name, daysUntilExpiry, stockId: stock.id, urgency },
     });
   }
 
-  logger.info({ householdId, expiringCount: expiring.length }, 'Expiring items check completed');
+  logger.info({ householdId, expiringCount: notified }, 'Expiring items check completed');
 }
 
 async function checkLeftoversExpiring(householdId: string): Promise<void> {
@@ -195,6 +247,21 @@ async function checkLeftoversExpiring(householdId: string): Promise<void> {
     const daysUntilExpiry = Math.ceil((expiryDate.getTime() - now.getTime()) / 86400000);
     const ageInDays = Math.floor((now.getTime() - new Date(leftover.preparedAt).getTime()) / 86400000);
     const isExpired = daysUntilExpiry <= 0;
+    const urgency = isExpired ? 'expired' : 'warning';
+
+    // Same floor + per-urgency dedupe as stock expiry: unfinished leftovers
+    // live forever, and used to generate a fresh notification every day.
+    if (daysUntilExpiry < -7) continue;
+    if (
+      await alreadyNotified(
+        householdId,
+        'leftover_expiring',
+        { leftoverId: leftover.id, urgency },
+        daysAgo(60),
+      )
+    ) {
+      continue;
+    }
 
     const message = isExpired
       ? `Leftover "${leftover.name}" (${ageInDays} days old) has expired!`
@@ -212,6 +279,7 @@ async function checkLeftoversExpiring(householdId: string): Promise<void> {
         leftoverName: leftover.name,
         daysUntilExpiry,
         preparedAt: leftover.preparedAt.toISOString(),
+        urgency,
       },
     });
   }

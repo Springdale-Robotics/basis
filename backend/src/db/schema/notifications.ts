@@ -45,6 +45,10 @@ export interface NotificationData {
   minQuantity?: number;
   unit?: string;
   actions?: NotificationAction[];
+  // Expiry-specific data — stockId + urgency key the worker's dedupe
+  // (one notification per tranche per urgency level, not one per day).
+  stockId?: string;
+  urgency?: 'warning' | 'urgent' | 'expired';
   // Leftover-specific data
   leftoverId?: string;
   leftoverName?: string;
