@@ -98,9 +98,32 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       queryClient.invalidateQueries({ queryKey: ['recipes'] });
     });
 
+    // Calendar sharing / external-sync events
+    newSocket.on('calendar:shared', () => {
+      queryClient.invalidateQueries({ queryKey: ['calendars'] });
+    });
+
+    newSocket.on('calendar:unshared', () => {
+      queryClient.invalidateQueries({ queryKey: ['calendars'] });
+    });
+
+    newSocket.on('calendar:sync:completed', () => {
+      queryClient.invalidateQueries({ queryKey: ['calendars'] });
+      queryClient.invalidateQueries({ queryKey: ['events'] });
+    });
+
+    newSocket.on('calendar:sync:failed', () => {
+      queryClient.invalidateQueries({ queryKey: ['calendars'] });
+    });
+
     // Meal plan events
     newSocket.on('meal-plan:update', () => {
       queryClient.invalidateQueries({ queryKey: ['meal-plans'] });
+    });
+
+    // Device events
+    newSocket.on('device:update', () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] });
     });
 
     // Inventory events
@@ -139,10 +162,44 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       queryClient.invalidateQueries({ queryKey: ['look-ahead-suggestions'] });
     });
 
+    // Worker-driven inventory alerts (also delivered as notifications)
+    newSocket.on('inventory:expiring', () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'expiring'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'leftovers', 'expiring'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    });
+
+    newSocket.on('inventory:low_stock', () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'low-stock'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    });
+
+    newSocket.on('inventory:cooking_deduction', () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['stock'] });
+    });
+
     // Task events
     newSocket.on('task:update', (data) => {
       queryClient.invalidateQueries({ queryKey: ['tasks', data.taskId] });
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    });
+
+    // Completion is a distinct event from task:update — without this listener
+    // a kid checking off a chore never refreshes the parent's device.
+    newSocket.on('task:completed', (data) => {
+      queryClient.invalidateQueries({ queryKey: ['tasks', data.taskId] });
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['rewards'] });
+    });
+
+    // Emitted to the assignee only, when a task is assigned to them.
+    newSocket.on('task:assigned', () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    });
+
+    newSocket.on('reward:earned', () => {
+      queryClient.invalidateQueries({ queryKey: ['rewards'] });
     });
 
     newSocket.on('task:delete', () => {

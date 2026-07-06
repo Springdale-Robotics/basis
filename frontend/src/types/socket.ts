@@ -7,6 +7,10 @@ export interface ServerToClientEvents {
   }) => void;
   'calendar:update': (data: { calendarId: string; eventId?: string }) => void;
   'calendar:delete': (data: { calendarId: string; eventId: string }) => void;
+  'calendar:shared': (data: { calendarId: string }) => void;
+  'calendar:unshared': (data: { calendarId: string }) => void;
+  'calendar:sync:completed': (data: { calendarId: string }) => void;
+  'calendar:sync:failed': (data: { calendarId: string; error?: string }) => void;
 
   'recipe:update': (data: { recipeId: string; action?: string }) => void;
   'recipe:delete': (data: { recipeId: string }) => void;
@@ -20,11 +24,25 @@ export interface ServerToClientEvents {
   'inventory:confidence-updated': (data: { itemId: string; confidence: number; band: string }) => void;
   'inventory:reconciled': (data: { itemId: string; confidence: number }) => void;
   'inventory:out-of-stock': (data: { itemId: string; itemName: string }) => void;
+  'inventory:expiring': (data: { itemId?: string; action?: string }) => void;
+  'inventory:low_stock': (data: { itemId?: string; action?: string }) => void;
+  'inventory:cooking_deduction': (data: Record<string, unknown>) => void;
   'shopping-list:update': () => void;
   'shopping:look-ahead-suggestion': (data: { recipeId: string; recipeTitle: string; sharedCount: number }) => void;
 
   'task:update': (data: { taskId: string }) => void;
+  'task:completed': (data: { taskId: string; task?: Record<string, unknown> }) => void;
+  'task:assigned': (data: { taskId: string }) => void;
   'task:delete': (data: { taskId: string }) => void;
+
+  'reward:earned': (data: {
+    userId?: string;
+    points: number;
+    lifetimePoints: number;
+    reason: string;
+  }) => void;
+
+  'device:update': (data: { deviceId?: string; action?: string }) => void;
 
   'list:update': (data: { listId: string; itemId?: string; action?: string }) => void;
   'list:delete': (data: { listId: string }) => void;
