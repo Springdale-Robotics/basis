@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { db } from '../../config/database.js';
 import { inventoryAreas, inventoryItems, inventoryStock, shoppingList, leftovers, recipeIngredients, recipes } from '../../db/schema/index.js';
 import { eq, and, lt, lte, sql, isNotNull, isNull } from 'drizzle-orm';
-import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
+import { authMiddleware } from '../../middleware/auth.middleware.js';
 import { requireInventoryAccess, requireShoppingListAccess } from '../../middleware/permission.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { randomBytes } from 'crypto';
@@ -52,6 +52,28 @@ function calculateTotalStockWithConversions(
   }
 
   return { total, allConverted, unconvertedUnits };
+}
+
+/**
+ * Assert that an inventory item belongs to the given household; throws 404
+ * otherwise. Use before any operation that takes an item id from the caller
+ * and isn't already household-scoped in its own query.
+ */
+async function assertHouseholdItem(itemId: string, householdId: string): Promise<void> {
+  const item = await db.query.inventoryItems.findFirst({
+    where: and(eq(inventoryItems.id, itemId), eq(inventoryItems.householdId, householdId)),
+    columns: { id: true },
+  });
+  if (!item) throw Errors.notFound('Item');
+}
+
+/** Same as assertHouseholdItem, for inventory areas. */
+async function assertHouseholdArea(areaId: string, householdId: string): Promise<void> {
+  const area = await db.query.inventoryAreas.findFirst({
+    where: and(eq(inventoryAreas.id, areaId), eq(inventoryAreas.householdId, householdId)),
+    columns: { id: true },
+  });
+  if (!area) throw Errors.notFound('Area');
 }
 
 /**
@@ -391,7 +413,12 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         await db
           .update(inventoryAreas)
           .set({ sortOrder: item.sortOrder })
-          .where(eq(inventoryAreas.id, item.id));
+          .where(
+            and(
+              eq(inventoryAreas.id, item.id),
+              eq(inventoryAreas.householdId, request.user!.householdId)
+            )
+          );
       }
 
       emitInventoryEvent(request.user!.householdId, { action: 'updated' });
@@ -610,8 +637,10 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Get recipes linked to an inventory item
   app.get<{ Params: { id: string } }>(
     '/items/:id/linked-recipes',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async (request) => {
+      await assertHouseholdItem(request.params.id, request.user!.householdId);
+
       const linkedRecipes = await db
         .select({
           recipeId: recipeIngredients.recipeId,
@@ -620,7 +649,12 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         })
         .from(recipeIngredients)
         .innerJoin(recipes, eq(recipeIngredients.recipeId, recipes.id))
-        .where(eq(recipeIngredients.inventoryItemId, request.params.id));
+        .where(
+          and(
+            eq(recipeIngredients.inventoryItemId, request.params.id),
+            eq(recipes.householdId, request.user!.householdId)
+          )
+        );
 
       return { success: true, data: { linkedRecipes } };
     }
@@ -636,11 +670,26 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
       });
       const { newItemId } = schema.parse(request.body);
 
-      // Update all recipe ingredients pointing to old item
+      // Both the source and target item must belong to the caller's household
+      await assertHouseholdItem(request.params.id, request.user!.householdId);
+      await assertHouseholdItem(newItemId, request.user!.householdId);
+
+      // Update all recipe ingredients pointing to old item, scoped to this
+      // household's recipes so foreign links are never rewritten
+      const householdRecipeIds = db
+        .select({ id: recipes.id })
+        .from(recipes)
+        .where(eq(recipes.householdId, request.user!.householdId));
+
       const result = await db
         .update(recipeIngredients)
         .set({ inventoryItemId: newItemId })
-        .where(eq(recipeIngredients.inventoryItemId, request.params.id));
+        .where(
+          and(
+            eq(recipeIngredients.inventoryItemId, request.params.id),
+            inArray(recipeIngredients.recipeId, householdRecipeIds)
+          )
+        );
 
       return { success: true, data: { message: 'Relinked', updatedCount: result.count } };
     }
@@ -899,6 +948,10 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     async (request) => {
       const input = addStockSchema.parse(request.body);
 
+      // The caller supplies arbitrary UUIDs — both must be in their household
+      await assertHouseholdItem(input.itemId, request.user!.householdId);
+      await assertHouseholdArea(input.areaId, request.user!.householdId);
+
       const [stock] = await db
         .insert(inventoryStock)
         .values({
@@ -920,6 +973,11 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = addStockSchema.partial().parse(request.body);
+
+      // If the caller re-points the row at a different item/area, those must
+      // also belong to their household
+      if (input.itemId) await assertHouseholdItem(input.itemId, request.user!.householdId);
+      if (input.areaId) await assertHouseholdArea(input.areaId, request.user!.householdId);
 
       const householdItemIds = db
         .select({ id: inventoryItems.id })
@@ -1742,7 +1800,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Get confidence map for all items in the household
   app.get(
     '/confidence',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async (request) => {
       const map = await getInventoryConfidenceMap(request.user!.householdId);
       // Convert Map to plain object for JSON
@@ -1757,9 +1815,9 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Get confidence for a single item
   app.get<{ Params: { id: string } }>(
     '/items/:id/confidence',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async (request) => {
-      const result = await getItemConfidence(request.params.id);
+      const result = await getItemConfidence(request.params.id, request.user!.householdId);
       if (!result) throw Errors.notFound('Item');
       return { success: true, data: result };
     }
@@ -1768,14 +1826,14 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Ad-hoc deplete an item (not tied to a cooking session)
   app.post<{ Params: { id: string } }>(
     '/items/:id/deplete',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const schema = z.object({
         quantity: z.number().positive(),
         unit: z.string().min(1),
       });
       const { quantity, unit } = schema.parse(request.body);
-      const plan = await depleteTranches(request.params.id, quantity, unit);
+      const plan = await depleteTranches(request.params.id, request.user!.householdId, quantity, unit);
       emitInventoryEvent(request.user!.householdId, { itemId: request.params.id, action: 'quantity_changed' });
       return { success: true, data: plan };
     }
@@ -1784,7 +1842,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Reconcile an item ("I checked, I have X amount")
   app.post<{ Params: { id: string } }>(
     '/items/:id/reconcile',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const schema = z.object({
         quantity: z.number().nonnegative(),
@@ -1792,7 +1850,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         areaId: z.string().uuid(),
       });
       const { quantity, unit, areaId } = schema.parse(request.body);
-      await reconcileItem(request.params.id, quantity, unit, areaId, request.user!.id);
+      await reconcileItem(request.params.id, request.user!.householdId, quantity, unit, areaId, request.user!.id);
       emitInventoryEvent(request.user!.householdId, { itemId: request.params.id, action: 'quantity_changed' });
       return { success: true, data: { message: 'Item reconciled' } };
     }
@@ -1801,7 +1859,7 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
   // Mark item as out of stock (mid-cook discovery)
   app.post<{ Params: { id: string } }>(
     '/items/:id/out-of-stock',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const schema = z.object({
         addToShoppingList: z.boolean().default(false),
@@ -1810,12 +1868,15 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
       });
       const body = schema.parse(request.body || {});
 
-      await markOutOfStock(request.params.id);
+      await markOutOfStock(request.params.id, request.user!.householdId);
 
       // Optionally add to shopping list
       if (body.addToShoppingList) {
         const item = await db.query.inventoryItems.findFirst({
-          where: eq(inventoryItems.id, request.params.id),
+          where: and(
+            eq(inventoryItems.id, request.params.id),
+            eq(inventoryItems.householdId, request.user!.householdId)
+          ),
         });
         if (item) {
           await db.insert(shoppingList).values({
