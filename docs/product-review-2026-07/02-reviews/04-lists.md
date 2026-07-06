@@ -1,0 +1,51 @@
+# Area review — Lists
+
+Severity legend: CRITICAL / HIGH / MEDIUM / LOW. SUSPECTED = inferred from code, not executed.
+
+## What exists
+
+**Backend** — single route file, no service layer: `backend/src/modules/lists/lists.routes.ts` (666 lines). Endpoints: list/search lists, cross-list item search (`/items/search`), create, duplicate (powers both "Duplicate" and "Use template"/"Save as template"), get, patch (rename/pin/archive/template), delete, item CRUD, bulk add, toggle, wishlist claim/unclaim, reorder, clear-checked, and an unauthenticated `GET /:id/public` share view gated on an `external` permission row.
+
+**Schema** — `backend/src/db/schema/lists.ts`: `lists` (type enum `checklist|reminder|notes|wishlist`, pin, archive, template, `recipientUserId` for wishlists, `parentListId` provenance) and `list_items` (integer `sortOrder`, one-level `parentItemId` subtasks, `sectionLabel` sections, assignee, due date, notes/url/price, wishlist claim fields, `rewardPoints`).
+
+**Frontend** — `frontend/src/pages/lists/ListsPage.tsx` (tabs Active/Templates/Archived, search, pinned group, create-from-image), `ListDetailPage.tsx`, plus `frontend/src/components/lists/` (ChecklistView with dnd-kit reorder + sections + subtasks, WishlistView with secret claims, NotesView, ItemDetailSheet, BulkAddItemsDialog, ListFormDialog, useListMutations). A real offline layer exists only for this domain: `frontend/src/lib/offline/` (IndexedDB snapshots, queued mutation replay, ghost items).
+
+**Integrations** — important architectural fact: **the recipe/meal-plan "shopping list" is a completely separate system.** Recipes generate into the `shopping_list` table (inventory schema) via `backend/src/services/shopping-list-generation.service.ts` and `recipes.routes.ts:1489-1745`, surfaced at `frontend/src/pages/inventory/ShoppingListPage.tsx`, with its own `shopping-list:update` WS event. The Lists module never receives recipe ingredients, and the offline layer covers only Lists — not the inventory shopping list.
+
+**Real-time** — every mutation emits `list:update`/`list:delete` to the household room (`backend/src/websocket/events.ts:215-222`); the client responds by invalidating `['lists']` queries (`frontend/src/providers/WebSocketProvider.tsx:153-160`). Payloads carry only ids; clients refetch.
+
+## Usability findings
+
+1. **(HIGH) No undo, and item deletes are single-tap with no confirmation.** `ChecklistView.tsx:154-162` and `WishlistView.tsx:108-119` put an always-visible-on-touch (`pointer-coarse:opacity-100`, `utils.ts:15`) trash button on every row that deletes immediately. "Clear N completed" (`ChecklistView.tsx:403-413`) is also instant and unrecoverable. Only whole-list delete gets a ConfirmDialog. On a phone in a store, a mis-tap silently destroys an item.
+2. **(HIGH) Two different "shopping lists."** A family following the recipe flow lands in Inventory > ShoppingListPage; a family that made a "Groceries" checklist in Lists gets none of the recipe/consolidation features, and the offline support exists only on the Lists side. There is no bridge (e.g., "send generated list to a checklist") and no cross-linking in the UI. Confusion is near-certain.
+3. **(MEDIUM) Reward points UI promises something the backend never does.** `ItemDetailSheet.tsx:189-191` says "Awarded to the checker when this item is completed" and the toggle route's own comment claims it (`lists.routes.ts:496`), but the toggle handler awards nothing — rewards logic exists only in `tasks.routes.ts:357-383`. Kids will check items and get no points.
+4. **(MEDIUM) No optimistic add.** `useListMutations.ts:79-89` — quick-add clears the input immediately but the item only appears after round-trip + refetch. On store Wi-Fi this reads as "it ate my item," inviting double-adds. Toggle *is* optimistic (good); add/delete/reorder are not (reorder snaps back briefly after drag).
+5. **(LOW) Sections are alphabetical only** (`ChecklistView.tsx:213-217`) — grocery aisle order can't be customized; subtasks and wishlist/notes items can't be reordered at all (drag handle only on top-level checklist items). Notes has no drag despite sorting by `sortOrder`.
+6. **(LOW) NotesView dead heading field** — `NotesView.tsx:61-74` renders a `readOnly` Input with an empty `onBlur` and a comment admitting it does nothing.
+7. **(LOW) Wishlist sharing gap for the birthday scenario**: claims are member-only; the public share link (`/:id/public`) is read-only, so grandparents can see but not claim. Claim-hiding for the recipient is otherwise well done (banner in `WishlistView.tsx:51-61`, masking in `lists.routes.ts:56-62`).
+8. **(Good)** Empty/loading/error states are consistently present: skeletons, `ErrorState` with retry, per-tab empty states with CTAs (`ListsPage.tsx:133-180`), offline-aware "keep showing cached data on failed refetch" (`ListDetailPage.tsx:87-97`). Templates flow (save-as-template / duplicate with `resetChecks`) is coherent.
+
+## Reliability findings
+
+1. **(HIGH) Offline toggle replay inverts other users' changes.** The offline queue stores `toggleItem` as a *toggle*, not a target state (`listsApiResilient.ts:115-123`, replayed at `sync.ts:74-79`), and the server toggle is itself a non-atomic read-then-write (`lists.routes.ts:497-531`). Phone A checks "milk" offline; phone B checks it online; A reconnects and the replay *unchecks* it. This is the exact two-phones-in-a-store scenario. Send explicit `isChecked: true/false` instead.
+2. **(HIGH) Deleting a parent item orphans its subtasks invisibly.** `parentItemId` has no FK/cascade (`schema/lists.ts:61`) and `DELETE /:id/items/:itemId` deletes only the one row (`lists.routes.ts:474-494`). The frontend hides children of missing parents (`ChecklistView.tsx:188-197`) and its optimistic filter (`useListMutations.ts:136-138`) masks the bug until refetch. Orphans persist in the DB, inflate `checkedCount`, and surface in `/items/search`.
+3. **(HIGH) Wishlist claim race — lost update defeats the feature's purpose.** Claim is check-then-write with no conditional guard or transaction (`lists.routes.ts:560-575`). Two relatives claiming simultaneously both pass the `claimedByUserId` null check; last write wins and both clients believe they claimed → duplicate gifts. Needs `WHERE claimed_by_user_id IS NULL` on the UPDATE (checking rowcount).
+4. **(MEDIUM) No transactions anywhere in the module** (0 `db.transaction` in `lists.routes.ts`). Duplicate-list does N+1 sequential inserts plus a second fix-up pass (`lists.routes.ts:237-266`) — a mid-copy failure leaves a half-copied list; reorder issues N sequential UPDATEs (`lists.routes.ts:597-607`) — two concurrent reorders interleave into an order neither phone chose, with duplicate `sortOrder` values (no uniqueness constraint; ties render nondeterministically across devices).
+5. **(MEDIUM) Concurrent append duplicates sortOrder.** Both `POST /:id/items` and `/items/bulk` compute `max(sortOrder)+1` with a separate SELECT (`lists.routes.ts:360-368`, `412-417`), so two phones adding at once get the same sortOrder → different item order on different devices.
+6. **(MEDIUM) Destructive offline replay of `clearChecked`.** A queued `clearChecked` (`sync.ts:91-93`) replays after reconnect and deletes items *other* members checked while the device was offline — items the offline user never saw as checked.
+7. **(MEDIUM) Ghost-id operations are silently discarded.** Offline-created items get `offline-…` ids (`listsApiResilient.ts:55`); replay of `addItem` creates a new server id, but queued edits/toggles/deletes referencing the ghost id are never remapped, 404 on replay, and are dropped as "permanent failures" (`sync.ts:146-155`). Same for offline-created lists — `onCreated` even navigates to `/lists/offline-…`, which can't load (SUSPECTED, from code path; not executed).
+8. **(LOW) Claim metadata leak to recipient via write responses.** GET, search, and public routes mask `claimedByUserId`, but PATCH/toggle responses return the raw row (`lists.routes.ts:469`, `529`) — a recipient editing their own wish sees who claimed it in the network response.
+9. **(LOW) `/items/search` `dueWithinDays` post-filters in JS *after* the SQL `limit`** (`lists.routes.ts:142-154`) — with >200 items, due-soon items can be silently dropped.
+10. **(LOW) Dead room emit**: `emitListEvent` also targets `list:${listId}` rooms (`events.ts:217`), but the socket `subscribe` handler only permits `household:*` rooms (`websocket/index.ts:175-180`), so no client can ever join a list room. Sync works anyway via household-wide invalidation — coarse but effective; no conflict resolution beyond last-write-wins on whole-field PATCHes.
+
+## Test coverage
+
+**Zero.** No tests for the lists module, offline layer, or list UI. Backend tests cover only caldav, lib utilities (semver, units, confidence, tailscale, basis-remote/cloud), and the CRF ingredient parser; the frontend has no test script in `package.json` at all. The most concurrency-sensitive code in this area — `sync.ts` queue drain, `useListMutations` ghost/settle logic, claim/toggle races, duplicate two-pass copy — is entirely unverified.
+
+## Top 5 recommendations
+
+1. **Make offline/concurrent check-off safe**: replace toggle-semantics with explicit target state (`PATCH { isChecked }`) end-to-end (route, `resilientListsApi`, queue replay), and make the wishlist claim a conditional UPDATE (`WHERE claimed_by_user_id IS NULL`). These two directly corrupt the flagship family flows.
+2. **Add undo instead of instant destructive taps**: toast-with-Undo for item delete and "Clear completed" (or at minimum a confirm on clear-completed), and cascade subtask deletion server-side.
+3. **Wrap multi-statement operations in transactions**: duplicate-list (bulk insert + mapped second pass), reorder (single transaction or one SQL `UPDATE ... FROM VALUES`).
+4. **Bridge or merge the two shopping-list systems** — at minimum an "Add to a checklist" export from the recipe-generated shopping list, plus clarifying copy; longer term, one system.
+5. **Establish a test beachhead here**: route-level tests for claim race, toggle idempotency, duplicate copy integrity, recipient claim-masking (fix the PATCH/toggle leak while at it); unit tests for `sync.ts` drain/discard and ghost-id behavior.
