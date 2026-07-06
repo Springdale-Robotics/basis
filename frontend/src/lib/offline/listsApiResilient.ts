@@ -112,13 +112,15 @@ export const resilientListsApi = {
       return markOffline({ message: 'Queued' });
     }
   },
-  async toggleItem(listId: string, itemId: string) {
+  async toggleItem(listId: string, itemId: string, isChecked: boolean) {
     try {
-      return await listsApi.toggleItem(listId, itemId);
+      return await listsApi.toggleItem(listId, itemId, isChecked);
     } catch (err) {
       if (!isNetworkError(err)) throw err;
-      await enqueue('toggleItem', { listId, itemId }, listId);
-      return markOffline({ item: { id: itemId } as unknown as ListItem });
+      // Queue the *target state*, never a toggle: a toggle replayed after
+      // reconnect would invert changes other devices made in the meantime.
+      await enqueue('setChecked', { listId, itemId, isChecked }, listId);
+      return markOffline({ item: { id: itemId, isChecked } as unknown as ListItem });
     }
   },
   async claimItem(listId: string, itemId: string) {

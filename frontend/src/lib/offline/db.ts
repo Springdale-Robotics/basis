@@ -82,7 +82,11 @@ export interface QueuedMutation {
     | 'addItem'
     | 'updateItem'
     | 'deleteItem'
+    // 'toggleItem' is legacy (pre-explicit-state queues persisted in
+    // IndexedDB); new writes enqueue 'setChecked' with a target state so a
+    // replay can't invert another device's change.
     | 'toggleItem'
+    | 'setChecked'
     | 'reorder'
     | 'clearChecked'
     | 'claimItem'

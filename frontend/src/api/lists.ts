@@ -97,8 +97,13 @@ export const listsApi = {
   deleteItem: (listId: string, itemId: string) =>
     apiDelete<{ message: string }>(`/lists/${listId}/items/${itemId}`),
 
-  toggleItem: (listId: string, itemId: string) =>
-    apiPost<{ item: ListItem }>(`/lists/${listId}/items/${itemId}/toggle`, {}),
+  // Always pass an explicit target state where possible — it's idempotent and
+  // safe to replay from the offline queue. A body-less call still toggles.
+  toggleItem: (listId: string, itemId: string, isChecked?: boolean) =>
+    apiPost<{ item: ListItem }>(
+      `/lists/${listId}/items/${itemId}/toggle`,
+      isChecked === undefined ? {} : { isChecked },
+    ),
 
   claimItem: (listId: string, itemId: string) =>
     apiPost<{ item: ListItem }>(`/lists/${listId}/items/${itemId}/claim`, {}),
