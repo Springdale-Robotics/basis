@@ -76,13 +76,39 @@ stay in place).
   no cross-request leak across pool reuse, and the **full suite (241 passing)**
   runs green with every route under the RLS context — including all the
   FOR-UPDATE transaction paths. Dead `rls.middleware.ts` deleted.
-- [ ] **Stage 3 — roll policies across all household-scoped tables** (direct +
-  join), module by module, each with the RLS-blocks-cross-tenant test.
-- [ ] **Stage 4 — workers / CalDAV / backups audit.** Confirm every non-request
-  DB path runs as the owner (bypass) and none accidentally assumes `basis_rls`.
-  CalDAV auth (app-password) resolves a household → its request path gets context.
-- [ ] **Stage 5 — flip CLAUDE.md** to document RLS as the backstop, and add a
-  developer note: new household-scoped tables need a policy + a test.
+- [x] **Stage 3 — policies across the core data tables (done).** Migration
+  0008: 30 direct + 18 join policies (49 tables incl. `households` on its own
+  id). Full suite green — enabling RLS on the whole data model broke no
+  legitimate write (app inserts already set the right household, so `WITH CHECK`
+  passes). DB-level proof for a direct table (`tasks`) and a join table
+  (`list_items`) in `test/rls/stage3-policies.test.ts`. Deliberate app-level-only
+  exclusions (documented in the migration header): user-scoped/personal tables
+  (sessions, app_passwords, user_settings, watch_progress, listen_history,
+  favorites, ratings, play_queues, play_queue_items), the polymorphic
+  `permissions` table (hardened at the app layer in P0), cloud/remote/integration
+  tables (may be cross-household by design), ops/system tables (admin+worker
+  only), and the dead `receipt_scans`/`custom_units`.
+- [x] **Stage 4 — audit (done).** Confirmed the base handle (no request context)
+  bypasses RLS and sees all households — so workers, migrations, backups, seed,
+  and the pre-auth session lookup are unaffected (the passing worker/backup/
+  caldav suites corroborate). Unauthenticated routes (login, setup, register,
+  invite-validate) correctly run as the owner. **CalDAV (`/dav`) stays
+  app-level-only** for now: it's mounted outside the API scope with its own
+  Basic auth and no RLS context. It IS household-scoped in app code and covered
+  by the caldav access tests; wiring it into the RLS context (resolve household
+  from the app-password → enterRlsContext) is a clean follow-up, deferred to
+  avoid disturbing the well-tested CalDAV path in this pass.
+- [x] **Stage 5 — docs (done).** CLAUDE.md now documents the two-layer model and
+  that new household-scoped tables need a policy + a `test/rls/` check.
+
+## Follow-ups (post-merge)
+
+- Wire CalDAV into the RLS context (the one authenticated surface still
+  app-level-only).
+- Optional: denormalize `household_id` onto the hottest join-policied child
+  tables only if profiling shows RLS subquery overhead (none expected at family
+  scale).
+- Revisit the user-scoped media tables if they ever need a household backstop.
 
 ## Non-goals (for this effort)
 

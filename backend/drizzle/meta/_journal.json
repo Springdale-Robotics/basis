@@ -57,6 +57,13 @@
       "when": 1783312800000,
       "tag": "0007_rls_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783312900000,
+      "tag": "0008_rls_all_tables",
+      "breakpoints": true
     }
   ]
 }
