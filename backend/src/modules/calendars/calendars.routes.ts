@@ -28,6 +28,7 @@ import {
   truncateRRule,
   parseInstanceId,
   isRecurringMaster,
+  isException,
 } from './recurrence.service.js';
 
 const createCalendarSchema = z.object({
@@ -538,7 +539,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
 
       // Get the event (or master event if virtual instance)
       const eventId = instanceInfo ? instanceInfo.masterId : request.params.id;
-      const event = await db.query.calendarEvents.findFirst({
+      let event = await db.query.calendarEvents.findFirst({
         where: and(
           eq(calendarEvents.id, eventId),
           eq(calendarEvents.calendarId, request.params.calendarId)
@@ -549,38 +550,84 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.notFound('Event');
       }
 
+      // A previously-modified occurrence is its own row (an exception). Scope
+      // operations must anchor to the MASTER series — treating the exception
+      // row as a standalone event made "edit all" edit one occurrence.
+      let existingException: typeof event | null = null;
+      if (event.recurringEventId && isException(event)) {
+        const master = await db.query.calendarEvents.findFirst({
+          where: and(
+            eq(calendarEvents.id, event.recurringEventId),
+            eq(calendarEvents.calendarId, request.params.calendarId)
+          ),
+        });
+        if (master) {
+          existingException = event;
+          event = master;
+        }
+      }
+
       // Handle recurring event updates based on scope
       if (event.recurrenceRule && isRecurringMaster(event)) {
-        const effectiveScope = scope || 'all';
-        const instanceDate = instanceInfo
-          ? new Date(instanceInfo.timestamp)
-          : originalStartTime || new Date(event.startTime);
+        const effectiveScope = scope || (existingException ? 'single' : 'all');
+        const instanceDate = existingException?.originalStartTime
+          ? new Date(existingException.originalStartTime)
+          : instanceInfo
+            ? new Date(instanceInfo.timestamp)
+            : originalStartTime || new Date(event.startTime);
 
         if (effectiveScope === 'single') {
-          // Create an exception for this single instance
-          const [exception] = await db
-            .insert(calendarEvents)
-            .values({
-              calendarId: event.calendarId,
-              createdById: request.user!.id,
-              title: updateData.title || event.title,
-              description: updateData.description !== undefined ? updateData.description : event.description,
-              location: updateData.location !== undefined ? updateData.location : event.location,
-              startTime: updateData.startTime || instanceDate,
-              endTime: updateData.endTime || new Date(instanceDate.getTime() + (new Date(event.endTime).getTime() - new Date(event.startTime).getTime())),
-              allDay: updateData.allDay !== undefined ? updateData.allDay : event.allDay,
-              color: updateData.color !== undefined ? updateData.color : event.color,
-              recurringEventId: event.id,
-              originalStartTime: instanceDate,
-              recurrenceStatus: 'exception',
-            })
-            .returning();
+          // Upsert the exception for this instance: editing (or dragging) an
+          // already-modified occurrence updates its row instead of erroring
+          // on a duplicate insert.
+          const target =
+            existingException ??
+            (await db.query.calendarEvents.findFirst({
+              where: and(
+                eq(calendarEvents.recurringEventId, event.id),
+                eq(calendarEvents.originalStartTime, instanceDate)
+              ),
+            })) ??
+            null;
+
+          const exceptionValues = {
+            title: updateData.title || (target ?? event).title,
+            description: updateData.description !== undefined ? updateData.description : (target ?? event).description,
+            location: updateData.location !== undefined ? updateData.location : (target ?? event).location,
+            startTime: updateData.startTime || (target ? new Date(target.startTime) : instanceDate),
+            endTime: updateData.endTime || (target
+              ? new Date(target.endTime)
+              : new Date(instanceDate.getTime() + (new Date(event.endTime).getTime() - new Date(event.startTime).getTime()))),
+            allDay: updateData.allDay !== undefined ? updateData.allDay : (target ?? event).allDay,
+            color: updateData.color !== undefined ? updateData.color : (target ?? event).color,
+          };
+
+          let exception;
+          if (target) {
+            [exception] = await db
+              .update(calendarEvents)
+              .set({ ...exceptionValues, recurrenceStatus: 'exception', updatedAt: new Date() })
+              .where(eq(calendarEvents.id, target.id))
+              .returning();
+          } else {
+            [exception] = await db
+              .insert(calendarEvents)
+              .values({
+                calendarId: event.calendarId,
+                createdById: request.user!.id,
+                ...exceptionValues,
+                recurringEventId: event.id,
+                originalStartTime: instanceDate,
+                recurrenceStatus: 'exception',
+              })
+              .returning();
+          }
 
           // Emit WebSocket event
           emitCalendarEvent(request.user!.householdId, {
             eventId: exception.id,
             calendarId: exception.calendarId,
-            action: 'created',
+            action: target ? 'updated' : 'created',
             event: exception as Record<string, unknown>,
           });
 
@@ -703,7 +750,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
 
       // Get the event (or master event if virtual instance)
       const eventId = instanceInfo ? instanceInfo.masterId : request.params.id;
-      const event = await db.query.calendarEvents.findFirst({
+      let event = await db.query.calendarEvents.findFirst({
         where: and(
           eq(calendarEvents.id, eventId),
           eq(calendarEvents.calendarId, request.params.calendarId)
@@ -714,12 +761,32 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.notFound('Event');
       }
 
+      // Anchor exception rows to their master (see PATCH above). Deleting a
+      // modified occurrence with scope 'single' must also EXDATE the master —
+      // deleting just the exception row made the occurrence reappear at its
+      // original time — and 'all'/'following' must act on the whole series.
+      let existingException: typeof event | null = null;
+      if (event.recurringEventId && isException(event)) {
+        const master = await db.query.calendarEvents.findFirst({
+          where: and(
+            eq(calendarEvents.id, event.recurringEventId),
+            eq(calendarEvents.calendarId, request.params.calendarId)
+          ),
+        });
+        if (master) {
+          existingException = event;
+          event = master;
+        }
+      }
+
       // Handle recurring event deletions based on scope
       if (event.recurrenceRule && isRecurringMaster(event)) {
-        const effectiveScope = scope || 'all';
-        const instanceDate = instanceInfo
-          ? new Date(instanceInfo.timestamp)
-          : originalStartTime || new Date(event.startTime);
+        const effectiveScope = scope || (existingException ? 'single' : 'all');
+        const instanceDate = existingException?.originalStartTime
+          ? new Date(existingException.originalStartTime)
+          : instanceInfo
+            ? new Date(instanceInfo.timestamp)
+            : originalStartTime || new Date(event.startTime);
 
         if (effectiveScope === 'single') {
           // Add EXDATE to exclude this single instance
@@ -848,7 +915,8 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.validation('Event is not a recurring master event');
       }
 
-      // Check if exception already exists for this instance
+      // Upsert: dragging or re-modifying an occurrence that already has an
+      // exception row must update it, not 409.
       const existingException = await db.query.calendarEvents.findFirst({
         where: and(
           eq(calendarEvents.recurringEventId, masterEvent.id),
@@ -856,35 +924,46 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
         ),
       });
 
-      if (existingException) {
-        throw Errors.conflict('Exception already exists for this instance');
-      }
-
-      // Create the exception
       const duration = new Date(masterEvent.endTime).getTime() - new Date(masterEvent.startTime).getTime();
-      const [exception] = await db
-        .insert(calendarEvents)
-        .values({
-          calendarId: masterEvent.calendarId,
-          createdById: request.user!.id,
-          title: input.title || masterEvent.title,
-          description: input.description !== undefined ? input.description : masterEvent.description,
-          location: input.location !== undefined ? input.location : masterEvent.location,
-          startTime: input.startTime || input.originalStartTime,
-          endTime: input.endTime || new Date(input.originalStartTime.getTime() + duration),
-          allDay: input.allDay !== undefined ? input.allDay : masterEvent.allDay,
-          color: input.color !== undefined ? input.color : masterEvent.color,
-          recurringEventId: masterEvent.id,
-          originalStartTime: input.originalStartTime,
-          recurrenceStatus: input.cancelled ? 'cancelled' : 'exception',
-        })
-        .returning();
+      const base = existingException ?? masterEvent;
+      const exceptionValues = {
+        title: input.title || base.title,
+        description: input.description !== undefined ? input.description : base.description,
+        location: input.location !== undefined ? input.location : base.location,
+        startTime: input.startTime || (existingException ? new Date(existingException.startTime) : input.originalStartTime),
+        endTime: input.endTime || (existingException
+          ? new Date(existingException.endTime)
+          : new Date(input.originalStartTime.getTime() + duration)),
+        allDay: input.allDay !== undefined ? input.allDay : base.allDay,
+        color: input.color !== undefined ? input.color : base.color,
+        recurrenceStatus: (input.cancelled ? 'cancelled' : 'exception') as 'cancelled' | 'exception',
+      };
+
+      let exception;
+      if (existingException) {
+        [exception] = await db
+          .update(calendarEvents)
+          .set({ ...exceptionValues, updatedAt: new Date() })
+          .where(eq(calendarEvents.id, existingException.id))
+          .returning();
+      } else {
+        [exception] = await db
+          .insert(calendarEvents)
+          .values({
+            calendarId: masterEvent.calendarId,
+            createdById: request.user!.id,
+            ...exceptionValues,
+            recurringEventId: masterEvent.id,
+            originalStartTime: input.originalStartTime,
+          })
+          .returning();
+      }
 
       // Emit WebSocket event
       emitCalendarEvent(request.user!.householdId, {
         eventId: exception.id,
         calendarId: exception.calendarId,
-        action: 'created',
+        action: existingException ? 'updated' : 'created',
         event: exception as Record<string, unknown>,
       });
 
