@@ -244,8 +244,20 @@ export async function depleteTranches(
   });
   if (!item) throw Errors.notFound('Item');
 
+  // Plan + apply inside a transaction with the stock rows locked — the same
+  // pattern as recipe cook-finish. An unlocked read-modify-write racing a
+  // concurrent deplete/cook plans against stale reads and loses updates (or
+  // resurrects stock).
+  return db.transaction(async (tx) => {
+  // Lock this item's stock rows for the duration of the transaction.
+  await tx
+    .select({ id: inventoryStock.id })
+    .from(inventoryStock)
+    .where(eq(inventoryStock.itemId, itemId))
+    .for('update');
+
   // Get stock entries with area info
-  const stockEntries = await db
+  const stockEntries = await tx
     .select({
       stock: inventoryStock,
       area: inventoryAreas,
@@ -326,9 +338,9 @@ export async function depleteTranches(
 
     if (newQtyInOriginalUnit <= 0) {
       // Remove the tranche entirely
-      await db.delete(inventoryStock).where(eq(inventoryStock.id, instruction.trancheId));
+      await tx.delete(inventoryStock).where(eq(inventoryStock.id, instruction.trancheId));
     } else {
-      await db.update(inventoryStock)
+      await tx.update(inventoryStock)
         .set({
           quantity: newQtyInOriginalUnit.toFixed(3),
           updatedAt: now,
@@ -338,6 +350,7 @@ export async function depleteTranches(
   }
 
   return plan;
+  }); // end transaction
 }
 
 /**
@@ -369,24 +382,34 @@ export async function reconcileItem(
   });
   if (!area) throw Errors.notFound('Area');
 
-  // Delete all existing stock for this item
-  await db.delete(inventoryStock).where(eq(inventoryStock.itemId, itemId));
+  // Delete-all + insert must be atomic: a crash between the two statements
+  // silently zeroed the item. Locking the rows also serializes against a
+  // concurrent deplete/cook-finish.
+  await db.transaction(async (tx) => {
+    await tx
+      .select({ id: inventoryStock.id })
+      .from(inventoryStock)
+      .where(eq(inventoryStock.itemId, itemId))
+      .for('update');
 
-  // Create a single fresh tranche if quantity > 0
-  if (actualQuantity > 0) {
-    await db.insert(inventoryStock).values({
-      itemId,
-      areaId,
-      quantity: actualQuantity.toFixed(3),
-      unit: resolveUnit(unit),
-      confidence: 100,
-      source: 'manual',
-      verifiedAt: now,
-      originalQuantity: actualQuantity.toFixed(3),
-      addedAt: now,
-      updatedAt: now,
-    });
-  }
+    await tx.delete(inventoryStock).where(eq(inventoryStock.itemId, itemId));
+
+    // Create a single fresh tranche if quantity > 0
+    if (actualQuantity > 0) {
+      await tx.insert(inventoryStock).values({
+        itemId,
+        areaId,
+        quantity: actualQuantity.toFixed(3),
+        unit: resolveUnit(unit),
+        confidence: 100,
+        source: 'manual',
+        verifiedAt: now,
+        originalQuantity: actualQuantity.toFixed(3),
+        addedAt: now,
+        updatedAt: now,
+      });
+    }
+  });
 }
 
 /**

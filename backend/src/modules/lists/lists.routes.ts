@@ -227,56 +227,62 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
         orderBy: (i, { asc }) => [asc(i.sortOrder)],
       });
 
-      const [copy] = await db
-        .insert(lists)
-        .values({
-          householdId: source.householdId,
-          name: request.body?.name ?? `${source.name} (copy)`,
-          type: source.type,
-          icon: source.icon,
-          color: source.color,
-          recipientUserId: source.recipientUserId,
-          isTemplate: request.body?.asTemplate ?? false,
-          parentListId: source.id,
-          createdBy: request.user!.id,
-        })
-        .returning();
-
-      await setResourceDefaults('list', copy.id, request.user!.id, request.user!.householdId);
-
-      // Two-pass copy to preserve parent_item_id wiring inside the new list.
-      const idMap = new Map<string, string>();
-      const reset = request.body?.resetChecks !== false; // default true
-      for (const it of sourceItems) {
-        const [newItem] = await db
-          .insert(listItems)
+      // The whole copy is one transaction — a mid-copy failure used to leave
+      // a half-copied list behind.
+      const copy = await db.transaction(async (tx) => {
+        const [created] = await tx
+          .insert(lists)
           .values({
-            listId: copy.id,
-            content: it.content,
-            isChecked: reset ? false : it.isChecked,
-            checkedAt: reset ? null : it.checkedAt,
-            dueDate: it.dueDate,
-            sortOrder: it.sortOrder,
-            sectionLabel: it.sectionLabel,
-            assigneeUserId: it.assigneeUserId,
-            notes: it.notes,
-            url: it.url,
-            price: it.price,
-            rewardPoints: it.rewardPoints,
+            householdId: source.householdId,
+            name: request.body?.name ?? `${source.name} (copy)`,
+            type: source.type,
+            icon: source.icon,
+            color: source.color,
+            recipientUserId: source.recipientUserId,
+            isTemplate: request.body?.asTemplate ?? false,
+            parentListId: source.id,
             createdBy: request.user!.id,
           })
           .returning();
-        idMap.set(it.id, newItem.id);
-      }
-      // Pass two: fix parent_item_id refs now that we have new ids.
-      for (const it of sourceItems) {
-        if (it.parentItemId && idMap.has(it.parentItemId)) {
-          await db
-            .update(listItems)
-            .set({ parentItemId: idMap.get(it.parentItemId)! })
-            .where(eq(listItems.id, idMap.get(it.id)!));
+
+        // Two-pass copy to preserve parent_item_id wiring inside the new list.
+        const idMap = new Map<string, string>();
+        const reset = request.body?.resetChecks !== false; // default true
+        for (const it of sourceItems) {
+          const [newItem] = await tx
+            .insert(listItems)
+            .values({
+              listId: created.id,
+              content: it.content,
+              isChecked: reset ? false : it.isChecked,
+              checkedAt: reset ? null : it.checkedAt,
+              dueDate: it.dueDate,
+              sortOrder: it.sortOrder,
+              sectionLabel: it.sectionLabel,
+              assigneeUserId: it.assigneeUserId,
+              notes: it.notes,
+              url: it.url,
+              price: it.price,
+              rewardPoints: it.rewardPoints,
+              createdBy: request.user!.id,
+            })
+            .returning();
+          idMap.set(it.id, newItem.id);
         }
-      }
+        // Pass two: fix parent_item_id refs now that we have new ids.
+        for (const it of sourceItems) {
+          if (it.parentItemId && idMap.has(it.parentItemId)) {
+            await tx
+              .update(listItems)
+              .set({ parentItemId: idMap.get(it.parentItemId)! })
+              .where(eq(listItems.id, idMap.get(it.id)!));
+          }
+        }
+
+        return created;
+      });
+
+      await setResourceDefaults('list', copy.id, request.user!.id, request.user!.householdId);
 
       emitListEvent(request.user!.householdId, { listId: copy.id, action: 'created' });
       return { success: true, data: { list: copy } };
@@ -649,17 +655,21 @@ export async function listsRoutes(app: FastifyInstance): Promise<void> {
         })
         .parse(request.body);
 
-      for (const item of order) {
-        await db
-          .update(listItems)
-          .set({ sortOrder: item.sortOrder })
-          .where(
-            and(
-              eq(listItems.id, item.id),
-              eq(listItems.listId, request.params.id),
-            ),
-          );
-      }
+      // One transaction: two concurrent reorders interleaving row-by-row
+      // produced an order neither device chose.
+      await db.transaction(async (tx) => {
+        for (const item of order) {
+          await tx
+            .update(listItems)
+            .set({ sortOrder: item.sortOrder })
+            .where(
+              and(
+                eq(listItems.id, item.id),
+                eq(listItems.listId, request.params.id),
+              ),
+            );
+        }
+      });
 
       emitListEvent(request.user!.householdId, { listId: request.params.id, action: 'updated' });
       return { success: true, data: { message: 'Items reordered' } };

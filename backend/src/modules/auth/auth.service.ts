@@ -282,26 +282,37 @@ export async function registerWithInvite(
   // Hash password
   const passwordHash = await argon2.hash(password);
 
-  // Create user with invite's role
-  const [user] = await db
-    .insert(users)
-    .values({
-      householdId: household.id,
-      email: email.toLowerCase(),
-      passwordHash,
-      displayName,
-      role: invite.role,
-    })
-    .returning();
+  // Claim the invite and create the user atomically. The claim is a
+  // conditional UPDATE on status='pending' so two concurrent submissions of
+  // a single-use code can't both succeed; a failed user insert (duplicate
+  // email) rolls the claim back so the invite stays usable.
+  const user = await db.transaction(async (tx) => {
+    const claimed = await tx
+      .update(memberInvites)
+      .set({
+        status: 'accepted',
+        acceptedAt: new Date(),
+      })
+      .where(and(eq(memberInvites.id, invite.id), eq(memberInvites.status, 'pending')))
+      .returning({ id: memberInvites.id });
 
-  // Mark invite as accepted
-  await db
-    .update(memberInvites)
-    .set({
-      status: 'accepted',
-      acceptedAt: new Date(),
-    })
-    .where(eq(memberInvites.id, invite.id));
+    if (claimed.length === 0) {
+      throw Errors.validation('This invite has already been used');
+    }
+
+    const [created] = await tx
+      .insert(users)
+      .values({
+        householdId: household.id,
+        email: email.toLowerCase(),
+        passwordHash,
+        displayName,
+        role: invite.role,
+      })
+      .returning();
+
+    return created;
+  });
 
   // Create session
   const session = await createSession(user.id, undefined, ipAddress, userAgent);
