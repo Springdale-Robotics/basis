@@ -4,7 +4,18 @@ Small reversible calls made autonomously during the fix pass, per the fix-prompt
 
 ## Pre-made (from the fix prompt)
 
-- **RLS**: not wiring Postgres RLS this pass. Explicit household-ownership checks added to every flagged route + tests proving cross-household denial. CLAUDE.md's "row-level security" claim to be corrected to match reality.
+- **RLS**: ~~not wiring Postgres RLS this pass~~ — **SUPERSEDED 2026-07-06 by the owner's decision to wire RLS IN** (see below). The explicit household checks + denial tests stay in place regardless, as belt-and-suspenders. CLAUDE.md corrected to match reality (still accurate: RLS is being added as a *backstop*, app-level checks remain the primary guard).
+
+## RLS: IN (2026-07-06, owner decision — supersedes the pre-made "out")
+
+Wiring Postgres RLS as a defense-in-depth backstop. Full design + staged plan in [RLS-PLAN.md](RLS-PLAN.md). Load-bearing calls:
+
+1. **Role separation, not per-request signature rewrite.** The app's login role (superuser/owner in dev) bypasses RLS and is used for migrations, workers, backups, and pre-auth session lookup. Each authenticated request does `SET ROLE basis_rls` (a plain, non-owner role RLS applies to) + sets `app.household_id`, via AsyncLocalStorage + a reserved per-request connection, released after the response. This avoids threading a db handle through every service.
+2. **Join-based policies for child tables lacking `household_id`** (`inventory_stock`, `list_items`, `recipe_ingredients`, `calendar_events`, …) rather than denormalizing + backfilling a column. (The option preview said "denormalize"; join-policies are cheaper and lower-risk at family scale, and reversible — we can denormalize later only if a hot path shows RLS overhead. Flagging this refinement explicitly.)
+3. **Keep app-level `where householdId` checks in place** throughout — RLS is purely additive, so the staged rollout can never regress isolation.
+4. **Staged rollout with a checkpoint after the mechanism is proven** on one module (inventory) with a test asserting cross-household rows are invisible under `SET ROLE basis_rls` even with app checks bypassed.
+
+**Deploy prerequisite (prod):** the migration creates a role (`CREATE ROLE basis_rls`) and grants — needs `CREATEROLE`/superuser on the migration DB user. Prod's DATABASE_URL user must have it, or the role is created out-of-band before the migration. Tracked in RLS-PLAN.md.
 - **Password reset**: no SMTP. Admin "reset member password" action instead; fix the misleading "email sent" UI copy.
 - **/auth/register**: require a valid invite code; keep first-admin setup.
 
