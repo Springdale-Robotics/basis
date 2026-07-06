@@ -8,6 +8,7 @@ import {
   boolean,
   pgEnum,
   check,
+  unique,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { households } from './households.js';
@@ -81,18 +82,25 @@ export const tasks = pgTable(
   ],
 );
 
-export const rewards = pgTable('rewards', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  householdId: uuid('household_id')
-    .notNull()
-    .references(() => households.id, { onDelete: 'cascade' }),
-  userId: uuid('user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  points: integer('points').default(0).notNull(),
-  lifetimePoints: integer('lifetime_points').default(0).notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-});
+export const rewards = pgTable(
+  'rewards',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    householdId: uuid('household_id')
+      .notNull()
+      .references(() => households.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    points: integer('points').default(0).notNull(),
+    lifetimePoints: integer('lifetime_points').default(0).notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    // One reward balance per user — completion awards upsert against this.
+    unique('rewards_household_user_unique').on(table.householdId, table.userId),
+  ],
+);
 
 export const rewardHistory = pgTable('reward_history', {
   id: uuid('id').primaryKey().defaultRandom(),
