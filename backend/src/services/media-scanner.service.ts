@@ -8,6 +8,7 @@ import {
   tvEpisodes,
   tracks,
   mediaSettings,
+  users,
 } from '../db/schema/index.js';
 import { eq, and, sql } from 'drizzle-orm';
 import { config } from '../config/index.js';
@@ -58,13 +59,30 @@ export class MediaScannerService {
     };
 
     try {
-      // Scan each media type folder
-      for (const type of ['photos', 'videos', 'music', 'documents']) {
+      // Scanned files need a real owner: files.uploaded_by has an FK to
+      // users.id, and the old `uploadedBy: householdId` violated it — every
+      // scanned file failed (the error was swallowed per file, so the scan
+      // "succeeded" with 0 new files). Attribute to the household's oldest
+      // admin.
+      const owner = await db.query.users.findFirst({
+        where: and(eq(users.householdId, householdId), eq(users.role, 'admin')),
+        orderBy: (u, { asc }) => [asc(u.createdAt)],
+        columns: { id: true },
+      });
+      if (!owner) {
+        result.errors.push('No admin user found to attribute scanned files to');
+        return result;
+      }
+
+      // Scan each media type folder. 'musics' is the (misnamed) directory the
+      // upload endpoint used before it was fixed — keep scanning it so
+      // existing installs' music remains discoverable.
+      for (const type of ['photos', 'videos', 'music', 'musics', 'documents']) {
         const folderPath = path.join(this.storagePath, type, householdId);
 
         try {
           await fs.access(folderPath);
-          const folderResult = await this.scanFolder(householdId, folderPath, type);
+          const folderResult = await this.scanFolder(householdId, folderPath, owner.id);
           result.newFiles += folderResult.newFiles;
           result.processedFiles += folderResult.processedFiles;
           result.errors.push(...folderResult.errors);
@@ -89,7 +107,7 @@ export class MediaScannerService {
   private async scanFolder(
     householdId: string,
     folderPath: string,
-    type: string
+    ownerUserId: string
   ): Promise<ScanResult> {
     const result: ScanResult = {
       newFiles: 0,
@@ -106,7 +124,7 @@ export class MediaScannerService {
           const subResult = await this.scanFolder(
             householdId,
             path.join(folderPath, entry.name),
-            type
+            ownerUserId
           );
           result.newFiles += subResult.newFiles;
           result.processedFiles += subResult.processedFiles;
@@ -136,7 +154,7 @@ export class MediaScannerService {
                   .insert(files)
                   .values({
                     householdId,
-                    uploadedBy: householdId, // System upload
+                    uploadedBy: ownerUserId, // Scanned files belong to the household's admin
                     filename: entry.name,
                     storagePath: filePath,
                     mimeType,

@@ -26,6 +26,39 @@ import { queueMediaProcessing } from '../../jobs/index.js';
 import { thumbnailService } from '../../services/thumbnail.service.js';
 import { mediaScannerService } from '../../services/media-scanner.service.js';
 import { emitFileEvent, emitFileDeleted } from '../../websocket/events.js';
+import { parseRangeHeader } from '../../lib/http-range.js';
+
+/**
+ * Filter file rows down to those the (non-admin) user can act on at the
+ * given permission level, mirroring the single-file routes' restriction
+ * check. The bulk routes used to skip this entirely — any member could
+ * delete or move restricted files they couldn't even view.
+ */
+async function filterByFileAccess<T extends { id: string }>(
+  user: { id: string; householdId: string; role: string },
+  fileRows: T[],
+  level: 'view' | 'edit' | 'admin',
+): Promise<{ allowed: T[]; skipped: number }> {
+  if (user.role === 'admin') return { allowed: fileRows, skipped: 0 };
+  const allowed: T[] = [];
+  let skipped = 0;
+  for (const file of fileRows) {
+    const restrictionInfo = await getRestrictionInfo('file', file.id);
+    if (!restrictionInfo.isRestricted) {
+      allowed.push(file);
+      continue;
+    }
+    const hasAccess = await canAccess(
+      { userId: user.id, householdId: user.householdId, userRole: user.role as 'admin' | 'member' | 'kid' | 'visitor' },
+      'file',
+      file.id,
+      level,
+    );
+    if (hasAccess) allowed.push(file);
+    else skipped += 1;
+  }
+  return { allowed, skipped };
+}
 
 // Helper to get effective storage limit for a household
 async function getEffectiveStorageLimit(householdId: string): Promise<{
@@ -386,9 +419,13 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
       // Generate storage path
       const fileId = randomUUID();
       const ext = path.extname(data.filename);
+      // NB: 'music' must not become 'musics' — the scanner and docs use the
+      // singular directory, and the old naive pluralization split uploads
+      // and scans into different trees.
+      const typeDir = fileType === 'music' ? 'music' : `${fileType}s`;
       const storagePath = path.join(
         config.STORAGE_PATH,
-        fileType + 's',
+        typeDir,
         request.user!.householdId,
         `${fileId}${ext}`
       );
@@ -477,12 +514,20 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
-      const fileBuffer = await fs.readFile(file.storagePath);
-
+      // Stream from disk — fs.readFile buffered whole files (a 4 GB movie)
+      // into the Node heap; concurrent large downloads could OOM the box.
+      const stat = await fs.stat(file.storagePath);
+      const { createReadStream } = await import('fs');
+      // Quote-escape and RFC 5987-encode the user-controlled filename
+      const asciiName = file.filename.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, "'");
       return reply
         .header('Content-Type', file.mimeType)
-        .header('Content-Disposition', `attachment; filename="${file.filename}"`)
-        .send(fileBuffer);
+        .header('Content-Length', stat.size)
+        .header(
+          'Content-Disposition',
+          `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(file.filename)}`
+        )
+        .send(createReadStream(file.storagePath));
     }
   );
 
@@ -809,6 +854,14 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      // Per-file permissions apply to bulk exactly as to single delete
+      const { allowed: deletableFiles, skipped: skippedFiles } = await filterByFileAccess(
+        request.user!,
+        allFilesToDelete,
+        'admin',
+      );
+      allFilesToDelete = deletableFiles;
+
       // Delete files from storage
       for (const file of allFilesToDelete) {
         try {
@@ -875,6 +928,7 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
           message: `Deleted ${deletedFilesCount} files and ${deletedFoldersCount} folders`,
           deletedFiles: deletedFilesCount,
           deletedFolders: deletedFoldersCount,
+          skippedFiles,
         },
       };
     }
@@ -944,20 +998,29 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
           throw Errors.notFound('One or more files not found');
         }
 
-        await db
-          .update(files)
-          .set({ folderId: targetFolderId, updatedAt: new Date() })
-          .where(
-            and(
-              eq(files.householdId, householdId),
-              sql`${files.id} IN (${sql.join(
-                fileIds.map((id) => sql`${id}`),
-                sql`, `
-              )})`
-            )
-          );
+        // Per-file permissions apply to bulk exactly as to single edits
+        const { allowed: movableFiles } = await filterByFileAccess(
+          request.user!,
+          fileList,
+          'edit',
+        );
 
-        movedFilesCount = fileList.length;
+        if (movableFiles.length > 0) {
+          await db
+            .update(files)
+            .set({ folderId: targetFolderId, updatedAt: new Date() })
+            .where(
+              and(
+                eq(files.householdId, householdId),
+                sql`${files.id} IN (${sql.join(
+                  movableFiles.map((f) => sql`${f.id}`),
+                  sql`, `
+                )})`
+              )
+            );
+        }
+
+        movedFilesCount = movableFiles.length;
       }
 
       // Move folders (contents move automatically with parent)
@@ -1316,36 +1379,37 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
 
       const stat = await fs.stat(file.storagePath);
       const fileSize = stat.size;
-      const range = request.headers.range;
+      const parsed = parseRangeHeader(request.headers.range, fileSize);
+      const { createReadStream } = await import('fs');
 
-      if (range) {
-        // Range request for seeking
-        const parts = range.replace(/bytes=/, '').split('-');
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-        const chunkSize = end - start + 1;
+      if (parsed.kind === 'unsatisfiable') {
+        return reply
+          .code(416)
+          .header('Content-Range', `bytes */${fileSize}`)
+          .send();
+      }
 
-        const { createReadStream } = await import('fs');
+      if (parsed.kind === 'range') {
+        const { start, end } = parsed.range;
         const stream = createReadStream(file.storagePath, { start, end });
 
         return reply
           .code(206)
           .header('Content-Range', `bytes ${start}-${end}/${fileSize}`)
           .header('Accept-Ranges', 'bytes')
-          .header('Content-Length', chunkSize)
+          .header('Content-Length', end - start + 1)
           .header('Content-Type', file.mimeType)
-          .send(stream);
-      } else {
-        // Full file
-        const { createReadStream } = await import('fs');
-        const stream = createReadStream(file.storagePath);
-
-        return reply
-          .header('Content-Length', fileSize)
-          .header('Content-Type', file.mimeType)
-          .header('Accept-Ranges', 'bytes')
           .send(stream);
       }
+
+      // Full file
+      const stream = createReadStream(file.storagePath);
+
+      return reply
+        .header('Content-Length', fileSize)
+        .header('Content-Type', file.mimeType)
+        .header('Accept-Ranges', 'bytes')
+        .send(stream);
     }
   );
 
@@ -1627,6 +1691,29 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
     async (request) => {
       const { fileIds } = z.object({ fileIds: z.array(z.string().uuid()) }).parse(request.body);
 
+      // Both the album and every file must belong to the caller's household —
+      // otherwise foreign file rows (including storagePath) leak back out
+      // through GET /albums/:id.
+      const album = await db.query.albums.findFirst({
+        where: and(
+          eq(albums.id, request.params.id),
+          eq(albums.householdId, request.user!.householdId)
+        ),
+        columns: { id: true },
+      });
+      if (!album) throw Errors.notFound('Album');
+
+      const ownedFiles = await db.query.files.findMany({
+        where: and(
+          eq(files.householdId, request.user!.householdId),
+          sql`${files.id} IN (${sql.join(fileIds.map((id) => sql`${id}`), sql`, `)})`
+        ),
+        columns: { id: true },
+      });
+      if (ownedFiles.length !== fileIds.length) {
+        throw Errors.notFound('One or more files not found');
+      }
+
       const entries = fileIds.map((fileId, index) => ({
         albumId: request.params.id,
         fileId,
@@ -1643,6 +1730,15 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
     '/albums/:id/photos/:fileId',
     { preHandler: [authMiddleware, requireMember()] },
     async (request) => {
+      const album = await db.query.albums.findFirst({
+        where: and(
+          eq(albums.id, request.params.id),
+          eq(albums.householdId, request.user!.householdId)
+        ),
+        columns: { id: true },
+      });
+      if (!album) throw Errors.notFound('Album');
+
       await db
         .delete(albumFiles)
         .where(
@@ -1763,10 +1859,19 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
         music: 0,
         documents: 0,
       };
+      // 'music' pluralizes to a key that isn't in the breakdown — map types
+      // explicitly so music usage isn't reported under a stray 'musics' key.
+      const breakdownKey: Record<string, string> = {
+        photo: 'photos',
+        video: 'videos',
+        music: 'music',
+        document: 'documents',
+      };
 
       let totalUsed = 0;
       for (const file of fileList) {
-        breakdown[file.type + 's'] = (breakdown[file.type + 's'] || 0) + file.sizeBytes;
+        const key = breakdownKey[file.type] ?? file.type;
+        breakdown[key] = (breakdown[key] || 0) + file.sizeBytes;
         totalUsed += file.sizeBytes;
       }
 

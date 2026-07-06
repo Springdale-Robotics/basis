@@ -16,6 +16,7 @@ import { Errors } from '../../lib/errors.js';
 import { createReadStream } from 'fs';
 import * as fs from 'fs/promises';
 import { permissionService, type PermissionContext } from '../../services/permission.service.js';
+import { parseRangeHeader } from '../../lib/http-range.js';
 
 export async function musicRoutes(app: FastifyInstance): Promise<void> {
   // ===== ARTISTS =====
@@ -321,21 +322,22 @@ export async function musicRoutes(app: FastifyInstance): Promise<void> {
 
       const stat = await fs.stat(file.storagePath);
       const fileSize = stat.size;
-      const range = request.headers.range;
+      const parsed = parseRangeHeader(request.headers.range, fileSize);
 
-      if (range) {
-        const parts = range.replace(/bytes=/, '').split('-');
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-        const chunkSize = end - start + 1;
-
+      if (parsed.kind === 'unsatisfiable') {
+        reply
+          .code(416)
+          .header('Content-Range', `bytes */${fileSize}`)
+          .send();
+      } else if (parsed.kind === 'range') {
+        const { start, end } = parsed.range;
         const stream = createReadStream(file.storagePath, { start, end });
 
         reply
           .code(206)
           .header('Content-Range', `bytes ${start}-${end}/${fileSize}`)
           .header('Accept-Ranges', 'bytes')
-          .header('Content-Length', chunkSize)
+          .header('Content-Length', end - start + 1)
           .header('Content-Type', file.mimeType)
           .send(stream);
       } else {
@@ -359,11 +361,19 @@ export async function musicRoutes(app: FastifyInstance): Promise<void> {
         .object({ duration: z.number().int().min(0).optional() })
         .parse(request.body);
 
-      const track = await db.query.tracks.findFirst({
-        where: eq(tracks.id, request.params.id),
-      });
+      // Scope via the track's backing file — tracks carry no householdId
+      const [trackRow] = await db
+        .select({ id: tracks.id })
+        .from(tracks)
+        .innerJoin(files, eq(tracks.fileId, files.id))
+        .where(
+          and(
+            eq(tracks.id, request.params.id),
+            eq(files.householdId, request.user!.householdId)
+          )
+        );
 
-      if (!track) throw Errors.notFound('Track');
+      if (!trackRow) throw Errors.notFound('Track');
 
       await db.insert(listenHistory).values({
         userId: request.user!.id,
@@ -684,9 +694,13 @@ export async function musicRoutes(app: FastifyInstance): Promise<void> {
         columns: { genres: true },
       });
 
-      const trackList = await db.query.tracks.findMany({
-        columns: { genre: true },
-      });
+      // Scope tracks via their backing file — an unscoped query leaked other
+      // households' genres
+      const trackList = await db
+        .select({ genre: tracks.genre })
+        .from(tracks)
+        .innerJoin(files, eq(tracks.fileId, files.id))
+        .where(eq(files.householdId, request.user!.householdId));
 
       const genreSet = new Set<string>();
       for (const album of albumList) {
