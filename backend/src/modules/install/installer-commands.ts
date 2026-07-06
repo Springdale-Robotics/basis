@@ -1,6 +1,14 @@
 import { resolve } from 'path';
 import { promises as fs } from 'fs';
 import { config } from '../../config/index.js';
+import { getAppVersion } from '../../lib/app-version.js';
+import { compareVersions } from '../../lib/semver.js';
+import { resolveLatestRelease } from './github-release.js';
+
+/** Single-quote a value for safe interpolation into a bash script. */
+function shSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
 
 /**
  * Allowlisted "guided install" commands.
@@ -97,16 +105,17 @@ const COMMANDS: InstallerCommand[] = [
       'bash',
       '-lc',
       `set -eo pipefail
-echo "Checking GitHub for the latest Basis release..."
-LATEST=$(curl -fsSL https://api.github.com/repos/Springdale-Robotics/basis/releases \\
-  | grep -oE '"browser_download_url": ?"[^"]+basis-[^"]+\\.tar\\.gz"' \\
-  | head -1 \\
-  | sed -E 's/.*"(.+)"/\\1/')
+# TARBALL_URL / EXPECTED_VERSION / CURRENT_VERSION are injected by buildArgv,
+# resolved server-side by the SAME semver logic the update-check endpoint uses
+# (github-release.ts). The updater no longer greps GitHub's array order itself,
+# so the "Update to vX" button and what actually installs can't diverge.
+echo "Installing Basis $EXPECTED_VERSION (resolved by the server; currently on $CURRENT_VERSION)..."
+LATEST="$TARBALL_URL"
 if [ -z "$LATEST" ]; then
-  echo "Could not find a release tarball. Aborting."
+  echo "No release tarball URL was provided. Aborting."
   exit 1
 fi
-echo "Latest tarball: $LATEST"
+echo "Tarball: $LATEST"
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
@@ -128,6 +137,19 @@ echo "Extracting..."
 tar -xzf "$TMPDIR/release.tar.gz" -C "$TMPDIR"
 EXTRACTED=$(ls -d "$TMPDIR"/basis-* | head -1)
 NEW_VERSION=$(cat "$EXTRACTED/VERSION")
+
+# Defense in depth (the server already resolved + guarded this):
+# 1) the downloaded tarball must be the version the server resolved, and
+# 2) never downgrade — sort -V puts the lower version first.
+if [ "$NEW_VERSION" != "$EXPECTED_VERSION" ]; then
+  echo "Downloaded tarball is version $NEW_VERSION but the server resolved $EXPECTED_VERSION. Aborting before any change."
+  exit 1
+fi
+if [ "$CURRENT_VERSION" != "dev" ] && [ "$NEW_VERSION" != "$CURRENT_VERSION" ] \\
+   && [ "$(printf '%s\\n%s\\n' "$NEW_VERSION" "$CURRENT_VERSION" | sort -V | head -1)" = "$NEW_VERSION" ]; then
+  echo "Refusing to downgrade from $CURRENT_VERSION to $NEW_VERSION."
+  exit 1
+fi
 DEST="/opt/basis/versions/$NEW_VERSION"
 echo "Staging version $NEW_VERSION at $DEST"
 mkdir -p "/opt/basis/versions"
@@ -313,12 +335,43 @@ echo "Once signed in, return here and click 'Check again'."`,
  * Resolve any per-runtime placeholders in the command. Returns a fresh argv;
  * the original allowlist entry is never mutated.
  */
-export async function buildArgv(id: string): Promise<[string, ...string[]]> {
+export async function buildArgv(
+  id: string,
+  opts?: { prerelease?: boolean },
+): Promise<[string, ...string[]]> {
   const cmd = COMMANDS.find((c) => c.id === id);
   if (!cmd) throw new Error(`Unknown installer: ${id}`);
 
   if (id === 'shell-bash' && !config.ENABLE_ADMIN_TERMINAL) {
     throw new Error('The admin terminal is disabled (ENABLE_ADMIN_TERMINAL=false)');
+  }
+
+  if (id === 'update-self') {
+    // Resolve the target release HERE, server-side, with the same semver +
+    // prerelease logic as GET /install/version — then inject the resolved
+    // tarball URL and versions into the script. The URL is never client-
+    // supplied (no injection surface); the client only chooses the
+    // prerelease preference, matching what the Updates page showed.
+    const current = await getAppVersion();
+    const includePrerelease = opts?.prerelease !== false; // default true, matches /version
+    const resolved = await resolveLatestRelease(includePrerelease);
+    if (!resolved || !resolved.tarballUrl) {
+      throw new Error('No installable Basis release found on GitHub (no .tar.gz asset).');
+    }
+    // Downgrade/no-op guard mirrors the UI's updateAvailable check, so the
+    // button and the actual install agree on "is there something newer".
+    if (current !== 'dev' && compareVersions(resolved.version, current) <= 0) {
+      throw new Error(
+        `Already on the latest version (installed ${current}, latest ${resolved.version}). Refusing to reinstall or downgrade.`,
+      );
+    }
+    const header =
+      [
+        `TARBALL_URL=${shSingleQuote(resolved.tarballUrl)}`,
+        `EXPECTED_VERSION=${shSingleQuote(resolved.version)}`,
+        `CURRENT_VERSION=${shSingleQuote(current)}`,
+      ].join('\n') + '\n';
+    return ['bash', '-lc', header + cmd.argv[2]];
   }
 
   if (id === 'install-cloudflared') {
