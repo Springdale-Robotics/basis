@@ -9,6 +9,7 @@
 import { db } from '../config/database.js';
 import { inventoryStock, inventoryItems, inventoryAreas } from '../db/schema/index.js';
 import { eq, and, gt } from 'drizzle-orm';
+import { Errors } from '../lib/errors.js';
 import {
   calculateTrancheConfidence,
   getConfidenceBand,
@@ -44,11 +45,12 @@ export interface ItemConfidenceResult {
  */
 export async function getItemConfidence(
   itemId: string,
+  householdId: string,
   thresholds: ConfidenceThresholds = DEFAULT_THRESHOLDS,
 ): Promise<ItemConfidenceResult | null> {
-  // Get the item's default unit and density
+  // Get the item's default unit and density, scoped to the caller's household
   const item = await db.query.inventoryItems.findFirst({
-    where: eq(inventoryItems.id, itemId),
+    where: and(eq(inventoryItems.id, itemId), eq(inventoryItems.householdId, householdId)),
   });
   if (!item) return null;
 
@@ -224,14 +226,15 @@ export async function getInventoryConfidenceMap(
  */
 export async function depleteTranches(
   itemId: string,
+  householdId: string,
   quantity: number,
   unit: string,
 ): Promise<DepletionPlan> {
-  // Get item for density and quantity weights
+  // Get item for density and quantity weights, scoped to the caller's household
   const item = await db.query.inventoryItems.findFirst({
-    where: eq(inventoryItems.id, itemId),
+    where: and(eq(inventoryItems.id, itemId), eq(inventoryItems.householdId, householdId)),
   });
-  if (!item) throw new Error(`Item ${itemId} not found`);
+  if (!item) throw Errors.notFound('Item');
 
   // Get stock entries with area info
   const stockEntries = await db
@@ -337,12 +340,26 @@ export async function depleteTranches(
  */
 export async function reconcileItem(
   itemId: string,
+  householdId: string,
   actualQuantity: number,
   unit: string,
   areaId: string,
   _userId: string,
 ): Promise<void> {
   const now = new Date();
+
+  // Both the item and the target area must belong to the caller's household
+  const item = await db.query.inventoryItems.findFirst({
+    where: and(eq(inventoryItems.id, itemId), eq(inventoryItems.householdId, householdId)),
+    columns: { id: true },
+  });
+  if (!item) throw Errors.notFound('Item');
+
+  const area = await db.query.inventoryAreas.findFirst({
+    where: and(eq(inventoryAreas.id, areaId), eq(inventoryAreas.householdId, householdId)),
+    columns: { id: true },
+  });
+  if (!area) throw Errors.notFound('Area');
 
   // Delete all existing stock for this item
   await db.delete(inventoryStock).where(eq(inventoryStock.itemId, itemId));
@@ -370,6 +387,12 @@ export async function reconcileItem(
  * Sets all tranches to 0 quantity. The confidence is 100 because we're
  * certain we don't have it.
  */
-export async function markOutOfStock(itemId: string): Promise<void> {
+export async function markOutOfStock(itemId: string, householdId: string): Promise<void> {
+  const item = await db.query.inventoryItems.findFirst({
+    where: and(eq(inventoryItems.id, itemId), eq(inventoryItems.householdId, householdId)),
+    columns: { id: true },
+  });
+  if (!item) throw Errors.notFound('Item');
+
   await db.delete(inventoryStock).where(eq(inventoryStock.itemId, itemId));
 }
