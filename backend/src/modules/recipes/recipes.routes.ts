@@ -790,6 +790,16 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         .object({ servingsMultiplier: z.number().positive().default(1) })
         .parse(request.body || {});
 
+      // The recipe must belong to the caller's household
+      const recipe = await db.query.recipes.findFirst({
+        where: and(
+          eq(recipes.id, request.params.id),
+          eq(recipes.householdId, request.user!.householdId)
+        ),
+        columns: { id: true },
+      });
+      if (!recipe) throw Errors.notFound('Recipe');
+
       const [session] = await db
         .insert(activeCookingSessions)
         .values({
@@ -809,15 +819,23 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
     '/cooking/:sessionId',
     { preHandler: [authMiddleware] },
     async (request) => {
-      const session = await db.query.activeCookingSessions.findFirst({
-        where: eq(activeCookingSessions.id, request.params.sessionId),
-      });
+      // Scope via the session's recipe — sessions carry no householdId
+      const [row] = await db
+        .select({ session: activeCookingSessions })
+        .from(activeCookingSessions)
+        .innerJoin(recipes, eq(activeCookingSessions.recipeId, recipes.id))
+        .where(
+          and(
+            eq(activeCookingSessions.id, request.params.sessionId),
+            eq(recipes.householdId, request.user!.householdId)
+          )
+        );
 
-      if (!session) {
+      if (!row) {
         throw Errors.notFound('Cooking session');
       }
 
-      return { success: true, data: { session } };
+      return { success: true, data: { session: row.session } };
     }
   );
 
@@ -829,6 +847,9 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       const finishSchema = z.object({
         sessionId: z.string().uuid().optional(),
         mealPlanId: z.string().uuid().optional(),
+        // Client-side cook mode passes the scale directly; a backend cook
+        // session (sessionId) takes precedence when present.
+        servingsMultiplier: z.number().positive().max(100).optional(),
         deductInventory: z.boolean().default(true),
         adjustments: z.array(z.object({
           ingredientId: z.string().uuid(),
@@ -837,7 +858,13 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         })).optional(),
       });
 
-      const { sessionId, mealPlanId, deductInventory, adjustments } = finishSchema.parse(request.body || {});
+      const {
+        sessionId,
+        mealPlanId,
+        deductInventory,
+        adjustments,
+        servingsMultiplier: bodyMultiplier,
+      } = finishSchema.parse(request.body || {});
 
       const deductionWarnings: string[] = [];
       const deductedItems: Array<{ itemName: string; quantity: number; unit?: string }> = [];
@@ -854,8 +881,9 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.notFound('Recipe');
       }
 
-      // Get cooking session for servings multiplier
-      let servingsMultiplier = 1;
+      // Serving scale: a backend cook session wins; otherwise the client
+      // passes it directly (cook mode is a client-side session).
+      let servingsMultiplier = bodyMultiplier ?? 1;
       if (sessionId) {
         const session = await db.query.activeCookingSessions.findFirst({
           where: eq(activeCookingSessions.id, sessionId),
