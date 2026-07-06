@@ -324,6 +324,13 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
+      // Recurrence expands in the calendar's timezone
+      const calendarRow = await db.query.calendars.findFirst({
+        where: eq(calendars.id, request.params.calendarId),
+        columns: { timezone: true },
+      });
+      const calendarTz = calendarRow?.timezone ?? 'UTC';
+
       // Expand recurring events
       const expandedEvents: any[] = [];
 
@@ -333,7 +340,7 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
           const eventExceptions = exceptions.filter(ex => ex.recurringEventId === event.id);
 
           // Expand recurrence
-          const instances = expandRecurrence(event, start, end, eventExceptions);
+          const instances = expandRecurrence(event, start, end, eventExceptions, calendarTz);
 
           for (const instance of instances) {
             if (instance.isCancelled) {
@@ -964,13 +971,14 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
     async (request) => {
       const { start, end, expandRecurring } = dateRangeQuery.parse(request.query);
 
-      // Get all calendar IDs for household
+      // Get all calendar IDs for household (timezone anchors recurrence expansion)
       const householdCalendars = await db.query.calendars.findMany({
         where: eq(calendars.householdId, request.user!.householdId),
-        columns: { id: true },
+        columns: { id: true, timezone: true },
       });
 
       const calendarIds = householdCalendars.map((c) => c.id);
+      const timezoneByCalendar = new Map(householdCalendars.map((c) => [c.id, c.timezone]));
 
       if (calendarIds.length === 0) {
         return { success: true, data: { events: [] } };
@@ -1037,8 +1045,14 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
           // Get exceptions for this master event
           const eventExceptions = exceptions.filter(ex => ex.recurringEventId === event.id);
 
-          // Expand recurrence
-          const instances = expandRecurrence(event, start, end, eventExceptions);
+          // Expand recurrence in the calendar's timezone
+          const instances = expandRecurrence(
+            event,
+            start,
+            end,
+            eventExceptions,
+            timezoneByCalendar.get(event.calendarId) ?? 'UTC'
+          );
 
           for (const instance of instances) {
             if (instance.isCancelled) {
