@@ -15,8 +15,8 @@ const remoteModes = [
   },
   {
     name: 'Cloudflare Tunnel',
-    tag: 'Free',
-    body: 'Publishes Basis to the public internet through Cloudflare, no port forwarding. Requires a Cloudflare account and your own domain on Cloudflare DNS. Note Cloudflare’s terms restrict proxying streamed media.',
+    tag: 'Free, no streaming',
+    body: 'Publishes Basis to the public internet through your own Cloudflare account, no port forwarding. Requires a Cloudflare account and your own domain on Cloudflare DNS. Great for the calendar, tasks, and browsing — but Cloudflare’s terms restrict serving video and music through the tunnel, so use Basis Remote or Tailscale if your household streams media remotely.',
   },
   {
     name: 'Custom domain',
