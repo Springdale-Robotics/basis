@@ -71,11 +71,11 @@ const MODES: ModeOption[] = [
   {
     id: 'cloudflare',
     label: 'Cloudflare Tunnel',
-    description: 'Publicly reachable via a Cloudflare tunnel',
+    description: 'Public URL via your own Cloudflare account (not for streaming)',
     icon: Cloud,
     urlPlaceholder: 'https://home.yourdomain.com',
     guidance:
-      'Cloudflare terminates TLS and forwards X-Forwarded-* headers. No additional certificate work is required.',
+      'Cloudflare terminates TLS and forwards X-Forwarded-* headers. No additional certificate work is required. Note: Cloudflare’s terms restrict streaming video/music through the tunnel — use Basis Remote or Tailscale for that.',
     allowsHttp: false,
   },
   {
@@ -742,6 +742,17 @@ function CloudflarePanel({
 
   return (
     <>
+      <Alert className="mb-4">
+        <AlertTriangle className="h-4 w-4" />
+        <AlertTitle>Good for the app, not for streaming</AlertTitle>
+        <AlertDescription>
+          Cloudflare's terms restrict serving video and large media through their
+          tunnel. It works well for the calendar, tasks, recipes, and browsing photos.
+          But if your household streams movies or music remotely, use{' '}
+          <strong>Basis Remote</strong> or <strong>Tailscale</strong> instead — those
+          don't route your media through a CDN.
+        </AlertDescription>
+      </Alert>
       {body}
       {installDialog}
     </>
