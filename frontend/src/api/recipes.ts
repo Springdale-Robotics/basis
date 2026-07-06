@@ -220,6 +220,8 @@ export interface GenerateShoppingListResponse {
 export interface FinishCookingRequest {
   sessionId?: string;
   mealPlanId?: string;
+  /** Serving scale for deduction when not using a backend cook session. */
+  servingsMultiplier?: number;
   deductInventory?: boolean;
   adjustments?: Array<{
     ingredientId: string;

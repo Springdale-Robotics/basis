@@ -25,6 +25,10 @@ interface FinishCookingDialogProps {
   onOpenChange: (open: boolean) => void;
   recipeId: string;
   ingredients: RecipeIngredient[];
+  /** Serving scale from cook mode — deductions run at this multiple, not 1x. */
+  servingsMultiplier?: number;
+  /** When cooking from the meal plan, finishing marks this entry cooked. */
+  mealPlanId?: string;
   onComplete: () => void;
 }
 
@@ -45,6 +49,8 @@ export function FinishCookingDialog({
   onOpenChange,
   recipeId,
   ingredients,
+  servingsMultiplier = 1,
+  mealPlanId,
   onComplete,
 }: FinishCookingDialogProps) {
   const { isAdvanced } = useInventoryTier();
@@ -62,9 +68,9 @@ export function FinishCookingDialog({
       inventoryIngredients.map(ing => ({
         ingredientId: ing.id,
         name: ing.name,
-        originalAmount: ing.amount,
+        originalAmount: ing.amount * servingsMultiplier,
         unit: ing.unit,
-        actualAmount: ing.amount,
+        actualAmount: ing.amount * servingsMultiplier,
         skipped: false,
         inventoryItemId: ing.inventoryItemId,
       }))
@@ -79,7 +85,11 @@ export function FinishCookingDialog({
   const handleYesUsedAll = async () => {
     setIsSubmitting(true);
     try {
-      await recipesApi.finishCooking(recipeId, { deductInventory: true });
+      await recipesApi.finishCooking(recipeId, {
+        deductInventory: true,
+        servingsMultiplier,
+        mealPlanId,
+      });
       onComplete();
     } catch (error) {
       toast({
@@ -116,6 +126,8 @@ export function FinishCookingDialog({
     try {
       const request: FinishCookingRequest = {
         deductInventory: true,
+        servingsMultiplier,
+        mealPlanId,
         adjustments: adjustments.map(adj => ({
           ingredientId: adj.ingredientId,
           actualQuantityUsed: adj.skipped ? 0 : adj.actualAmount,
@@ -139,7 +151,7 @@ export function FinishCookingDialog({
   const handleBasicFinish = async () => {
     setIsSubmitting(true);
     try {
-      await recipesApi.finishCooking(recipeId, { deductInventory: false });
+      await recipesApi.finishCooking(recipeId, { deductInventory: false, mealPlanId });
       // Mark used-up items as out of stock. Track failures instead of silently
       // swallowing them — otherwise the user thinks stock updated when it didn't.
       const failed: string[] = [];
@@ -224,7 +236,10 @@ export function FinishCookingDialog({
                     onClick={async () => {
                       setIsSubmitting(true);
                       try {
-                        await recipesApi.finishCooking(recipeId, { deductInventory: false });
+                        await recipesApi.finishCooking(recipeId, {
+                          deductInventory: false,
+                          mealPlanId,
+                        });
                         onComplete();
                       } catch (error) {
                         toast({

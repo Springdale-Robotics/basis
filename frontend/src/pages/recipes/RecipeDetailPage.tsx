@@ -454,7 +454,18 @@ export function RecipeDetailPage() {
                   </Button>
                 </EditGate>
                 <Button asChild>
-                  <Link to={`/recipes/${id}/cook`}>
+                  {/* Carry the serving scaler into cook mode so ingredient
+                      amounts and the final deduction run at the scaled size,
+                      not 1x. */}
+                  <Link
+                    to={`/recipes/${id}/cook${
+                      scaledServings !== null &&
+                      recipe.servings &&
+                      scaledServings !== recipe.servings
+                        ? `?multiplier=${(scaledServings / recipe.servings).toFixed(6)}`
+                        : ''
+                    }`}
+                  >
                     <PlayCircle className="mr-2 h-4 w-4" />
                     Start Cooking
                   </Link>

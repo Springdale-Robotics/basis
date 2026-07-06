@@ -1,7 +1,7 @@
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { useRecipeWithIngredients } from '@/hooks/useRecipeWithIngredients';
-import { getIngredientDisplayName } from '@/lib/recipe-display';
+import { getIngredientDisplayName, roundQuantity } from '@/lib/recipe-display';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -43,6 +43,13 @@ type CookingMode = 'linear' | 'checklist';
 export function CookModePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  // Serving scale + meal-plan linkage travel via query params from the recipe
+  // page and the meal-plan dialog, so a reload mid-cook keeps them.
+  const [searchParams] = useSearchParams();
+  const parsedMultiplier = parseFloat(searchParams.get('multiplier') ?? '1');
+  const servingsMultiplier =
+    Number.isFinite(parsedMultiplier) && parsedMultiplier > 0 ? parsedMultiplier : 1;
+  const mealPlanId = searchParams.get('mealPlanId') ?? undefined;
   const [showFinishDialog, setShowFinishDialog] = useState(false);
   const [showExitWarning, setShowExitWarning] = useState(false);
   const [cookingMode, setCookingMode] = useState<CookingMode>('linear');
@@ -396,7 +403,7 @@ export function CookModePage() {
                         className="flex items-center gap-2 rounded-lg border p-3"
                       >
                         <span className="font-medium">
-                          {ingredient.amount} {ingredient.unit}
+                          {roundQuantity(ingredient.amount * servingsMultiplier)} {ingredient.unit}
                         </span>
                         <span className="flex-1 min-w-0 text-muted-foreground">
                           <span className="block">{getIngredientDisplayName(ingredient)}</span>
@@ -425,6 +432,8 @@ export function CookModePage() {
         onOpenChange={setShowFinishDialog}
         recipeId={id!}
         ingredients={ingredients}
+        servingsMultiplier={servingsMultiplier}
+        mealPlanId={mealPlanId}
         onComplete={handleFinishComplete}
       />
 

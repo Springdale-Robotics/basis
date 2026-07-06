@@ -141,7 +141,14 @@ export function MealActionDialog({
       await updateMutation.mutateAsync(multiplier);
     }
     onOpenChange(false);
-    navigate(`/recipes/${meal.recipeId}/cook`);
+    // Carry the multiplier and meal-plan id into cook mode: the multiplier
+    // scales displayed amounts and the final inventory deduction; the meal
+    // plan id lets finish-cooking mark this entry cooked.
+    const params = new URLSearchParams({ mealPlanId: meal.id });
+    if (Math.abs(multiplier - 1) > 1e-6) {
+      params.set('multiplier', multiplier.toFixed(6));
+    }
+    navigate(`/recipes/${meal.recipeId}/cook?${params.toString()}`);
   };
 
   return (
