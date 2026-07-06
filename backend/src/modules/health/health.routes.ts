@@ -48,7 +48,10 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
       latency_ms: Date.now() - redisStart,
     };
 
-    // Check CRF ingredient parser
+    // Check CRF ingredient parser — reported for visibility but NOT part of
+    // readiness. It's an optional sidecar (install.sh treats it as degradable
+    // and the update watchdog probes /live); a monitor on /ready must not
+    // report the whole box unhealthy over a cosmetic parser being down.
     const crfStart = Date.now();
     const crfOk = await isCRFParserAvailable();
     checks.crf_parser = {
@@ -56,7 +59,7 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
       latency_ms: Date.now() - crfStart,
     };
 
-    const allOk = dbOk && redisOk && crfOk;
+    const allOk = dbOk && redisOk;
 
     if (!allOk) {
       reply.status(503);

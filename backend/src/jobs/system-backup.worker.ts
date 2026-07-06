@@ -5,6 +5,7 @@ import {
   pgDumpAvailable,
   createBackup,
   pruneBackups,
+  prunePreUpdateSnapshots,
   copyBackupOffHost,
 } from '../modules/system/system-backup.service.js';
 
@@ -12,8 +13,11 @@ const QUEUE_NAME = 'system-backup';
 
 const connection = { connectionName: 'system-backup' } as const;
 
-/** Newest backups to keep after each automatic run. */
+/** Newest nightly backups to keep after each automatic run. */
 const RETAIN_COUNT = 14;
+
+/** Newest pre-update rollback snapshots to keep (separate from nightly). */
+const RETAIN_PRE_UPDATE = 5;
 
 export const systemBackupQueue = new Queue(QUEUE_NAME, {
   connection: { url: config.REDIS_URL, ...connection },
@@ -60,6 +64,16 @@ export async function processSystemBackup(job: Job<SystemBackupJobData>): Promis
   const pruned = await pruneBackups(RETAIN_COUNT);
   if (pruned.length > 0) {
     log.info({ removed: pruned.length, retained: RETAIN_COUNT }, 'Pruned old backups');
+  }
+
+  // Pre-update rollback snapshots retain independently so a burst of updates
+  // can't crowd out nightly backups, and the rollback point doesn't age out.
+  const prunedSnapshots = await prunePreUpdateSnapshots(RETAIN_PRE_UPDATE);
+  if (prunedSnapshots.length > 0) {
+    log.info(
+      { removed: prunedSnapshots.length, retained: RETAIN_PRE_UPDATE },
+      'Pruned old pre-update snapshots',
+    );
   }
 }
 

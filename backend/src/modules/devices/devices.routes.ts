@@ -152,6 +152,17 @@ export async function devicesRoutes(app: FastifyInstance): Promise<void> {
     '/:id/rules',
     { preHandler: [authMiddleware] },
     async (request) => {
+      // The device must belong to the caller's household — otherwise any
+      // logged-in user could read another household's device rules.
+      const device = await db.query.devices.findFirst({
+        where: and(
+          eq(devices.id, request.params.id),
+          eq(devices.householdId, request.user!.householdId)
+        ),
+        columns: { id: true },
+      });
+      if (!device) throw Errors.notFound('Device');
+
       const rules = await db.query.deviceRules.findMany({
         where: eq(deviceRules.deviceId, request.params.id),
         orderBy: (r, { asc }) => [asc(r.priority)],
@@ -201,7 +212,28 @@ export async function devicesRoutes(app: FastifyInstance): Promise<void> {
     '/:id/rules/:ruleId',
     { preHandler: [authMiddleware, requireAdmin()] },
     async (request) => {
-      await db.delete(deviceRules).where(eq(deviceRules.id, request.params.ruleId));
+      // Scope to a device in the caller's household, and to that device, so an
+      // admin can't delete an arbitrary rule id from another household.
+      const device = await db.query.devices.findFirst({
+        where: and(
+          eq(devices.id, request.params.id),
+          eq(devices.householdId, request.user!.householdId)
+        ),
+        columns: { id: true },
+      });
+      if (!device) throw Errors.notFound('Device');
+
+      const deleted = await db
+        .delete(deviceRules)
+        .where(
+          and(
+            eq(deviceRules.id, request.params.ruleId),
+            eq(deviceRules.deviceId, request.params.id)
+          )
+        )
+        .returning({ id: deviceRules.id });
+
+      if (deleted.length === 0) throw Errors.notFound('Rule');
 
       return { success: true, data: { message: 'Rule deleted' } };
     }
