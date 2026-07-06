@@ -57,7 +57,7 @@ cd frontend && npm run lint         # Frontend ESLint
 
 ### Key Patterns
 
-- **Multi-tenant:** Application-level isolation ONLY — every query must filter by `householdId` (from `request.user!.householdId`), and any id taken from the caller (params or body) must be verified to belong to that household. There is NO Postgres row-level security backstop; a forgotten `where` is a cross-household leak. Add a tenancy test (see `backend/test/inventory/tenancy.test.ts`) for new routes.
+- **Multi-tenant:** Two layers. (1) **Application-level** — every query MUST still filter by `householdId` (from `request.user!.householdId`) and verify caller-supplied ids belong to that household; this is the primary guard. Add a tenancy test (see `backend/test/inventory/tenancy.test.ts`) for new routes. (2) **Postgres RLS backstop** — authenticated requests run their DB queries as the `basis_rls` role with `app.household_id` set (per-request reserved connection, wired in `config/database.ts` + `auth.middleware.ts`), and policies on the core tables enforce tenancy at the DB. Workers/migrations/backups run as the owner and bypass RLS by design. **New household-scoped tables need a policy** — follow the pattern in `drizzle/0008_rls_all_tables.sql` and add a check to `backend/test/rls/`. Some tables are deliberately app-level-only (user-scoped, polymorphic `permissions`, cloud/ops); see `docs/product-review-2026-07/RLS-PLAN.md`.
 - **Real-time sync:** WebSocket events trigger React Query invalidations
 - **Auth:** Cookie-based sessions with Lucia, stored in database
 - **Validation:** Zod schemas shared between routes and forms
