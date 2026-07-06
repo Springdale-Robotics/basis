@@ -7,10 +7,10 @@ One line per finding: `[done|skipped|blocked] <area> <desc> — <sha/reason>`.
 
 ## SUMMARY
 
-**Status: P0 + P1 complete and verified; P2 substantially complete.** 21 commits.
-Backend test suite grew from 119 passing (review baseline) to **226 passing /
-10 skipped** (the skips are the pre-existing CRF tests needing the Python
-sidecar). Backend `typecheck` + `lint` clean (0 errors; 119 pre-existing
+**Status: P0 + P1 complete and verified; P2 substantially complete (incl. the
+platform HIGH #1 update-resolution fix).** Backend test suite grew from 119
+passing (review baseline) to **233 passing / 10 skipped** (the skips are the
+pre-existing CRF tests needing the Python sidecar). Backend `typecheck` + `lint` clean (0 errors; 119 pre-existing
 warnings, none in new code). Frontend `tsc` clean. Two hand-authored migrations
 (0005 rewards-unique, 0006 synced-calendars-readonly) applied to the dev DB.
 
@@ -50,13 +50,10 @@ a typecheck + the behavior traced end-to-end). Highlights:
 
 ### Still open (deliberately not done — see "Left for you" and P3)
 
-- **Update-self release resolution + version-dir pruning** (platform HIGH #1,
-  MEDIUM #2): the fix lives in a 130-line bash program embedded in a TS template
-  literal that only runs on the prod box. Per your "don't touch deploys/box"
-  rule and because it can't be exercised here, I did the low-risk adjacent items
-  (snapshot retention separation) and left the release-resolution rewrite for
-  you. It's real and worth doing — unify on the semver-resolved URL from
-  `/version`.
+- **Version-dir pruning** (platform MEDIUM #2): belongs in `post-update-watchdog.sh`
+  (prune only *after* the watchdog confirms the new version is healthy, so the
+  rollback target survives), which runs only on the box and can't be exercised
+  here. The release-resolution HIGH #1 it was paired with is now DONE.
 - **Video transcoding / HLS, HEIC conversion** — explicitly your call (net-new).
 - **Backup media inclusion + restore verification + maintenance-mode restore**
   (platform MEDIUM #3, #4) — touches the backup/restore path that runs on the
@@ -94,7 +91,8 @@ a typecheck + the behavior traced end-to-end). Highlights:
 - [done] transactions: deplete (FOR UPDATE) + reconcile (atomic delete+insert) + shopping to-inventory/put-away + lists duplicate + lists/areas reorder + invite acceptance (conditional claim) — depletion concurrency test
 - [done] media: scanner FK bug (uploadedBy → admin user) + music/musics dir & breakdown-key mismatch; shared RFC 7233 range parser (suffix ranges, 416, streaming download, filename sanitize); bulk delete/move per-file permission checks; album add/remove + music genres/listen household scoping — 6 range tests
 - [done] platform: device-rules tenancy (GET/DELETE); /health/ready decoupled from optional CRF sidecar; pre-update rollback snapshots retained separately from nightly (own prune) — device-rules tenancy test
-- [skipped] platform: update-self release resolution unify + version-dir prune — runs only on prod box (bash-in-TS), unverifiable here + "don't touch deploys" rule; left for review
+- [done] platform: update-self release resolution unified (shared resolveLatestRelease; buildArgv injects the semver-resolved tarball URL server-side; no-op/downgrade guard) — verified via bash -n + guard logic test + 7 unit tests (platform HIGH #1)
+- [skipped] platform: version-dir prune to last 2-3 — belongs in post-update-watchdog.sh (post-success), which runs only on the box; left for review
 - [skipped] platform: backup media inclusion + restore verification + maintenance-mode restore — box/deploy backup path; left for review
 
 ## P3 (not started — per instructions)
