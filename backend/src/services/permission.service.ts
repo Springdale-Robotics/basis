@@ -684,10 +684,26 @@ export async function grantPermission(
 }
 
 /**
- * Revoke a permission by ID.
+ * Revoke a permission by ID, scoped to the resource the caller was authorized
+ * on — the id alone would let an admin of one resource delete any permission
+ * row in the database. Returns false if no matching row existed.
  */
-export async function revokePermission(permissionId: string): Promise<void> {
-  await db.delete(permissions).where(eq(permissions.id, permissionId));
+export async function revokePermission(
+  permissionId: string,
+  resourceType: ResourceType,
+  resourceId: string
+): Promise<boolean> {
+  const deleted = await db
+    .delete(permissions)
+    .where(
+      and(
+        eq(permissions.id, permissionId),
+        eq(permissions.resourceType, resourceType),
+        eq(permissions.resourceId, resourceId)
+      )
+    )
+    .returning({ id: permissions.id });
+  return deleted.length > 0;
 }
 
 /**
@@ -760,16 +776,27 @@ export async function getResourcePermissions(
 }
 
 /**
- * Update a permission's level.
+ * Update a permission's level, scoped to the resource the caller was
+ * authorized on (see revokePermission). Returns false if no matching row.
  */
 export async function updatePermissionLevel(
   permissionId: string,
+  resourceType: ResourceType,
+  resourceId: string,
   level: PermissionLevel
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const updated = await db
     .update(permissions)
     .set({ permissionLevel: level })
-    .where(eq(permissions.id, permissionId));
+    .where(
+      and(
+        eq(permissions.id, permissionId),
+        eq(permissions.resourceType, resourceType),
+        eq(permissions.resourceId, resourceId)
+      )
+    )
+    .returning({ id: permissions.id });
+  return updated.length > 0;
 }
 
 // ===== FEATURE-LEVEL PERMISSIONS =====
