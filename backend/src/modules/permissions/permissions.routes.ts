@@ -121,7 +121,15 @@ export async function permissionsRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.forbidden('You need admin access to manage permissions');
       }
 
-      await updatePermissionLevel(permissionId, input.level);
+      const updatedRow = await updatePermissionLevel(
+        permissionId,
+        resourceType,
+        resourceId,
+        input.level
+      );
+      if (!updatedRow) {
+        throw Errors.notFound('Permission');
+      }
 
       // Re-fetch the permission with details
       const permissions = await getResourcePermissions(resourceType, resourceId);
@@ -156,7 +164,10 @@ export async function permissionsRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.forbidden('You need admin access to manage permissions');
       }
 
-      await revokePermission(permissionId);
+      const revoked = await revokePermission(permissionId, resourceType, resourceId);
+      if (!revoked) {
+        throw Errors.notFound('Permission');
+      }
 
       return { success: true, data: { message: 'Permission revoked' } };
     }
