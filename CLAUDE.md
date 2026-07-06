@@ -57,7 +57,7 @@ cd frontend && npm run lint         # Frontend ESLint
 
 ### Key Patterns
 
-- **Multi-tenant:** Row-level security via `app.household_id` PostgreSQL context
+- **Multi-tenant:** Application-level isolation ONLY — every query must filter by `householdId` (from `request.user!.householdId`), and any id taken from the caller (params or body) must be verified to belong to that household. There is NO Postgres row-level security backstop; a forgotten `where` is a cross-household leak. Add a tenancy test (see `backend/test/inventory/tenancy.test.ts`) for new routes.
 - **Real-time sync:** WebSocket events trigger React Query invalidations
 - **Auth:** Cookie-based sessions with Lucia, stored in database
 - **Validation:** Zod schemas shared between routes and forms
