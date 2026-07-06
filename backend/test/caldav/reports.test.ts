@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { XMLParser } from 'fast-xml-parser';
 import { eq } from 'drizzle-orm';
 import { basicAuth, setupCalDavTest, type CalDavTestContext } from './harness.js';
 import { db } from '../../src/config/database.js';
@@ -124,6 +125,13 @@ describe('CalDAV REPORTs (Phase 3f)', () => {
     const body = await res.text();
     expect(body).toContain(`/${event.id}.ics`);
     expect(body).toMatch(/<d:sync-token>http:\/\/homemanager\/sync\/\d+<\/d:sync-token>/);
+
+    // The response must be well-formed XML with sync-token INSIDE multistatus
+    // (RFC 6578). A regex-only assertion let a token appended after the
+    // document root slip through — strict clients reject that.
+    const parsed = new XMLParser({ ignoreAttributes: false }).parse(body);
+    expect(parsed['d:multistatus']['d:sync-token']).toMatch(/^http:\/\/homemanager\/sync\/\d+$/);
+    expect(body.trimEnd().endsWith('</d:multistatus>')).toBe(true);
 
     await db.delete(calendarEvents).where(eq(calendarEvents.id, event.id));
   });
