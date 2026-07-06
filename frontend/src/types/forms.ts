@@ -18,20 +18,6 @@ export const registerFormSchema = z.object({
 });
 export type RegisterFormData = z.infer<typeof registerFormSchema>;
 
-export const forgotPasswordFormSchema = z.object({
-  email: z.string().email('Invalid email address'),
-});
-export type ForgotPasswordFormData = z.infer<typeof forgotPasswordFormSchema>;
-
-export const resetPasswordFormSchema = z.object({
-  password: z.string().min(1, 'Password is required'),
-  confirmPassword: z.string(),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: "Passwords don't match",
-  path: ['confirmPassword'],
-});
-export type ResetPasswordFormData = z.infer<typeof resetPasswordFormSchema>;
-
 // Setup forms
 export const setupHouseholdFormSchema = z.object({
   name: z.string().min(1, 'Household name is required').max(255),

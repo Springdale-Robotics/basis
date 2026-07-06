@@ -3,15 +3,9 @@ import { authMiddleware } from '../../middleware/auth.middleware.js';
 import { authRateLimiter } from '../../middleware/rate-limit.middleware.js';
 import {
   loginSchema,
-  registerSchema,
   registerWithInviteSchema,
-  forgotPasswordSchema,
-  resetPasswordSchema,
   type LoginInput,
-  type RegisterInput,
   type RegisterWithInviteInput,
-  type ForgotPasswordInput,
-  type ResetPasswordInput,
 } from './auth.schema.js';
 import * as authService from './auth.service.js';
 import { config } from '../../config/index.js';
@@ -54,34 +48,13 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
-  // Register (during setup or invite)
-  app.post<{ Body: RegisterInput }>(
-    '/register',
-    {
-      preHandler: [authRateLimiter],
-    },
-    async (request, reply) => {
-      const input = registerSchema.parse(request.body);
-      const result = await authService.register(input);
-
-      // Set session cookie
-      reply.setCookie('session', result.session.id, {
-        httpOnly: true,
-        secure: request.protocol === 'https',
-        sameSite: 'lax',
-        path: '/',
-        maxAge: config.SESSION_MAX_AGE_MS / 1000,
-      });
-
-      return {
-        success: true,
-        data: {
-          user: result.user,
-          household: result.household,
-        },
-      };
-    }
-  );
+  // NOTE: there is deliberately no open `/register` endpoint. Joining an
+  // existing household requires an invite (`/register/invite` below); the
+  // first admin is created through the setup flow, which is gated on the
+  // instance having no household yet. An open registration path let anyone
+  // who knew a householdId (returned by /auth/me to every member) mint
+  // themselves a full `member` account — including kids/visitors escalating
+  // their own role.
 
   // Validate invite code (public endpoint)
   app.get<{ Params: { code: string } }>(
@@ -229,61 +202,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
-  // Forgot password
-  app.post<{ Body: ForgotPasswordInput }>(
-    '/forgot-password',
-    {
-      preHandler: [authRateLimiter],
-    },
-    async (request) => {
-      const { email } = forgotPasswordSchema.parse(request.body);
-      const token = await authService.createPasswordResetToken(email);
-
-      // Always return success to prevent email enumeration
-      // In production, you would send an email with the reset link
-      if (token) {
-        // TODO: Send email with reset link
-        // For now, just log it in development
-        if (config.NODE_ENV === 'development') {
-          console.log(`Password reset token for ${email}: ${token}`);
-        }
-      }
-
-      return {
-        success: true,
-        data: {
-          message: 'If an account exists, a password reset email has been sent',
-        },
-      };
-    }
-  );
-
-  // Reset password
-  app.post<{ Body: ResetPasswordInput }>(
-    '/reset-password',
-    {
-      preHandler: [authRateLimiter],
-    },
-    async (request) => {
-      const { token, password } = resetPasswordSchema.parse(request.body);
-      const success = await authService.resetPassword(token, password);
-
-      if (!success) {
-        return {
-          success: false,
-          error: {
-            code: 'AUTH_1007',
-            message: 'Invalid or expired reset token',
-          },
-        };
-      }
-
-      return {
-        success: true,
-        data: { message: 'Password has been reset successfully' },
-      };
-    }
-  );
+  // NOTE: there is deliberately no email-token password reset. No mailer
+  // exists on a Basis box, so the old /forgot-password endpoint claimed to
+  // send an email it never sent. Recovery for a locked-out member is an
+  // admin reset: POST /users/:id/reset-password (Settings → Members).
 
   // Get active sessions
   app.get(

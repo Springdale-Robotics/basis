@@ -4,9 +4,10 @@ import { db } from '../../config/database.js';
 import { users, userSettings } from '../../db/schema/index.js';
 import type { NotificationPreferences } from '../../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
-import { authMiddleware } from '../../middleware/auth.middleware.js';
+import { authMiddleware, requireAdmin } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
-import { changePassword } from '../auth/auth.service.js';
+import { changePassword, adminResetPassword } from '../auth/auth.service.js';
+import { passwordSchema } from '../../lib/validators.js';
 
 const updateUserSchema = z.object({
   displayName: z.string().min(1).max(255).optional(),
@@ -124,6 +125,27 @@ export async function usersRoutes(app: FastifyInstance): Promise<void> {
       await changePassword(request.user!.id, currentPassword, newPassword);
 
       return { success: true, data: { message: 'Password updated' } };
+    }
+  );
+
+  // Admin reset of a household member's password. This is the recovery path
+  // for a locked-out member — the instance has no mailer, so there is no
+  // emailed reset link. Revokes all of the member's sessions.
+  app.post<{ Params: { id: string } }>(
+    '/:id/reset-password',
+    { preHandler: [authMiddleware, requireAdmin()] },
+    async (request) => {
+      const { newPassword } = z.object({ newPassword: passwordSchema }).parse(request.body);
+
+      if (request.params.id === request.user!.id) {
+        throw Errors.validation(
+          'Use the change-password flow for your own account.'
+        );
+      }
+
+      await adminResetPassword(request.user!.householdId, request.params.id, newPassword);
+
+      return { success: true, data: { message: 'Password reset' } };
     }
   );
 
