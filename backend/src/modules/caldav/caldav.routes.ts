@@ -804,9 +804,13 @@ async function handleSyncCollection(
       );
     }
   }
-  // Append the new sync-token at the end.
-  const tail = `  <d:sync-token>http://homemanager/sync/${syncState.syncToken}</d:sync-token>`;
-  const xml = multistatus(responses) + tail;
+  // RFC 6578: the new sync-token is a child of multistatus. Appending it
+  // after </d:multistatus> produced content-after-root XML that strict
+  // clients (iOS, DAVx5) reject, silently breaking incremental sync.
+  responses.push(
+    `  <d:sync-token>http://homemanager/sync/${syncState.syncToken}</d:sync-token>`
+  );
+  const xml = multistatus(responses);
   setDavHeaders(reply);
   reply.code(207).type('application/xml; charset=utf-8').send(xml);
 }
