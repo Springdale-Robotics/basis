@@ -200,7 +200,10 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
           color: color || '#4285F4', // Google blue
           type: 'synced',
           isSynced: true,
-          isReadOnly: false, // Allow two-way sync
+          // Pull-only: no push-to-provider path exists, so local edits would
+          // be silently clobbered by the next hourly pull. Read-only until
+          // real two-way sync ships.
+          isReadOnly: true,
           syncProvider: 'google',
           syncCredentials: encryptedCredentials,
           syncCalendarId: googleCalendarId,
@@ -527,7 +530,8 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
           color: color || '#0078D4', // Microsoft blue
           type: 'synced',
           isSynced: true,
-          isReadOnly: false,
+          // Pull-only, same as Google above.
+          isReadOnly: true,
           syncProvider: 'outlook',
           syncCredentials: encryptedCredentials,
           syncCalendarId: outlookCalendarId,

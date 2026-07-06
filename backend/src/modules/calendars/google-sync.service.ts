@@ -6,6 +6,7 @@ import { eq, and } from 'drizzle-orm';
 import { config } from '../../config/index.js';
 import { encrypt, decrypt } from '../../lib/crypto.js';
 import { logger } from '../../lib/logger.js';
+import { syncedEventUnchanged, missingEventInsideWindow } from './sync-reconcile.js';
 
 const SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
@@ -307,13 +308,16 @@ export async function syncCalendarFromGoogle(
     };
 
     if (existing) {
-      // Update existing event
-      await db
-        .update(calendarEvents)
-        .set(eventData)
-        .where(eq(calendarEvents.id, existing.id));
       externalIdToDbId[googleEvent.id] = existing.id;
-      updated++;
+      // Skip no-op writes: rewriting unchanged rows churns revisions/ETags
+      // and appends calendar_changes journal rows on every hourly sync.
+      if (!syncedEventUnchanged(existing, eventData)) {
+        await db
+          .update(calendarEvents)
+          .set(eventData)
+          .where(eq(calendarEvents.id, existing.id));
+        updated++;
+      }
     } else {
       // Create new event
       const [inserted] = await db.insert(calendarEvents).values({
@@ -379,12 +383,13 @@ export async function syncCalendarFromGoogle(
     };
 
     if (existing) {
-      // Update existing exception
-      await db
-        .update(calendarEvents)
-        .set(eventData)
-        .where(eq(calendarEvents.id, existing.id));
-      updated++;
+      if (!syncedEventUnchanged(existing, eventData)) {
+        await db
+          .update(calendarEvents)
+          .set(eventData)
+          .where(eq(calendarEvents.id, existing.id));
+        updated++;
+      }
     } else {
       // Create new exception
       await db.insert(calendarEvents).values({
@@ -395,9 +400,16 @@ export async function syncCalendarFromGoogle(
     }
   }
 
-  // Delete events that no longer exist in Google
+  // Delete events the provider no longer has — but ONLY inside the fetched
+  // window. We only asked for a window of events, so absence outside it means
+  // nothing; deleting on absence purged all synced history older than the
+  // window on every run.
   for (const existing of existingEvents) {
-    if (existing.externalId && !googleEventIds.has(existing.externalId)) {
+    if (
+      existing.externalId &&
+      !googleEventIds.has(existing.externalId) &&
+      missingEventInsideWindow(existing, threeMonthsAgo, oneYearFromNow)
+    ) {
       await db.delete(calendarEvents).where(eq(calendarEvents.id, existing.id));
       deleted++;
     }
