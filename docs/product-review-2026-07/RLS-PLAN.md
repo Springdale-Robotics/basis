@@ -92,19 +92,18 @@ stay in place).
   bypasses RLS and sees all households — so workers, migrations, backups, seed,
   and the pre-auth session lookup are unaffected (the passing worker/backup/
   caldav suites corroborate). Unauthenticated routes (login, setup, register,
-  invite-validate) correctly run as the owner. **CalDAV (`/dav`) stays
-  app-level-only** for now: it's mounted outside the API scope with its own
-  Basic auth and no RLS context. It IS household-scoped in app code and covered
-  by the caldav access tests; wiring it into the RLS context (resolve household
-  from the app-password → enterRlsContext) is a clean follow-up, deferred to
-  avoid disturbing the well-tested CalDAV path in this pass.
+  invite-validate) correctly run as the owner. **CalDAV (`/dav`) is now wired
+  into RLS too** — the plugin gets the same onRequest holder + onResponse
+  release, and basicAuthMiddleware calls enterRlsContext once it resolves the
+  household from the app-password (the app-password + user lookups run first on
+  the base handle, like the session lookup). Verified: full caldav suite green
+  under RLS + a cross-household isolation test. No authenticated surface remains
+  app-level-only.
 - [x] **Stage 5 — docs (done).** CLAUDE.md now documents the two-layer model and
   that new household-scoped tables need a policy + a `test/rls/` check.
 
 ## Follow-ups (post-merge)
 
-- Wire CalDAV into the RLS context (the one authenticated surface still
-  app-level-only).
 - Optional: denormalize `household_id` onto the hottest join-policied child
   tables only if profiling shows RLS subquery overhead (none expected at family
   scale).

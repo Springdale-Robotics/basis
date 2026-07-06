@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { eq } from 'drizzle-orm';
-import { db } from '../config/database.js';
+import { db, enterRlsContext } from '../config/database.js';
 import { users } from '../db/schema/index.js';
 import { verifyAppPassword, type AppPasswordScope } from '../modules/app-passwords/app-passwords.service.js';
 import type { UserRole } from '../lib/validators.js';
@@ -61,5 +61,14 @@ export function basicAuthMiddleware(scope: AppPasswordScope) {
       // by using the app-password id as a stand-in session id.
       sessionId: verified.passwordId,
     };
+
+    // Establish the RLS context for the rest of this CalDAV request, matching
+    // the cookie-auth path. The app-password + user lookups above ran on the
+    // base handle (before the household was known), as they must — like the
+    // session lookup in authMiddleware. The /dav scope's onRequest hook set up
+    // the context holder; released by its onResponse hook. Released in app.ts.
+    if (!request.rlsRelease) {
+      request.rlsRelease = await enterRlsContext(user.householdId);
+    }
   };
 }

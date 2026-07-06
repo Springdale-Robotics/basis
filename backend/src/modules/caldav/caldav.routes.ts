@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { and, eq, isNull, or } from 'drizzle-orm';
 import { basicAuthMiddleware } from '../../middleware/basic-auth.middleware.js';
 import { logger } from '../../lib/logger.js';
-import { db } from '../../config/database.js';
+import { db, beginRequestDbContext } from '../../config/database.js';
 import { calendarEvents, calendars } from '../../db/schema/index.js';
 import {
   filterAccessibleCalendars,
@@ -80,6 +80,21 @@ export async function caldavRoutes(app: FastifyInstance): Promise<void> {
 
   // Content type parsers are registered globally in app.ts so this prefix
   // and /.well-known/caldav share the same XML/text/calendar handling.
+
+  // RLS: establish the per-request DB context holder early (onRequest, so it
+  // propagates to handlers), then basicAuthMiddleware fills in the household's
+  // RLS connection once the app-password is verified, and onResponse releases
+  // it. Mirrors the apiScope wiring in app.ts so CalDAV gets the same DB-level
+  // tenancy backstop as the cookie API.
+  app.addHook('onRequest', async () => {
+    beginRequestDbContext();
+  });
+  app.addHook('onResponse', async (request) => {
+    if (request.rlsRelease) {
+      await request.rlsRelease();
+      request.rlsRelease = undefined;
+    }
+  });
 
 
   // ─── OPTIONS — capability advertisement ───────────────────────────────
