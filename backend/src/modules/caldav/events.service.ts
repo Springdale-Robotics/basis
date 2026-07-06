@@ -394,7 +394,8 @@ function triggerToMinutes(trigger: unknown): number | null {
 export async function applyPutBody(
   calendarId: string,
   resourceId: string,
-  body: ParsedPutBody
+  body: ParsedPutBody,
+  reminderUserId: string | null = null
 ): Promise<CalendarEvent> {
   const existing = await db.query.calendarEvents.findFirst({
     where: and(
@@ -452,7 +453,7 @@ export async function applyPutBody(
     master = created;
   }
 
-  await reconcileAttendeesAndReminders(master.id, masterInput.attendees, masterInput.reminders);
+  await reconcileAttendeesAndReminders(master.id, masterInput.attendees, masterInput.reminders, reminderUserId);
 
   // Reconcile exceptions: anything in body.exceptions becomes a row; anything
   // not in the body but currently a child row gets deleted.
@@ -484,7 +485,7 @@ export async function applyPutBody(
         recurrenceStatus: found.status === 'CANCELLED' ? 'cancelled' : 'exception',
       })
       .where(eq(calendarEvents.id, ex.id));
-    await reconcileAttendeesAndReminders(ex.id, found.attendees, found.reminders);
+    await reconcileAttendeesAndReminders(ex.id, found.attendees, found.reminders, reminderUserId);
     bodyByOst.delete(new Date(ex.originalStartTime).getTime());
   }
   if (toDelete.length) {
@@ -509,7 +510,7 @@ export async function applyPutBody(
         recurrenceStatus: e.status === 'CANCELLED' ? 'cancelled' : 'exception',
       })
       .returning();
-    await reconcileAttendeesAndReminders(newRow.id, e.attendees, e.reminders);
+    await reconcileAttendeesAndReminders(newRow.id, e.attendees, e.reminders, reminderUserId);
   }
 
   return master;
@@ -522,7 +523,8 @@ export async function applyPutBody(
 async function reconcileAttendeesAndReminders(
   eventId: string,
   attendeesInput: ParsedAttendee[],
-  remindersInput: ParsedReminder[]
+  remindersInput: ParsedReminder[],
+  reminderUserId: string | null = null
 ): Promise<void> {
   // Attendees: match-by-email update; delete absent; insert new.
   const existing = await db.query.eventAttendees.findMany({
@@ -564,13 +566,28 @@ async function reconcileAttendeesAndReminders(
     });
   }
 
-  // Reminders: simplest correct reconciliation — drop all and re-insert.
+  // Reminders: simplest correct reconciliation — drop and re-insert.
   // VALARMs don't carry stable identity on the wire, so matching by
   // (minutesBefore, type) is the best we can do.
-  await db.delete(eventReminders).where(eq(eventReminders.eventId, eventId));
+  //
+  // A VALARM synced from someone's phone is *their* alarm: rows are owned by
+  // the PUTting user (a userId-less reminder notifies the whole household),
+  // and only that user's rows are replaced — plus legacy ownerless rows from
+  // before this fix, which get claimed by whoever syncs next.
+  await db
+    .delete(eventReminders)
+    .where(
+      and(
+        eq(eventReminders.eventId, eventId),
+        reminderUserId
+          ? or(eq(eventReminders.userId, reminderUserId), isNull(eventReminders.userId))
+          : isNull(eventReminders.userId)
+      )
+    );
   for (const r of remindersInput) {
     await db.insert(eventReminders).values({
       eventId,
+      userId: reminderUserId,
       reminderType: r.reminderType,
       minutesBefore: r.minutesBefore,
     });

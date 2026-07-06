@@ -368,7 +368,7 @@ export async function caldavRoutes(app: FastifyInstance): Promise<void> {
           .send({ error: 'Invalid VCALENDAR', detail: (err as Error).message });
         return;
       }
-      const master = await applyPutBody(request.params.calendarId, resourceId, parsed);
+      const master = await applyPutBody(request.params.calendarId, resourceId, parsed, user.id);
       const newEtag = eventEtag(master.id, master.revision);
       setDavHeaders(reply);
       reply

@@ -49,6 +49,8 @@ export interface NotificationData {
   // (one notification per tranche per urgency level, not one per day).
   stockId?: string;
   urgency?: 'warning' | 'urgent' | 'expired';
+  // Event-reminder data — keys per-occurrence dedupe for recurring events
+  occurrenceStartTime?: string;
   // Leftover-specific data
   leftoverId?: string;
   leftoverName?: string;
