@@ -41,8 +41,7 @@ export const lists = pgTable('lists', {
   // When a list is created by "Use template", track the template it came from.
   parentListId: uuid('parent_list_id'),
   createdBy: uuid('created_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -76,8 +75,7 @@ export const listItems = pgTable('list_items', {
   // household's rewards feature is enabled).
   rewardPoints: integer('reward_points').default(0).notNull(),
   createdBy: uuid('created_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   checkedAt: timestamp('checked_at'),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),

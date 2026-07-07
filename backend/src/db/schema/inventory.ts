@@ -181,8 +181,7 @@ export const shoppingList = pgTable('shopping_list', {
   unit: varchar('unit', { length: 50 }),
   isChecked: boolean('is_checked').default(false).notNull(),
   addedBy: uuid('added_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'set null' }),
   source: shoppingListSourceEnum('source').notNull().default('manual'),
   // All source labels that have contributed to this row. Starts as `[source]`,
   // grows when a merge brings in a different source. Lets the UI surface a
@@ -282,8 +281,7 @@ export const leftovers = pgTable('leftovers', {
   expiryDate: date('expiry_date'),
   finishedAt: timestamp('finished_at'),
   createdBy: uuid('created_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });

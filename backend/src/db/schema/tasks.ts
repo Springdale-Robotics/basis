@@ -30,8 +30,7 @@ export const tasks = pgTable(
       .notNull()
       .references(() => households.id, { onDelete: 'cascade' }),
     createdBy: uuid('created_by')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => users.id, { onDelete: 'set null' }),
 
     kind: taskKindEnum('kind').notNull().default('task'),
     title: varchar('title', { length: 255 }).notNull(),

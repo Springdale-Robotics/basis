@@ -24,8 +24,7 @@ export const memberInvites = pgTable('member_invites', {
   inviteCode: varchar('invite_code', { length: 32 }).notNull().unique(),
   role: userRoleEnum('role').notNull().default('member'),
   invitedBy: uuid('invited_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'set null' }),
   expiresAt: timestamp('expires_at').notNull(),
   acceptedAt: timestamp('accepted_at'),
   status: memberInviteStatusEnum('status').notNull().default('pending'),
