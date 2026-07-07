@@ -50,10 +50,32 @@ stay in place).
 - **Nested `db.transaction()`** (recipe cook-finish, the transactions added in
   P2) run on the request's reserved connection — fine, they nest as normal
   transactions on that connection.
-- **Deploy prerequisite:** the role-creation migration needs `CREATEROLE`/
-  superuser on the migration DB user. Confirm prod's DATABASE_URL user has it,
-  or create `basis_rls` out-of-band first. The migration's role creation is
-  idempotent (guards on `pg_roles`).
+## Deploy prerequisite — the `basis_rls` role (CONFIRMED via dry-run)
+
+A dry-run of the migration chain against a prod-like non-superuser owner (the
+prod DB user is `basis`, created `CREATE USER basis` — **not** a superuser, no
+`CREATEROLE`, just the DB owner) confirmed: **migration 0007 as originally
+written fails on prod** — `CREATE ROLE` and `GRANT basis_rls TO …` both need
+superuser/CREATEROLE. The update would abort safely (watchdog rolls back), but
+RLS would never deploy.
+
+Resolution (in this fix):
+- **0007 is now hybrid** — it creates the role + grants membership when the
+  migrate user *can* (CI and dev migrate as a superuser → self-provisions), and
+  otherwise fails CLOSED with an actionable message. Verified: full chain applies
+  via the drizzle migrator on a fresh superuser DB, and as a non-superuser owner
+  once the role exists.
+- **Fresh installs:** `deploy/native/install.sh` creates `basis_rls` + grants it
+  to `basis` in its postgres-superuser provisioning block, so a new box migrates
+  cleanly with no manual step.
+- **The existing prod box** (already installed, migrates as non-superuser
+  `basis`): run this **once as a superuser** before the RLS update, e.g.
+  ```
+  sudo -u postgres psql -d basis -c "CREATE ROLE basis_rls NOLOGIN;" \
+                                 -c "GRANT basis_rls TO basis;"
+  ```
+  Then the RLS update applies normally. If skipped, the update aborts with the
+  exact command in the error `HINT` and the old version keeps running.
 
 ## Stages
 

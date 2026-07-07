@@ -11,12 +11,40 @@
 -- owner-connected app and workers keep seeing every row until stage 2 wires the
 -- per-request context in.
 
--- Idempotent role creation. NOTE (deploy): needs CREATEROLE/superuser on the
--- migration DB user; create basis_rls out-of-band first if prod's user lacks it.
+-- Ensure the `basis_rls` role exists and the app (login) user can assume it.
+--
+-- Creating a role and granting role membership need superuser/CREATEROLE. In
+-- CI and dev the migrate user IS a superuser, so this self-provisions. On a
+-- real box the app DB user (e.g. `basis`) owns the tables but is NOT a
+-- superuser, so it can't — there the role is provisioned out of band:
+--   * Fresh install: deploy/native/install.sh creates it + grants it to `basis`
+--     in its postgres-superuser block, before the app ever migrates.
+--   * Existing box: run once as a superuser (see RLS-PLAN.md):
+--       CREATE ROLE basis_rls NOLOGIN;  GRANT basis_rls TO basis;
+--
+-- This block does the create/grant when it can, and otherwise fails CLOSED with
+-- an actionable message instead of a cryptic "permission denied to create role".
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'basis_rls') THEN
-    CREATE ROLE basis_rls NOLOGIN;
+    BEGIN
+      CREATE ROLE basis_rls NOLOGIN;
+    EXCEPTION WHEN insufficient_privilege THEN
+      RAISE EXCEPTION 'Row-level security requires the "basis_rls" role, which does not exist and this DB user cannot create.'
+        USING HINT = 'Create it once as a superuser, then re-run the update:  CREATE ROLE basis_rls NOLOGIN;  GRANT basis_rls TO ' || quote_ident(current_user) || ';';
+    END;
+  END IF;
+
+  -- Let the login user assume the role (SET ROLE needs membership). Idempotent.
+  -- A non-superuser can't self-grant; there membership must already exist from
+  -- the out-of-band step, so verify it rather than error opaquely.
+  IF NOT pg_has_role(current_user, 'basis_rls', 'USAGE') THEN
+    BEGIN
+      EXECUTE 'GRANT basis_rls TO ' || quote_ident(current_user);
+    EXCEPTION WHEN insufficient_privilege THEN
+      RAISE EXCEPTION 'DB user "%" is not a member of basis_rls and cannot self-grant.', current_user
+        USING HINT = 'As a superuser: GRANT basis_rls TO ' || quote_ident(current_user) || ';';
+    END;
   END IF;
 END $$;
 --> statement-breakpoint
@@ -29,8 +57,7 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO basis_rls;
 --> statement-breakpoint
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO basis_rls;
 --> statement-breakpoint
--- Let the login role assume basis_rls (SET ROLE requires membership).
-GRANT basis_rls TO CURRENT_USER;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO basis_rls;
 --> statement-breakpoint
 
 -- inventory_items: scoped directly by household_id.
