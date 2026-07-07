@@ -530,7 +530,7 @@ export function MembersSettingsPage() {
         open={removeMemberDialogOpen}
         onOpenChange={setRemoveMemberDialogOpen}
         title="Remove Member"
-        description={`Are you sure you want to remove ${selectedMember?.displayName} from your household? This action cannot be undone.`}
+        description={`Remove ${selectedMember?.displayName} from your household? They'll lose access immediately. Recipes, lists, tasks and other shared content they created will stay (no longer shown as theirs); their personal data — sessions, rewards, and notifications — is deleted. This can't be undone.`}
         confirmText="Remove"
         variant="destructive"
         isPending={removeMemberMutation.isPending}

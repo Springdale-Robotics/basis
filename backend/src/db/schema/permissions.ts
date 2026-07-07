@@ -52,8 +52,7 @@ export const permissions = pgTable('permissions', {
   granteeId: varchar('grantee_id', { length: 255 }).notNull(),
   permissionLevel: permissionLevelEnum('permission_level').notNull(),
   createdBy: uuid('created_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 

@@ -26,8 +26,7 @@ export const recipes = pgTable('recipes', {
     .notNull()
     .references(() => households.id, { onDelete: 'cascade' }),
   createdBy: uuid('created_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'set null' }),
   title: varchar('title', { length: 255 }).notNull(),
   description: text('description'),
   instructions: jsonb('instructions').$type<RecipeInstruction[]>().default([]),

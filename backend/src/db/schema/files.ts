@@ -32,8 +32,7 @@ export const folders = pgTable('folders', {
   type: folderTypeEnum('type').notNull().default('general'),
   isRestricted: boolean('is_restricted').default(false).notNull(),
   createdBy: uuid('created_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -44,8 +43,7 @@ export const files = pgTable('files', {
     .notNull()
     .references(() => households.id, { onDelete: 'cascade' }),
   uploadedBy: uuid('uploaded_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'set null' }),
   folderId: uuid('folder_id').references(() => folders.id, { onDelete: 'set null' }),
   filename: varchar('filename', { length: 255 }).notNull(),
   storagePath: text('storage_path').notNull(),
@@ -97,8 +95,7 @@ export const albums = pgTable('albums', {
   name: varchar('name', { length: 255 }).notNull(),
   coverFileId: uuid('cover_file_id').references(() => files.id, { onDelete: 'set null' }),
   createdBy: uuid('created_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -125,8 +122,7 @@ export const playlists = pgTable('playlists', {
   name: varchar('name', { length: 255 }).notNull(),
   type: playlistTypeEnum('type').notNull(),
   createdBy: uuid('created_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });

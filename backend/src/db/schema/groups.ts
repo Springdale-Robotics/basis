@@ -10,8 +10,7 @@ export const groups = pgTable('groups', {
   name: varchar('name', { length: 255 }).notNull(),
   description: text('description'),
   createdBy: uuid('created_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });

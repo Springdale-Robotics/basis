@@ -131,8 +131,7 @@ export const smartAlbums = pgTable('smart_albums', {
   criteria: jsonb('criteria').$type<SmartAlbumCriteria>().notNull(),
   coverFileId: uuid('cover_file_id').references(() => files.id, { onDelete: 'set null' }),
   createdBy: uuid('created_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+    .references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
