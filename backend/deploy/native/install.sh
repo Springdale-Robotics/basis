@@ -242,6 +242,19 @@ SELECT 'CREATE DATABASE basis OWNER basis' WHERE NOT EXISTS (
   SELECT FROM pg_database WHERE datname = 'basis'
 )\gexec
 GRANT ALL PRIVILEGES ON DATABASE basis TO basis;
+
+-- Row-level-security backstop: the app connects as \`basis\` (the table owner,
+-- which bypasses RLS) but each authenticated request does SET ROLE basis_rls.
+-- Create that plain role and let \`basis\` assume it. This runs as the postgres
+-- superuser (this block) because \`basis\` itself is not a superuser and can't
+-- create roles or grant role membership — so the RLS migration (0007), which
+-- runs as \`basis\`, relies on this being done first.
+DO \$\$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'basis_rls') THEN
+    CREATE ROLE basis_rls NOLOGIN;
+  END IF;
+END \$\$;
+GRANT basis_rls TO basis;
 SQL
 
   cat > /opt/basis/.env <<EOF
