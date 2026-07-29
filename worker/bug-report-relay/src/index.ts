@@ -278,14 +278,13 @@ function formatBody(p: ReportPayload): string {
   lines.push('');
 
   if (p.screenshot) {
-    // GitHub issue bodies max out around 65 KB; a realistic JPEG screenshot
-    // is several hundred KB once base64-encoded and will be rejected outright.
-    // The image stays in the deployment's local DB (admin can view it from
-    // /settings/bug-reports). If we ever want screenshots in issues, the
-    // worker would need to upload to R2/Imgur and link.
-    const sizeKb = Math.round((p.screenshot.length * 0.75) / 1024);
+    // GitHub issue bodies max out around 65 KB, so the image can't be embedded
+    // and the worker sends only a '[present]' flag instead of the data — no
+    // size is known here. The image stays in the deployment's local DB (admin
+    // can view it from /settings/bug-reports). If we ever want screenshots in
+    // issues, the worker would need to upload to R2/Imgur and link.
     lines.push(`## Screenshot`);
-    lines.push(`_Screenshot captured (~${sizeKb} KB) but not transferred — view on the deployment at \`/settings/bug-reports\`._`);
+    lines.push(`_Screenshot captured but not transferred — view it on the deployment at \`/settings/bug-reports\`._`);
     lines.push('');
   }
 
