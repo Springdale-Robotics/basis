@@ -98,6 +98,26 @@ export async function bugReportsRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
+  // Detail — admin only; carries the fields the list strips (screenshot data
+  // URL, full console log), for the settings page's screenshot viewer
+  app.get(
+    '/:id',
+    { preHandler: [authMiddleware, requireAdmin()] },
+    async (request) => {
+      const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+
+      const row = await db.query.bugReports.findFirst({
+        where: and(
+          eq(bugReports.id, id),
+          eq(bugReports.householdId, request.user!.householdId)
+        ),
+      });
+      if (!row) throw Errors.notFound('Bug report', id);
+
+      return { success: true, data: { report: row } };
+    }
+  );
+
   // Retry — re-enqueue a previously failed report
   app.post(
     '/:id/retry',

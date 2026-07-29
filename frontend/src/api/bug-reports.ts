@@ -19,6 +19,25 @@ export interface BugReportSummary {
   hasScreenshot: boolean;
 }
 
+export interface BugReportDetail {
+  id: string;
+  userId: string | null;
+  description: string;
+  url: string;
+  userAgent: string | null;
+  appVersion: string | null;
+  status: BugReportStatus;
+  githubIssueNumber: number | null;
+  githubIssueUrl: string | null;
+  lastError: string | null;
+  attempts: number;
+  createdAt: string;
+  consoleLog: ConsoleLogEntry[] | null;
+  /** Data URL (image/jpeg) captured at submit time, if any. */
+  screenshot: string | null;
+  viewport: { w: number; h: number } | null;
+}
+
 export interface CreateBugReportRequest {
   description: string;
   url: string;
@@ -34,6 +53,9 @@ export const bugReportsApi = {
 
   list: () =>
     apiGet<{ reports: BugReportSummary[] }>('/bug-reports'),
+
+  get: (id: string) =>
+    apiGet<{ report: BugReportDetail }>(`/bug-reports/${id}`),
 
   retry: (id: string) =>
     apiPost<{ id: string; status: BugReportStatus }>(`/bug-reports/${id}/retry`),
