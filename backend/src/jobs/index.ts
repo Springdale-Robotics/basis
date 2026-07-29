@@ -428,8 +428,10 @@ export async function queueNotification(data: NotificationJobData): Promise<void
 
 // Helper to add inventory check job
 export async function queueInventoryCheck(householdId: string, type: InventoryJobData['type']): Promise<void> {
+  // NB: custom job ids must not contain ':' — bullmq >=5.66 rejects them
+  // (repeat-job ids above are exempt; the scheduler generates its own keys).
   await inventoryQueue.add(type, { type, householdId }, {
-    jobId: `inventory:${type}:${householdId}`,
+    jobId: `inventory-${type}-${householdId}`,
   });
 }
 
@@ -440,14 +442,14 @@ export async function queueCalendarSync(calendarId: string, householdId: string)
     calendarId,
     householdId,
   }, {
-    jobId: `calendar:sync:${calendarId}:${Date.now()}`,
+    jobId: `calendar-sync-${calendarId}-${Date.now()}`,
   });
 }
 
 // Helper to queue media processing jobs
 export async function queueMediaJob(data: MediaJobData): Promise<void> {
   await mediaQueue.add(data.type, data, {
-    jobId: `media:${data.type}:${data.fileId}`,
+    jobId: `media-${data.type}-${data.fileId}`,
   });
 }
 
@@ -462,7 +464,7 @@ export async function queueImageParse(data: ImageParseJobData): Promise<void> {
 export async function queueBugReportDelivery(reportId: string): Promise<void> {
   await bugReportQueue.add('deliver', { reportId }, {
     // jobId scoped so a re-submit of the same row replaces the previous attempt
-    jobId: `bug-report:${reportId}`,
+    jobId: `bug-report-${reportId}`,
   });
 }
 

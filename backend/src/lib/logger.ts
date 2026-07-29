@@ -19,6 +19,14 @@ export const logger = pino({
     const store = asyncLocalStorage.getStore();
     return store || {};
   },
+  // Error objects have only non-enumerable properties, so an Error logged
+  // under a key without a serializer comes out as `{}` — which is how a
+  // production 500 ended up in the journal with no message or stack. Pino
+  // only serializes the `err` key by default; many call sites here use
+  // `error`, so serialize both.
+  serializers: {
+    error: pino.stdSerializers.err,
+  },
   redact: {
     paths: [
       'req.headers.authorization',
