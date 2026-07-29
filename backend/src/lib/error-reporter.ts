@@ -70,9 +70,15 @@ export async function reportServerError(
       ...context,
     });
 
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (config.ERROR_WEBHOOK_SECRET) {
+      // Same header the bug-report relay checks, so both sinks can share one secret.
+      headers['x-bug-report-secret'] = config.ERROR_WEBHOOK_SECRET;
+    }
+
     await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body,
       signal: AbortSignal.timeout(timeoutMs),
     });

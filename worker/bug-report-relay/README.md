@@ -39,6 +39,19 @@ The deployment's backend will POST reports here; the Worker creates the GitHub
 issue and returns `{issueNumber, issueUrl}` which the backend stores on the
 local `bug_reports` row.
 
+The relay also accepts backend error telemetry (the payload sent by
+`backend/src/lib/error-reporter.ts` — distinguished by its `kind` field), filed
+under the `server-error` label. Point the same deployment at it with:
+
+```
+ERROR_WEBHOOK_URL=<same URL>
+ERROR_WEBHOOK_SECRET=<same secret>
+```
+
+Repeat server errors are consolidated: if an open `server-error` issue with the
+same title exists, the relay adds an occurrence comment instead of filing a new
+issue (a crash-looping backend restarts every 10s, so this matters).
+
 ## Notes
 
 - **Screenshots are not transferred to GitHub.** Issue bodies max out around
