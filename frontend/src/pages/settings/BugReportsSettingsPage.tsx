@@ -18,12 +18,56 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ExternalLink, RotateCw, Trash2, CheckCircle2, AlertCircle, Clock, Bug } from 'lucide-react';
+import { ExternalLink, RotateCw, Trash2, CheckCircle2, AlertCircle, Clock, Bug, Image } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { getErrorMessage } from '@/lib/api-error';
 import { toast } from '@/hooks/useToast';
 import { bugReportsApi, type BugReportStatus, type BugReportSummary } from '@/api/bug-reports';
+
+function ScreenshotDialog({
+  reportId,
+  onClose,
+}: {
+  reportId: string | null;
+  onClose: () => void;
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['bug-reports', 'detail', reportId],
+    queryFn: () => bugReportsApi.get(reportId!),
+    enabled: !!reportId,
+  });
+
+  const screenshot = data?.report.screenshot;
+  return (
+    <Dialog open={!!reportId} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-4xl">
+        <DialogHeader>
+          <DialogTitle>Screenshot</DialogTitle>
+        </DialogHeader>
+        {isLoading ? (
+          <Skeleton className="h-64 w-full" />
+        ) : screenshot ? (
+          <img
+            src={screenshot}
+            alt="Screenshot captured with the bug report"
+            className="max-h-[70vh] w-auto rounded-md border"
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No screenshot was captured with this report.
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function StatusBadge({ status }: { status: BugReportStatus }) {
   if (status === 'sent') {
@@ -58,6 +102,7 @@ function formatDate(iso: string): string {
 export function BugReportsSettingsPage() {
   const qc = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<BugReportSummary | null>(null);
+  const [screenshotTarget, setScreenshotTarget] = useState<string | null>(null);
   const { data, isLoading } = useQuery({
     queryKey: ['bug-reports'],
     queryFn: bugReportsApi.list,
@@ -99,8 +144,10 @@ export function BugReportsSettingsPage() {
         <CardTitle>Bug Reports</CardTitle>
         <CardDescription>
           User-submitted bug reports are stored locally and pushed to GitHub Issues.
-          Configure <code>GITHUB_BUG_REPORT_TOKEN</code> in the backend environment to
-          enable delivery; retry any reports that failed below.
+          Configure <code>BUG_REPORT_WEBHOOK_URL</code> and{' '}
+          <code>BUG_REPORT_WEBHOOK_SECRET</code> in the backend environment to enable
+          delivery; retry any reports that failed below. Screenshots stay on this
+          server — view them here.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -171,6 +218,16 @@ export function BugReportsSettingsPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="inline-flex gap-1">
+                      {r.hasScreenshot && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setScreenshotTarget(r.id)}
+                          title="View screenshot"
+                        >
+                          <Image className="h-4 w-4" />
+                        </Button>
+                      )}
                       {r.status !== 'sent' && (
                         <Button
                           size="sm"
@@ -199,6 +256,11 @@ export function BugReportsSettingsPage() {
           </Table>
         )}
       </CardContent>
+
+      <ScreenshotDialog
+        reportId={screenshotTarget}
+        onClose={() => setScreenshotTarget(null)}
+      />
 
       <ConfirmDialog
         open={!!deleteTarget}
