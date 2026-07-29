@@ -1,11 +1,11 @@
-name = "homemanager-bug-relay"
+name = "basis-bug-relay"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 
 # Public, non-sensitive config. Override per-environment if you want a staging
 # repo by adding `[env.staging]` blocks.
 [vars]
-GITHUB_REPO = "sam-dashboard/homemanager-bugs"
+GITHUB_REPO = "Springdale-Robotics/basis-bugs"
 
 # Secrets (set via `wrangler secret put`):
 #   GITHUB_TOKEN     — fine-grained PAT, Issues: read+write on GITHUB_REPO
