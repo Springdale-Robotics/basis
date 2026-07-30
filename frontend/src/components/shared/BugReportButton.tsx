@@ -68,6 +68,8 @@ async function captureScreenshot(): Promise<string | undefined> {
     const canvas = await html2canvas(document.body, {
       logging: false,
       useCORS: true,
+      // The floating bug button would photobomb every report.
+      ignoreElements: (el) => el.getAttribute('aria-label') === 'Report a bug',
       // Cap at a reasonable size so payloads stay small.
       scale: Math.min(1, 1280 / Math.max(window.innerWidth, 1)),
     });
@@ -90,6 +92,8 @@ export function BugReportButton() {
   const [open, setOpen] = useState(false);
   const [description, setDescription] = useState('');
   const [includeScreenshot, setIncludeScreenshot] = useState(true);
+  const [screenshot, setScreenshot] = useState<string | undefined>(undefined);
+  const [capturing, setCapturing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [bufferSnapshot, setBufferSnapshot] = useState<ConsoleLogEntry[]>([]);
 
@@ -151,25 +155,43 @@ export function BugReportButton() {
         /* localStorage full / unavailable — ignore */
       }
     } else {
+      void openWithScreenshot();
+    }
+  }
+
+  // Capture BEFORE the dialog mounts, so the report shows the page as the
+  // user saw it — not the report dialog covering it.
+  async function openWithScreenshot() {
+    if (capturing) return;
+    setCapturing(true);
+    try {
+      setScreenshot(await captureScreenshot());
+    } finally {
+      setCapturing(false);
       setOpen(true);
     }
+  }
+
+  function handleOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen);
+    if (!nextOpen) setScreenshot(undefined);
   }
 
   async function handleSubmit() {
     if (!description.trim()) return;
     setSubmitting(true);
     try {
-      const screenshot = includeScreenshot ? await captureScreenshot() : undefined;
       await bugReportsApi.create({
         description: description.trim(),
         url: location.pathname + location.search,
         userAgent: navigator.userAgent.slice(0, 500),
         consoleLog: bufferSnapshot,
-        screenshot,
+        screenshot: includeScreenshot ? screenshot : undefined,
         viewport: { w: window.innerWidth, h: window.innerHeight },
       });
       toast({ title: 'Bug report sent', description: 'Thanks — Sam will take a look.' });
       setDescription('');
+      setScreenshot(undefined);
       setOpen(false);
       // Fresh slate for the next report.
       clearConsoleBuffer();
@@ -209,7 +231,7 @@ export function BugReportButton() {
         <Bug className="h-5 w-5" />
       </button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Report a bug</DialogTitle>
@@ -254,6 +276,14 @@ export function BugReportButton() {
                 onCheckedChange={setIncludeScreenshot}
               />
             </div>
+
+            {includeScreenshot && screenshot && (
+              <img
+                src={screenshot}
+                alt="Screenshot that will be attached"
+                className="max-h-28 w-auto rounded-md border"
+              />
+            )}
           </div>
 
           <DialogFooter>
