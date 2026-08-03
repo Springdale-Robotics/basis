@@ -21,7 +21,7 @@
   "dependencies": {
     "@fastify/cookie": "^9.3.1",
     "@fastify/static": "^7.0.4",
-    "argon2": "^0.40.1",
+    "argon2": "^0.45.1",
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.45.1",
     "fastify": "^4.26.2",
@@ -39,7 +39,7 @@
     "drizzle-kit": "^0.31.8",
     "eslint": "^8.57.0",
     "pino-pretty": "^11.0.0",
-    "tsx": "^4.7.1",
+    "tsx": "^4.23.1",
     "typescript": "^5.4.3",
     "vitest": "^1.4.0"
   }
