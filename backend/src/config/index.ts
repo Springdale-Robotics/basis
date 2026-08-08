@@ -126,6 +126,14 @@ const envSchema = z.object({
   IMAGE_PARSE_SESSION_TTL_HOURS: z.coerce.number().default(24),
   IMAGE_PARSE_REQUIRE_AI: z.coerce.boolean().default(false),
 
+  // Receipt OCR / inventory import (Tesseract transcription + LLM structuring)
+  RECEIPT_MAX_SIZE_MB: z.coerce.number().default(15),
+  RECEIPT_OCR_LANG: z.string().default('eng'),
+  RECEIPT_OCR_TIMEOUT_MS: z.coerce.number().default(120000),
+  RECEIPT_STRUCTURE_TIMEOUT_MS: z.coerce.number().default(300000),
+  RECEIPT_IMAGE_RETENTION_DAYS: z.coerce.number().default(7),
+  RECEIPT_SCAN_RETENTION_DAYS: z.coerce.number().default(30),
+
   // Basis Remote — the paid lastname.home-basis.com tunnel service. The box
   // redeems claim codes and sends heartbeats against this control plane.
   // Overridable so dev/e2e can point at a locally-run control plane.

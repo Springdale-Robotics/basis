@@ -40,3 +40,7 @@ storage/
 tmp/
 temp/
 *.tmp
+
+# tesseract.js downloads its language data into the process cwd on first
+# recognize() call (see RECEIPT_OCR_LANG in src/config/index.ts)
+*.traineddata
