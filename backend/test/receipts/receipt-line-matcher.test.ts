@@ -68,6 +68,15 @@ describe('multiplyQuantity', () => {
     expect(multiplyQuantity('2', '0.5')).toBe('1.000');
     expect(multiplyQuantity('1.5', '3')).toBe('4.500');
   });
+
+  it('is exact where IEEE-754 is not', () => {
+    // Number(2.775) * Number(2023.420) lands on 5614.990.
+    expect(multiplyQuantity('2.775', '2023.420')).toBe('5614.991');
+  });
+
+  it('rejects a non-decimal operand rather than silently yielding NaN', () => {
+    expect(() => multiplyQuantity('abc', '2')).toThrow();
+  });
 });
 
 describe('matchReceiptLine', () => {
@@ -111,6 +120,29 @@ describe('matchReceiptLine', () => {
     // a misread description must not silently ride a link into stock.
     expect(result.resolution).toBe('unresolved');
     expect(result.suggestions[0]?.itemId).toBe(spinachId);
+  });
+
+  it('still offers fuzzy alternatives beside an untrusted text link', async () => {
+    // A second plausible item, so the fuzzy tier has something distinct to add.
+    const [baby] = await db
+      .insert(inventoryItems)
+      .values({ householdId, name: 'Baby Spinach', defaultUnit: 'g' })
+      .returning({ id: inventoryItems.id });
+
+    // Same low-confidence line as above. The distrusted link is not the only
+    // thing on offer — the user needs alternatives to judge against.
+    const result = await matchReceiptLine(
+      { rawText: 'ORG SPNCH', merchantCode: null, merchant: 'safeway', ocrConfidence: 0.3 },
+      householdId
+    );
+
+    expect(result.resolution).toBe('unresolved');
+    // The link still leads (confidence 1), with the fuzzy candidate behind it.
+    expect(result.suggestions[0]?.itemId).toBe(spinachId);
+    expect(result.suggestions.some((s) => s.itemId === baby.id)).toBe(true);
+    // No item appears twice.
+    const ids = result.suggestions.map((s) => s.itemId);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it('auto-resolves a text link when OCR confidence is high', async () => {
