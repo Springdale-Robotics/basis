@@ -56,13 +56,6 @@ export const aliasTypeEnum = pgEnum('alias_type', [
   'brand',    // "Tillamook Cheddar" is a brand of "cheddar cheese"
 ]);
 
-export const receiptScanStatusEnum = pgEnum('receipt_scan_status', [
-  'processing',
-  'pending_review',
-  'confirmed',
-  'cancelled',
-]);
-
 // ---------------------------------------------------------------------------
 // Custom Units (household-defined count units)
 // ---------------------------------------------------------------------------
@@ -221,44 +214,6 @@ export const ingredientAliases = pgTable('ingredient_aliases', {
 }));
 
 // ---------------------------------------------------------------------------
-// Receipt Scans
-// ---------------------------------------------------------------------------
-
-export const receiptScans = pgTable('receipt_scans', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  householdId: uuid('household_id')
-    .notNull()
-    .references(() => households.id, { onDelete: 'cascade' }),
-  scannedBy: uuid('scanned_by')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  imageData: text('image_data'),
-  rawOcrText: text('raw_ocr_text'),
-  parsedItems: jsonb('parsed_items').$type<ParsedReceiptItem[]>().default([]),
-  shoppingListContext: jsonb('shopping_list_context').$type<ShoppingListSnapshot[]>().default([]),
-  status: receiptScanStatusEnum('status').default('processing').notNull(),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  confirmedAt: timestamp('confirmed_at'),
-});
-
-export interface ParsedReceiptItem {
-  lineText: string;
-  matchedItemId?: string;
-  matchedItemName?: string;
-  quantity?: number;
-  unit?: string;
-  price?: number;
-  confidence: number; // 0-100
-}
-
-export interface ShoppingListSnapshot {
-  itemId?: string;
-  customName?: string;
-  quantity?: number;
-  unit?: string;
-}
-
-// ---------------------------------------------------------------------------
 // Leftovers
 // ---------------------------------------------------------------------------
 
@@ -369,17 +324,6 @@ export const ingredientAliasesRelations = relations(ingredientAliases, ({ one })
   }),
 }));
 
-export const receiptScansRelations = relations(receiptScans, ({ one }) => ({
-  household: one(households, {
-    fields: [receiptScans.householdId],
-    references: [households.id],
-  }),
-  scannedByUser: one(users, {
-    fields: [receiptScans.scannedBy],
-    references: [users.id],
-  }),
-}));
-
 export const leftoversRelations = relations(leftovers, ({ one }) => ({
   household: one(households, {
     fields: [leftovers.householdId],
@@ -415,8 +359,6 @@ export type ShoppingListItem = typeof shoppingList.$inferSelect;
 export type NewShoppingListItem = typeof shoppingList.$inferInsert;
 export type IngredientAlias = typeof ingredientAliases.$inferSelect;
 export type NewIngredientAlias = typeof ingredientAliases.$inferInsert;
-export type ReceiptScan = typeof receiptScans.$inferSelect;
-export type NewReceiptScan = typeof receiptScans.$inferInsert;
 export type Leftover = typeof leftovers.$inferSelect;
 export type NewLeftover = typeof leftovers.$inferInsert;
 export type LeftoverSource = 'recipe' | 'restaurant' | 'homemade' | 'other';

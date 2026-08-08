@@ -35,3 +35,6 @@ export * from './image-parse.js';
 
 // Bug reports
 export * from './bug-reports.js';
+
+// Receipt OCR -> inventory import
+export * from './receipts.js';
