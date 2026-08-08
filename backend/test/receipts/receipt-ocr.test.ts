@@ -24,6 +24,15 @@ describe('transcribeReceipt', () => {
   it('rejects a file that is not an image', async () => {
     const path = join(workDir, 'notanimage.jpg');
     await writeFile(path, 'this is plain text, not a JPEG');
+
+    // Note on output cleanliness: this does not reach Tesseract at all.
+    // transcribeReceipt sniffs the file's magic bytes and rejects unrecognized
+    // formats before creating a worker, specifically because Tesseract's own
+    // decode-failure path is not quiet — its WASM core runs inside a
+    // worker_threads.Worker with its own console/stdio, so its diagnostics
+    // write straight to the process's inherited stderr and cannot be caught
+    // or silenced from this thread (a console.error spy here has no effect
+    // on another thread's console). See receipt-ocr.ts's assertReadableImage.
     await expect(transcribeReceipt(path)).rejects.toThrow();
   });
 });

@@ -1,4 +1,4 @@
-import { access } from 'fs/promises';
+import { access, open } from 'fs/promises';
 import { createWorker } from 'tesseract.js';
 import type { Worker } from 'tesseract.js';
 import { config } from '../../config/index.js';
@@ -41,6 +41,38 @@ const workerOptions = {
 
 function createReceiptWorker(): Promise<Worker> {
   return createWorker(config.RECEIPT_OCR_LANG, undefined, workerOptions);
+}
+
+// Tesseract's decode failures are not a clean rejection: the WASM core runs
+// inside a worker_threads.Worker with its own console/stdio, so its printErr
+// output (bound to that thread's console.error) writes straight to the
+// process's inherited stderr fd — it cannot be caught or silenced from here,
+// including by spying on this thread's `console.error`. Sniffing the file's
+// magic bytes ourselves and rejecting unrecognized formats up front means we
+// simply never hand Tesseract something it would choke on, so the decoder
+// (and its stderr chatter) is never invoked for that case.
+const IMAGE_SIGNATURES: Array<(header: Buffer) => boolean> = [
+  (h) => h[0] === 0xff && h[1] === 0xd8 && h[2] === 0xff, // JPEG
+  (h) => h[0] === 0x89 && h[1] === 0x50 && h[2] === 0x4e && h[3] === 0x47, // PNG
+  (h) => h[0] === 0x47 && h[1] === 0x49 && h[2] === 0x46, // GIF
+  (h) => h[0] === 0x42 && h[1] === 0x4d, // BMP
+  (h) => h[0] === 0x49 && h[1] === 0x49 && h[2] === 0x2a && h[3] === 0x00, // TIFF (little-endian)
+  (h) => h[0] === 0x4d && h[1] === 0x4d && h[2] === 0x00 && h[3] === 0x2a, // TIFF (big-endian)
+  (h) => h.toString('ascii', 0, 4) === 'RIFF' && h.toString('ascii', 8, 12) === 'WEBP', // WebP
+];
+
+async function assertReadableImage(imagePath: string): Promise<void> {
+  const handle = await open(imagePath, 'r');
+  try {
+    const header = Buffer.alloc(12);
+    const { bytesRead } = await handle.read(header, 0, 12, 0);
+    const isRecognizedFormat = bytesRead >= 3 && IMAGE_SIGNATURES.some((matches) => matches(header));
+    if (!isRecognizedFormat) {
+      throw new Error(`Unrecognized image format: ${imagePath}`);
+    }
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function isOcrAvailable(): Promise<boolean> {
@@ -99,6 +131,8 @@ export async function transcribeReceipt(imagePath: string): Promise<Transcriptio
   } catch {
     throw new Error(`Receipt image not found: ${imagePath}`);
   }
+
+  await assertReadableImage(imagePath);
 
   const startTime = Date.now();
   const worker = await createReceiptWorker();
