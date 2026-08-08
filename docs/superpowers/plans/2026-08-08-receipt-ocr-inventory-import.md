@@ -866,6 +866,15 @@ describe('multiplyQuantity', () => {
     expect(multiplyQuantity('2', '0.5')).toBe('1.000');
     expect(multiplyQuantity('1.5', '3')).toBe('4.500');
   });
+
+  it('is exact where IEEE-754 is not', () => {
+    // Number(2.775) * Number(2023.420) lands on 5614.990.
+    expect(multiplyQuantity('2.775', '2023.420')).toBe('5614.991');
+  });
+
+  it('rejects a non-decimal operand rather than silently yielding NaN', () => {
+    expect(() => multiplyQuantity('abc', '2')).toThrow();
+  });
 });
 
 describe('matchReceiptLine', () => {
@@ -905,10 +914,33 @@ describe('matchReceiptLine', () => {
       householdId
     );
 
-    // The link is offered as the top suggestion but the user must confirm it:
-    // a misread description must not silently ride a link into stock.
+    // The link leads the list but the user must confirm it: a misread
+    // description must not silently ride a link into stock.
     expect(result.resolution).toBe('unresolved');
     expect(result.suggestions[0]?.itemId).toBe(spinachId);
+  });
+
+  it('still offers fuzzy alternatives beside an untrusted text link', async () => {
+    // A second plausible item, so the fuzzy tier has something distinct to add.
+    const [baby] = await db
+      .insert(inventoryItems)
+      .values({ householdId, name: 'Baby Spinach', defaultUnit: 'g' })
+      .returning({ id: inventoryItems.id });
+
+    // Same low-confidence line as above. The distrusted link is not the only
+    // thing on offer — the user needs alternatives to judge against.
+    const result = await matchReceiptLine(
+      { rawText: 'ORG SPNCH', merchantCode: null, merchant: 'safeway', ocrConfidence: 0.3 },
+      householdId
+    );
+
+    expect(result.resolution).toBe('unresolved');
+    // The link still leads (confidence 1), with the fuzzy candidate behind it.
+    expect(result.suggestions[0]?.itemId).toBe(spinachId);
+    expect(result.suggestions.some((s) => s.itemId === baby.id)).toBe(true);
+    // No item appears twice.
+    const ids = result.suggestions.map((s) => s.itemId);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it('auto-resolves a text link when OCR confidence is high', async () => {
@@ -1044,16 +1076,38 @@ export function buildLineKey(
   return { lineKey: normalizeReceiptLine(rawText), keyKind: 'text' };
 }
 
+/** Both operands and the result live at decimal(10,3). */
+const SCALE = 3;
+
+/** "2.775" -> 2775n, "3" -> 3000n. Throws on anything that isn't a decimal. */
+function toScaledInt(value: string): bigint {
+  const match = value.trim().match(/^(-?)(\d+)(?:\.(\d*))?$/);
+  if (!match) throw new Error(`Not a decimal value: ${value}`);
+  const [, sign, whole, fraction = ''] = match;
+  const padded = (fraction + '0'.repeat(SCALE)).slice(0, SCALE);
+  return BigInt(`${sign}${whole}${padded}`);
+}
+
 /**
- * Drizzle hands decimals back as strings. Multiply at the column's scale (3)
- * rather than letting floats decide.
+ * Drizzle hands decimals back as strings. Multiply as scaled integers — going
+ * through Number() loses the column's own precision: 2.775 * 2023.420 lands on
+ * 5614.990 in IEEE-754 where the exact product is 5614.991. This result becomes
+ * a stock quantity, so that drift is wrong inventory.
  */
 export function multiplyQuantity(count: string, unitsPerCount: string): string {
-  const product = Number(count) * Number(unitsPerCount);
-  if (!Number.isFinite(product)) {
-    throw new Error(`Invalid quantity math: ${count} * ${unitsPerCount}`);
-  }
-  return product.toFixed(3);
+  // Two scaled operands carry 2*SCALE decimal places; divide one scale back out,
+  // rounding half away from zero to match Postgres numeric rounding.
+  const raw = toScaledInt(count) * toScaledInt(unitsPerCount);
+  const divisor = 10n ** BigInt(SCALE);
+  const negative = raw < 0n;
+  const magnitude = negative ? -raw : raw;
+  const rounded = (magnitude + divisor / 2n) / divisor;
+  const scaled = negative ? -rounded : rounded;
+
+  const digits = (scaled < 0n ? -scaled : scaled).toString().padStart(SCALE + 1, '0');
+  const whole = digits.slice(0, -SCALE);
+  const fraction = digits.slice(-SCALE);
+  return `${scaled < 0n ? '-' : ''}${whole}.${fraction}`;
 }
 
 async function findLink(householdId: string, merchant: string, lineKey: string) {
@@ -1102,6 +1156,12 @@ export async function matchReceiptLine(
   const { lineKey, keyKind } = buildLineKey(input.merchantCode, input.rawText);
   const normalizedText = normalizeReceiptLine(input.rawText);
 
+  // Set when a link exists but is not trustworthy enough to auto-apply. It
+  // still leads the suggestion list — it is probably right — but the user
+  // needs the alternatives beside it to judge, so we fall through to tiers 2
+  // and 3 rather than returning it alone.
+  let untrustedLinkSuggestion: MatchSuggestion | null = null;
+
   // Tier 1 — learned link.
   const link = await findLink(householdId, merchant, lineKey);
   if (link) {
@@ -1134,21 +1194,21 @@ export async function matchReceiptLine(
         };
       }
 
-      // Low-confidence text link: offer it, make the user say yes.
-      return {
-        resolution: 'unresolved',
-        itemId: null,
-        unitsPerCount: null,
-        linkSource: null,
-        suggestions: [linkSuggestion],
-      };
+      // Low-confidence text link: remember it, then fall through so the user
+      // sees it alongside the alias and fuzzy candidates. Returning it alone
+      // would leave them one option — the one we just declined to trust.
+      untrustedLinkSuggestion = linkSuggestion;
     }
   }
 
   // Tier 2 — alias.
   const suggestions: MatchSuggestion[] = [];
+  if (untrustedLinkSuggestion) suggestions.push(untrustedLinkSuggestion);
+
   const aliasSuggestion = await findAliasSuggestion(householdId, normalizedText);
-  if (aliasSuggestion) suggestions.push(aliasSuggestion);
+  if (aliasSuggestion && !suggestions.some((s) => s.itemId === aliasSuggestion.itemId)) {
+    suggestions.push(aliasSuggestion);
+  }
 
   // Tier 3 — fuzzy.
   const fuzzy = await matchSingleIngredient(normalizedText, householdId);
@@ -1172,7 +1232,7 @@ export async function matchReceiptLine(
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd backend && npx vitest run test/receipts/receipt-line-matcher.test.ts`
-Expected: PASS, 12 tests.
+Expected: PASS, 14 tests.
 
 If "returns an empty suggestion list when nothing is close" fails, check `matchSingleIngredient`'s threshold — it returns anything scoring ≥ 0.5, so pick a test string with no token overlap with `Olive Oil` or `Spinach` rather than lowering the threshold.
 
