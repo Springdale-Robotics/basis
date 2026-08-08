@@ -1,6 +1,7 @@
 import { access, open } from 'fs/promises';
 import { createWorker } from 'tesseract.js';
 import type { Worker } from 'tesseract.js';
+import sharp from 'sharp';
 import { config } from '../../config/index.js';
 import { logger } from '../../lib/logger.js';
 
@@ -61,18 +62,68 @@ const IMAGE_SIGNATURES: Array<(header: Buffer) => boolean> = [
   (h) => h.toString('ascii', 0, 4) === 'RIFF' && h.toString('ascii', 8, 12) === 'WEBP', // WebP
 ];
 
-async function assertReadableImage(imagePath: string): Promise<void> {
+// HEIC/HEIF (what iPhones shoot by default — the primary capture path this
+// feature exists for) is an ISO-BMFF container Leptonica cannot decode at
+// all. It is detected separately from IMAGE_SIGNATURES above because it
+// isn't read directly: it's read as a box structure, not a fixed magic
+// number, and it must be *converted* rather than passed through.
+//
+// Box layout: bytes 0-3 are the `ftyp` box's own size (irrelevant here),
+// bytes 4-7 are the literal ASCII box type "ftyp", and bytes 8-11 are the
+// four-character major brand. A 12-byte header is exactly enough to read
+// both — confirmed against a real HEIC file (see
+// test/receipts/fixtures/sample-receipt.heic): its major brand sits at
+// exactly those offsets.
+const HEIF_BRANDS = new Set([
+  'heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1', 'heim', 'heis', 'hevm', 'hevs',
+]);
+
+function isHeifBrand(header: Buffer, bytesRead: number): boolean {
+  if (bytesRead < 12) return false;
+  if (header.toString('ascii', 4, 8) !== 'ftyp') return false;
+  return HEIF_BRANDS.has(header.toString('ascii', 8, 12));
+}
+
+async function readHeader(imagePath: string): Promise<{ header: Buffer; bytesRead: number }> {
   const handle = await open(imagePath, 'r');
   try {
     const header = Buffer.alloc(12);
     const { bytesRead } = await handle.read(header, 0, 12, 0);
-    const isRecognizedFormat = bytesRead >= 3 && IMAGE_SIGNATURES.some((matches) => matches(header));
-    if (!isRecognizedFormat) {
-      throw new Error(`Unrecognized image format: ${imagePath}`);
-    }
+    return { header, bytesRead };
   } finally {
     await handle.close();
   }
+}
+
+// Decides what to feed `worker.recognize()`. Formats Tesseract already reads
+// pass through completely untouched — the original path string, no re-encode
+// (no generational loss on an already-clean JPEG). HEIC/HEIF is converted to
+// a JPEG buffer with sharp, which tesseract.js accepts directly (no temp
+// file). Anything matching no known signature is rejected here, before a
+// worker is ever created — that's what keeps the "not an image" test's
+// output pristine (see the comment on workerOptions above): Tesseract's own
+// decode-failure path is never reached for unrecognized input.
+async function resolveRecognitionInput(imagePath: string): Promise<string | Buffer> {
+  const { header, bytesRead } = await readHeader(imagePath);
+
+  if (bytesRead >= 3 && IMAGE_SIGNATURES.some((matches) => matches(header))) {
+    return imagePath;
+  }
+
+  if (isHeifBrand(header, bytesRead)) {
+    try {
+      return await sharp(imagePath).jpeg().toBuffer();
+    } catch (error) {
+      // Don't fall through to Tesseract on a failed conversion — that would
+      // reproduce exactly the confusing, unsuppressable WASM stderr failure
+      // this format check exists to avoid. Name the format so the caller
+      // (and whoever's debugging a 500) isn't left guessing.
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`HEIC/HEIF image could not be converted for OCR: ${imagePath} (${message})`);
+    }
+  }
+
+  throw new Error(`Unrecognized image format: ${imagePath}`);
 }
 
 export async function isOcrAvailable(): Promise<boolean> {
@@ -132,7 +183,7 @@ export async function transcribeReceipt(imagePath: string): Promise<Transcriptio
     throw new Error(`Receipt image not found: ${imagePath}`);
   }
 
-  await assertReadableImage(imagePath);
+  const recognitionInput = await resolveRecognitionInput(imagePath);
 
   const startTime = Date.now();
   const worker = await createReceiptWorker();
@@ -152,7 +203,7 @@ export async function transcribeReceipt(imagePath: string): Promise<Transcriptio
     let data;
     try {
       const result = await Promise.race([
-        worker.recognize(imagePath, {}, { blocks: true }),
+        worker.recognize(recognitionInput, {}, { blocks: true }),
         timeoutPromise,
       ]);
       data = result.data;
