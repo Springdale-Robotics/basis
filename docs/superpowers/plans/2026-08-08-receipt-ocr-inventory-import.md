@@ -1265,6 +1265,41 @@ git commit -m "feat(receipts): resolve receipt lines via learned links, aliases,
 
 `tesseract.js` over `node-tesseract-ocr`: prod is a native systemd install with a guided installer, and a system binary means installer changes and a new way for installs to fail.
 
+> **The code blocks below are superseded on API mechanics.** `tesseract.js@7` nests
+> per-line data at `blocks[].paragraphs[].lines[]` and only populates it when
+> `recognize()` is passed `output: { blocks: true }`; `createWorker()` needs an
+> `errorHandler` or a failed recognition throws uncaught; and the `setTimeout`
+> shown below does not bound anything — use `Promise.race`. Adapt to the real
+> installed API and keep the exported contract. What is normative here is the
+> contract, the config keys, and the test strategy.
+
+**Format normalization is required.** Tesseract's Leptonica build reads JPEG,
+PNG, GIF, BMP, TIFF, and WebP — but not HEIC/HEIF. Before transcription, detect
+HEIC/HEIF by magic bytes (ISO-BMFF: `ftyp` at offset 4, followed by a
+`heic`/`heix`/`hevc`/`hevx`/`mif1`/`msf1` brand) and convert to JPEG with
+`sharp`, already a backend dependency at `^0.33.5`. Formats Tesseract already
+reads pass through untouched — no re-encode, no generational loss. Anything
+whose magic bytes match nothing recognized is rejected before a worker is
+created, so the WASM decoder never runs on garbage input (which is also what
+keeps the negative test's output pristine: the decoder's stderr goes to a
+`worker_threads` realm a main-thread `console.error` spy cannot reach).
+
+> **Known limitation — real iPhone HEIC will not OCR on a standard install.**
+> sharp's prebuilt binaries ship libheif *without* an HEVC decoder for patent
+> reasons, so they handle AVIF-family HEIF but not the HEVC-coded HEIC an iPhone
+> actually produces. Verified twice against independently generated `ftypheic`
+> fixtures: sharp fails with `bad seek to <size+8>` in both. An earlier draft of
+> this plan claimed otherwise; that claim was wrong.
+>
+> The conversion path stays anyway. It costs nothing on the JPEG path, it does
+> handle AVIF-family HEIF, it starts working by itself in any deployment whose
+> sharp is built against a system libvips carrying libde265, and where it cannot
+> decode it produces a clear named error rather than a confusing Leptonica
+> failure. Real-world exposure is small because iOS Safari normally transcodes
+> HEIC to JPEG when a photo is uploaded through `<input type="file">` — the flow
+> this feature uses. HEIC/HEIF stay in the upload allowlist so the failure, when
+> it happens, is a legible message rather than a rejected file.
+
 - [ ] **Step 1: Install the dependency**
 
 ```bash
