@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../../config/database.js';
 import { config } from '../../config/index.js';
 import { logger } from '../../lib/logger.js';
@@ -14,6 +14,7 @@ import {
   receiptLineLinks,
   inventoryItems,
   inventoryStock,
+  inventoryAreas,
   type ReceiptScan,
   type ReceiptScanLine,
   type ReceiptProcessingStage,
@@ -375,6 +376,13 @@ interface ConfirmPlan {
   unit: string | null;
 }
 
+/** Identifies exactly one row for the UI — raw text alone repeats across a receipt. */
+interface LineIssue {
+  lineId: string;
+  rawText: string;
+  reason: string;
+}
+
 /**
  * Turn a reviewed scan into stock, and remember every decision.
  *
@@ -419,8 +427,11 @@ export async function confirmScan(
     throw Errors.validation(
       `${unresolved.length} line(s) still need a decision before this receipt can be confirmed.`,
       {
-        unresolvedLineIds: unresolved.map((line) => line.id),
-        unresolvedLines: unresolved.map((line) => line.rawText),
+        lines: unresolved.map((line) => ({
+          lineId: line.id,
+          rawText: line.rawText,
+          reason: 'unresolved',
+        })),
       }
     );
   }
@@ -429,33 +440,45 @@ export async function confirmScan(
   const ignoredCount = lines.length - linked.length;
 
   // Resolve every line's item and area up front so anything missing fails
-  // before any write — see the module-level note above.
-  const plans: ConfirmPlan[] = [];
-  const missingArea: string[] = [];
+  // before any write — see the module-level note above. Failures are
+  // collected rather than thrown on the first offender: a forty-line receipt
+  // with six bad lines should name all six in one response, not surface them
+  // one round trip at a time.
+  const issues: LineIssue[] = [];
+  const candidates: ConfirmPlan[] = [];
 
   for (const line of linked) {
     if (!line.itemId || !line.unitsPerCount) {
       // A 'link' line without both is a data-integrity gap, not a user
       // decision the reviewer skipped — surface it the same way as any
-      // other unresolved line rather than crashing on a null assertion.
-      throw Errors.validation(
-        `Line "${line.rawText}" is marked linked but is missing an item or conversion.`,
-        { lineId: line.id }
-      );
+      // other bad line rather than crashing on a null assertion.
+      issues.push({
+        lineId: line.id,
+        rawText: line.rawText,
+        reason: 'missing an item or conversion factor',
+      });
+      continue;
     }
 
     const item = await db.query.inventoryItems.findFirst({
       where: and(eq(inventoryItems.id, line.itemId), eq(inventoryItems.householdId, householdId)),
     });
-    if (!item) throw Errors.notFound('Inventory item', line.itemId);
-
-    const areaId = line.targetAreaId ?? item.defaultAreaId ?? scan.defaultAreaId;
-    if (!areaId) {
-      missingArea.push(line.rawText);
+    if (!item) {
+      issues.push({
+        lineId: line.id,
+        rawText: line.rawText,
+        reason: 'linked item no longer exists in this household',
+      });
       continue;
     }
 
-    plans.push({
+    const areaId = line.targetAreaId ?? item.defaultAreaId ?? scan.defaultAreaId;
+    if (!areaId) {
+      issues.push({ lineId: line.id, rawText: line.rawText, reason: 'no storage area' });
+      continue;
+    }
+
+    candidates.push({
       line,
       areaId,
       quantity: multiplyQuantity(line.count, line.unitsPerCount),
@@ -463,11 +486,40 @@ export async function confirmScan(
     });
   }
 
-  if (missingArea.length > 0) {
-    throw Errors.validation(
-      `${missingArea.length} line(s) have no storage area. Set a default area for the scan, or pick one per line.`,
-      { linesWithoutArea: missingArea }
-    );
+  // The resolved areaId is the one id in the write path nothing else checks.
+  // It can come from the item's defaultAreaId (never itself verified against
+  // a household when set) or the line's targetAreaId — and inventory_stock's
+  // RLS policy scopes item_id only, so there is no DB backstop on area_id.
+  // areaId is also onDelete: 'cascade', so a foreign area silently accepted
+  // here means another household deleting it later deletes this household's
+  // stock row. Verify every distinct resolved area in one query, before
+  // anything is written.
+  const distinctAreaIds = [...new Set(candidates.map((c) => c.areaId))];
+  const verifiedAreas = distinctAreaIds.length
+    ? await db
+        .select({ id: inventoryAreas.id })
+        .from(inventoryAreas)
+        .where(
+          and(inArray(inventoryAreas.id, distinctAreaIds), eq(inventoryAreas.householdId, householdId))
+        )
+    : [];
+  const verifiedAreaIds = new Set(verifiedAreas.map((area) => area.id));
+
+  const plans: ConfirmPlan[] = [];
+  for (const candidate of candidates) {
+    if (!verifiedAreaIds.has(candidate.areaId)) {
+      issues.push({
+        lineId: candidate.line.id,
+        rawText: candidate.line.rawText,
+        reason: 'resolved storage area does not belong to this household',
+      });
+      continue;
+    }
+    plans.push(candidate);
+  }
+
+  if (issues.length > 0) {
+    throw Errors.validation(`${issues.length} line(s) could not be confirmed.`, { lines: issues });
   }
 
   const addedAt = scan.purchasedAt ?? new Date();

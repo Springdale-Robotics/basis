@@ -90,15 +90,35 @@ async function confirm(scanId: string): Promise<Response> {
 
 describe('POST /api/v1/receipts/scans/:id/confirm', () => {
   it('writes stock as count x unitsPerCount in the item default unit', async () => {
+    // A dedicated item, not the shared fixture `itemId` — other tests in this
+    // file also write stock for `itemId`, so filtering on it alone and taking
+    // the last row would silently depend on this test running first. Every
+    // strong assertion below (quantity, unit, source, area, price, addedAt)
+    // rides on this row being unambiguously the one this test wrote.
+    const [testItem] = await db
+      .insert(inventoryItems)
+      .values({ householdId: user.householdId, name: 'Stock Write Test Item', defaultUnit: 'ml' })
+      .returning({ id: inventoryItems.id });
+
     const scanId = await seedScan([
-      { rawText: '1234567 KS ORG EVOO', merchantCode: '1234567', count: '3.000', price: '65.97' },
+      {
+        rawText: '1234567 KS ORG EVOO',
+        merchantCode: '1234567',
+        count: '3.000',
+        price: '65.97',
+        itemId: testItem.id,
+      },
     ]);
 
     const res = await confirm(scanId);
     expect(res.status).toBe(200);
 
-    const stock = await db.select().from(inventoryStock).where(eq(inventoryStock.itemId, itemId));
-    const row = stock.at(-1)!;
+    const stock = await db
+      .select()
+      .from(inventoryStock)
+      .where(eq(inventoryStock.itemId, testItem.id));
+    expect(stock).toHaveLength(1);
+    const row = stock[0];
     expect(row.quantity).toBe('6000.000');
     expect(row.unit).toBe('ml');
     expect(row.source).toBe('purchase');
@@ -217,9 +237,83 @@ describe('POST /api/v1/receipts/scans/:id/confirm', () => {
     expect(stock).toHaveLength(1);
   });
 
-  it('409s on a second confirm', async () => {
+  it('409s on a second confirm, and does not double-write stock', async () => {
     const scanId = await seedScan([{ rawText: 'KS ORG EVOO' }]);
     expect((await confirm(scanId)).status).toBe(200);
+
+    const afterFirst = await db
+      .select()
+      .from(inventoryStock)
+      .where(eq(inventoryStock.itemId, itemId));
+
     expect((await confirm(scanId)).status).toBe(409);
+
+    const afterSecond = await db
+      .select()
+      .from(inventoryStock)
+      .where(eq(inventoryStock.itemId, itemId));
+    expect(afterSecond).toHaveLength(afterFirst.length);
+  });
+
+  it('refuses the whole receipt when one of several lines is unplaceable — no partial write', async () => {
+    const [freshArea] = await db
+      .insert(inventoryAreas)
+      .values({ householdId: user.householdId, name: 'Multi-line Refusal Area' })
+      .returning({ id: inventoryAreas.id });
+
+    const [freshItem] = await db
+      .insert(inventoryItems)
+      .values({ householdId: user.householdId, name: 'Multi-line Refusal Item', defaultUnit: 'ml' })
+      .returning({ id: inventoryItems.id });
+
+    const [orphanItem] = await db
+      .insert(inventoryItems)
+      .values({ householdId: user.householdId, name: 'Multi-line Orphan Item', defaultUnit: 'g' })
+      .returning({ id: inventoryItems.id });
+
+    const scanId = await seedScan(
+      [
+        { rawText: 'VALID LINE', itemId: freshItem.id, targetAreaId: freshArea.id },
+        { rawText: 'UNPLACEABLE LINE', itemId: orphanItem.id },
+      ],
+      { defaultAreaId: null }
+    );
+
+    const res = await confirm(scanId);
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(await res.json())).toMatch(/UNPLACEABLE LINE/);
+
+    // Nothing partially applied — not even the line that resolved cleanly.
+    const stock = await db
+      .select()
+      .from(inventoryStock)
+      .where(eq(inventoryStock.itemId, freshItem.id));
+    expect(stock).toHaveLength(0);
+
+    const scan = await db.query.receiptScans.findFirst({ where: eq(receiptScans.id, scanId) });
+    expect(scan?.status).toBe('review');
+  });
+
+  it('refuses when a resolved area belongs to another household', async () => {
+    const otherHouseholdId = await ctx.createHousehold();
+    const [foreignArea] = await db
+      .insert(inventoryAreas)
+      .values({ householdId: otherHouseholdId, name: 'Someone Else\'s Pantry' })
+      .returning({ id: inventoryAreas.id });
+
+    const scanId = await seedScan([{ rawText: 'KS ORG EVOO', targetAreaId: foreignArea.id }]);
+
+    const res = await confirm(scanId);
+    expect(res.status).toBe(400);
+
+    // Nothing written, in this household or the other one.
+    const stock = await db
+      .select()
+      .from(inventoryStock)
+      .where(eq(inventoryStock.areaId, foreignArea.id));
+    expect(stock).toHaveLength(0);
+
+    const scan = await db.query.receiptScans.findFirst({ where: eq(receiptScans.id, scanId) });
+    expect(scan?.status).toBe('review');
   });
 });
