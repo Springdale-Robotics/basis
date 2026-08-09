@@ -28,3 +28,14 @@ export const listScansQuerySchema = z.object({
   status: z.enum(['processing', 'review', 'confirmed', 'cancelled', 'failed']).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
+
+export const updateLinkSchema = z.object({
+  itemId: z.string().uuid().optional(),
+  unitsPerCount: z.number().positive().optional(),
+});
+
+export const listLinksQuerySchema = z.object({
+  merchant: z.string().trim().max(120).optional(),
+  search: z.string().trim().max(255).optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(200),
+});

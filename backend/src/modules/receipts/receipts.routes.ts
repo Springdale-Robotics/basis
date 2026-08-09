@@ -1,7 +1,7 @@
 import { randomBytes } from 'crypto';
 import { unlink } from 'fs/promises';
 import type { FastifyInstance } from 'fastify';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, ilike } from 'drizzle-orm';
 import { db } from '../../config/database.js';
 import { config } from '../../config/index.js';
 import { logger } from '../../lib/logger.js';
@@ -11,6 +11,7 @@ import { requireInventoryAccess } from '../../middleware/permission.middleware.j
 import {
   receiptScans,
   receiptScanLines,
+  receiptLineLinks,
   inventoryItems,
   inventoryAreas,
 } from '../../db/schema/index.js';
@@ -23,6 +24,8 @@ import {
   updateLineSchema,
   createItemForLineSchema,
   listScansQuerySchema,
+  updateLinkSchema,
+  listLinksQuerySchema,
 } from './receipts.schemas.js';
 
 /** Load a scan, 404ing when it belongs to another household. */
@@ -396,6 +399,98 @@ export default async function receiptsRoutes(app: FastifyInstance): Promise<void
       await db.delete(receiptScans).where(eq(receiptScans.id, scan.id));
 
       return { success: true, data: { message: 'Scan deleted' } };
+    }
+  );
+
+  // Learned merchant/line -> item mappings. This is the only visibility
+  // surface for state confirmScan applies silently on every future scan, so
+  // list, correction (PATCH), and forgetting (DELETE) all live here.
+  app.get<{ Querystring: { merchant?: string; search?: string; limit?: number } }>(
+    '/links',
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
+    async (request) => {
+      const query = listLinksQuerySchema.parse(request.query);
+
+      const conditions = [eq(receiptLineLinks.householdId, request.user!.householdId)];
+      if (query.merchant) {
+        conditions.push(eq(receiptLineLinks.merchant, query.merchant.toLowerCase()));
+      }
+      if (query.search) {
+        conditions.push(ilike(receiptLineLinks.lineKey, `%${query.search}%`));
+      }
+
+      const links = await db
+        .select({
+          id: receiptLineLinks.id,
+          merchant: receiptLineLinks.merchant,
+          lineKey: receiptLineLinks.lineKey,
+          keyKind: receiptLineLinks.keyKind,
+          itemId: receiptLineLinks.itemId,
+          itemName: inventoryItems.name,
+          unitsPerCount: receiptLineLinks.unitsPerCount,
+          itemUnit: inventoryItems.defaultUnit,
+          useCount: receiptLineLinks.useCount,
+          lastUsedAt: receiptLineLinks.lastUsedAt,
+        })
+        .from(receiptLineLinks)
+        .innerJoin(inventoryItems, eq(inventoryItems.id, receiptLineLinks.itemId))
+        .where(and(...conditions))
+        .orderBy(desc(receiptLineLinks.useCount))
+        .limit(query.limit);
+
+      return { success: true, data: { links } };
+    }
+  );
+
+  app.patch<{ Params: { id: string } }>(
+    '/links/:id',
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
+    async (request) => {
+      const link = await db.query.receiptLineLinks.findFirst({
+        where: and(
+          eq(receiptLineLinks.id, request.params.id),
+          eq(receiptLineLinks.householdId, request.user!.householdId)
+        ),
+      });
+      if (!link) throw Errors.notFound('Receipt line link', request.params.id);
+
+      const input = updateLinkSchema.parse(request.body);
+      if (input.itemId) {
+        await requireItem(input.itemId, request.user!.householdId);
+      }
+
+      await db
+        .update(receiptLineLinks)
+        .set({
+          ...(input.itemId ? { itemId: input.itemId } : {}),
+          ...(input.unitsPerCount ? { unitsPerCount: input.unitsPerCount.toFixed(3) } : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(receiptLineLinks.id, link.id));
+
+      return { success: true, data: { message: 'Link updated' } };
+    }
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    '/links/:id',
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
+    async (request) => {
+      const deleted = await db
+        .delete(receiptLineLinks)
+        .where(
+          and(
+            eq(receiptLineLinks.id, request.params.id),
+            eq(receiptLineLinks.householdId, request.user!.householdId)
+          )
+        )
+        .returning({ id: receiptLineLinks.id });
+
+      if (deleted.length === 0) {
+        throw Errors.notFound('Receipt line link', request.params.id);
+      }
+
+      return { success: true, data: { message: 'Link forgotten' } };
     }
   );
 }
