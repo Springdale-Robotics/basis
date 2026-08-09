@@ -35,6 +35,10 @@ export function ReceiptUploadDialog({ open, onOpenChange }: ReceiptUploadDialogP
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
+  // Set when the dialog closes or unmounts, so work that resolves afterwards
+  // knows to stay quiet. stopPolling alone is not enough: during the upload
+  // await there is no interval yet for it to clear.
+  const cancelledRef = useRef(false);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current !== null) {
@@ -43,9 +47,16 @@ export function ReceiptUploadDialog({ open, onOpenChange }: ReceiptUploadDialogP
     }
   }, []);
 
-  useEffect(() => stopPolling, [stopPolling]);
+  useEffect(
+    () => () => {
+      cancelledRef.current = true;
+      stopPolling();
+    },
+    [stopPolling]
+  );
 
   const reset = useCallback(() => {
+    cancelledRef.current = true;
     stopPolling();
     setUploadProgress(0);
     setStage(null);
@@ -61,9 +72,17 @@ export function ReceiptUploadDialog({ open, onOpenChange }: ReceiptUploadDialogP
   const handleFile = async (file: File) => {
     setBusy(true);
     setError(null);
+    cancelledRef.current = false;
 
     try {
       const { id } = await receiptsApi.uploadScan(file, setUploadProgress);
+
+      // Closing the dialog or leaving the page during the upload itself resolves
+      // nothing — the promise above still settles. Without this guard we would
+      // start an interval nobody is tracking and, minutes later, yank the
+      // browser to the review page for a dialog the user already dismissed.
+      if (cancelledRef.current) return;
+
       setStage('queued');
 
       pollRef.current = window.setInterval(async () => {
@@ -88,6 +107,7 @@ export function ReceiptUploadDialog({ open, onOpenChange }: ReceiptUploadDialogP
         }
       }, 2000);
     } catch (err) {
+      if (cancelledRef.current) return;
       setBusy(false);
       setError(err instanceof Error ? err.message : 'Upload failed');
     }
