@@ -3257,6 +3257,33 @@ git commit -m "feat(receipts): scan and line review routes"
 - Consumes: `multiplyQuantity`, `normalizeMerchant`, `buildLineKey` (Task 3); `emitInventoryEvent` from the websocket module (grep `backend/src/websocket/` for its exact export path — `inventory.routes.ts:744` imports it).
 - Produces: `confirmScan(scanId, householdId): Promise<ConfirmResult>`; type `ConfirmResult { stockCreated: number; linksSaved: number; ignoredCount: number }`.
 
+> **Two corrections found in review, both normative.**
+>
+> **1. The resolved `areaId` must be household-verified at confirm time.** It is
+> the one id in the write path that nothing checks. The item is re-verified, but
+> the area — `line.targetAreaId ?? item.defaultAreaId ?? scan.defaultAreaId` —
+> goes straight into `inventory_stock.areaId`. There is no DB backstop: the RLS
+> policy on `inventory_stock` (`drizzle/0007_rls_foundation.sql`) constrains
+> `item_id` only and says nothing about `area_id`. And `inventory_items`
+> currently lets a `defaultAreaId` be set without checking the area's household,
+> so an item can legitimately carry a foreign area that confirm would propagate.
+> Because `inventory_stock.areaId` is `onDelete: 'cascade'`, the other household
+> deleting that area would silently delete this household's stock row. Collect
+> the distinct resolved area ids and verify them in one query before the
+> transaction opens; refuse on any that do not belong.
+>
+> **2. Refusals must collect, and must carry line ids.** The design is "failures
+> collect; the throw happens before the transaction opens" — only the second half
+> was implemented. Item-resolution failures throw on the first offending line, so
+> a forty-line receipt with six bad lines surfaces them one round trip at a time.
+> And the missing-area detail carries `rawText` only; receipt lines routinely
+> repeat identical text (two of the same product), so a UI cannot tell which row
+> to highlight. Every refusal emits `{ lineId, rawText }[]`.
+>
+> The task's headline invariant — never half a receipt — must also be proven by a
+> test, not just by code structure: two lines, the first fully valid and the
+> second unplaceable, expecting a 400 and **zero** new `inventory_stock` rows.
+
 - [ ] **Step 1: Write the failing test**
 
 Create `backend/test/receipts/receipts.confirm.test.ts`:
