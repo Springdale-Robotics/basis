@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -36,6 +37,44 @@ const TINY_JPEG = Buffer.from(
   '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==',
   'base64'
 );
+
+/**
+ * Hand-build a multipart/form-data body with an explicit boundary, mirroring
+ * `receipts.routes.test.ts`'s helper of the same name. `route-harness.ts`'s
+ * `fetch` wrapper unconditionally injects `content-type: application/json`
+ * whenever a body is present, which would collide with the boundary-bearing
+ * content-type a multipart body needs. Setting 'content-type' explicitly
+ * (same lowercase key the harness uses) lets this cleanly overwrite the
+ * default instead of folding into a duplicate header.
+ */
+function buildMultipart(
+  parts: Array<
+    | { type: 'file'; name: string; filename: string; contentType: string; data: Buffer }
+    | { type: 'field'; name: string; value: string }
+  >
+): { body: Buffer; contentType: string } {
+  const boundary = `testBoundary${randomUUID().replace(/-/g, '')}`;
+  const chunks: Buffer[] = [];
+  for (const part of parts) {
+    chunks.push(Buffer.from(`--${boundary}\r\n`));
+    if (part.type === 'file') {
+      chunks.push(
+        Buffer.from(
+          `Content-Disposition: form-data; name="${part.name}"; filename="${part.filename}"\r\n` +
+            `Content-Type: ${part.contentType}\r\n\r\n`
+        )
+      );
+      chunks.push(part.data);
+      chunks.push(Buffer.from('\r\n'));
+    } else {
+      chunks.push(
+        Buffer.from(`Content-Disposition: form-data; name="${part.name}"\r\n\r\n${part.value}\r\n`)
+      );
+    }
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  return { body: Buffer.concat(chunks), contentType: `multipart/form-data; boundary=${boundary}` };
+}
 
 let ctx: RouteTestContext;
 let userA: TestUser;
@@ -126,17 +165,32 @@ beforeAll(async () => {
   bItemId = b.itemId;
   bAreaId = b.areaId;
 
-  // Give household A's scan a real stored image so the image route has
-  // something to serve for its positive control (and so reprocess, which
-  // refuses without a stored image, can be exercised positively too).
+  // Give BOTH scans a real stored image. A's image backs its positive
+  // control (and lets reprocess, which refuses without a stored image, be
+  // exercised positively too). B's image is what makes the "cannot read
+  // another household's image" test meaningful at all: the image route 404s
+  // both when the scan belongs to another household AND when the scan has
+  // no stored image (`receipts.routes.ts:196-200`, the "pruned by the
+  // retention sweep" case) — with only A imaged, a broken household filter
+  // would still 404 on B's scan via that second branch, and the test would
+  // pass for the wrong reason. Imaging B too forces the 404 to be reachable
+  // only through the tenancy check.
   const dir = join(tmpdir(), 'basis-receipt-tenancy-test');
   await mkdir(dir, { recursive: true });
-  const imagePath = join(dir, `${aScanId}.jpg`);
-  await writeFile(imagePath, TINY_JPEG);
+
+  const aImagePath = join(dir, `${aScanId}.jpg`);
+  await writeFile(aImagePath, TINY_JPEG);
   await db
     .update(receiptScans)
-    .set({ imagePath, imageMimeType: 'image/jpeg' })
+    .set({ imagePath: aImagePath, imageMimeType: 'image/jpeg' })
     .where(eq(receiptScans.id, aScanId));
+
+  const bImagePath = join(dir, `${bScanId}.jpg`);
+  await writeFile(bImagePath, TINY_JPEG);
+  await db
+    .update(receiptScans)
+    .set({ imagePath: bImagePath, imageMimeType: 'image/jpeg' })
+    .where(eq(receiptScans.id, bScanId));
 });
 
 afterAll(async () => {
@@ -155,6 +209,9 @@ describe('receipts tenancy — reads', () => {
   });
 
   it('cannot read another household\'s receipt image', async () => {
+    // B's scan has a real stored image (see beforeAll) specifically so this
+    // 404 can only come from the tenancy check, not from the route's other
+    // 404 branch (no image stored).
     expect((await userA.fetch(`/api/v1/receipts/scans/${bScanId}/image`)).status).toBe(404);
   });
 
@@ -500,6 +557,18 @@ describe('receipts tenancy — carried-forward gap: item.defaultAreaId at confir
     });
     expect(res.status).toBe(400);
 
+    // `confirmScan` has five distinct 400 paths (unresolved lines, blank
+    // merchant, missing item/conversion, item no longer exists, no storage
+    // area) — asserting only the status code would still pass if this
+    // fixture regressed to fail for an unrelated reason. Naming the reason
+    // pins this test to the one check that matters: the resolved area was
+    // rejected for belonging to another household.
+    const body = await res.json();
+    expect(body.error.details.lines).toHaveLength(1);
+    expect(body.error.details.lines[0].reason).toBe(
+      'resolved storage area does not belong to this household'
+    );
+
     // No side effects anywhere: no stock for this item, scan still in review.
     const stock = await db
       .select()
@@ -593,5 +662,68 @@ describe('receipts tenancy — confirm sanity control', () => {
 
     const confirmed = await db.query.receiptScans.findFirst({ where: eq(receiptScans.id, scan.id) });
     expect(confirmed?.status).toBe('confirmed');
+  });
+});
+
+describe('receipts tenancy — POST /scans', () => {
+  // The one remaining foreign-id acceptance point nothing else in this file
+  // attacks: the initial upload takes an optional defaultAreaId field,
+  // validated against the caller's household at receipts.routes.ts:118-125.
+  it('404s on a defaultAreaId from another household and creates no scan row', async () => {
+    const before = await db
+      .select({ id: receiptScans.id })
+      .from(receiptScans)
+      .where(eq(receiptScans.householdId, userA.householdId));
+
+    const { body, contentType } = buildMultipart([
+      {
+        type: 'file',
+        name: 'file',
+        filename: 'receipt.jpg',
+        contentType: 'image/jpeg',
+        data: Buffer.from('fake-receipt-bytes'),
+      },
+      { type: 'field', name: 'defaultAreaId', value: bAreaId },
+    ]);
+
+    const res = await userA.fetch('/api/v1/receipts/scans', {
+      method: 'POST',
+      headers: { 'content-type': contentType },
+      body,
+    });
+    expect(res.status).toBe(404);
+
+    // No side effect: not even an orphan scan row with a null/foreign area.
+    const after = await db
+      .select({ id: receiptScans.id })
+      .from(receiptScans)
+      .where(eq(receiptScans.householdId, userA.householdId));
+    expect(after).toHaveLength(before.length);
+
+    // Positive control: the same upload succeeds with the caller's own area.
+    const { body: ownBody, contentType: ownContentType } = buildMultipart([
+      {
+        type: 'file',
+        name: 'file',
+        filename: 'receipt.jpg',
+        contentType: 'image/jpeg',
+        data: Buffer.from('fake-receipt-bytes'),
+      },
+      { type: 'field', name: 'defaultAreaId', value: aAreaId },
+    ]);
+
+    const own = await userA.fetch('/api/v1/receipts/scans', {
+      method: 'POST',
+      headers: { 'content-type': ownContentType },
+      body: ownBody,
+    });
+    expect(own.status).toBe(200);
+
+    const ownResBody = await own.json();
+    const created = await db.query.receiptScans.findFirst({
+      where: eq(receiptScans.id, ownResBody.data.id),
+    });
+    expect(created?.householdId).toBe(userA.householdId);
+    expect(created?.defaultAreaId).toBe(aAreaId);
   });
 });
