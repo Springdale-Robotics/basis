@@ -1606,6 +1606,34 @@ describe('attachConfidences', () => {
     ]);
     expect(lines[0].ocrConfidence).toBeNull();
   });
+
+  it('gives each duplicate line its own transcription confidence', () => {
+    // Buying the same product twice prints two lines, each scanning at whatever
+    // confidence that impression happened to get. A single-value-per-text join
+    // would hand both lines the last one's confidence.
+    const structured = parseStructuredResponse(
+      JSON.stringify({
+        lines: [{ raw_text: 'MILK' }, { raw_text: 'MILK' }],
+      })
+    );
+    const lines = attachConfidences(structured, [
+      { text: 'MILK', confidence: 0.95 },
+      { text: 'MILK', confidence: 0.31 },
+    ]);
+    expect(lines[0].ocrConfidence).toBe(0.95);
+    expect(lines[1].ocrConfidence).toBe(0.31);
+  });
+
+  it('leaves the surplus duplicate null rather than reusing a confidence', () => {
+    const structured = parseStructuredResponse(
+      JSON.stringify({
+        lines: [{ raw_text: 'MILK' }, { raw_text: 'MILK' }],
+      })
+    );
+    const lines = attachConfidences(structured, [{ text: 'MILK', confidence: 0.95 }]);
+    expect(lines[0].ocrConfidence).toBe(0.95);
+    expect(lines[1].ocrConfidence).toBeNull();
+  });
 });
 ```
 
@@ -1721,17 +1749,33 @@ function confidenceKey(text: string): string {
  * Carry each transcribed line's OCR confidence onto the structured line it
  * produced. Used downstream to decide whether a text-keyed learned link is
  * trustworthy enough to auto-resolve.
+ *
+ * Duplicate line text is ordinary on a receipt — buy the same product twice and
+ * it prints twice, at whatever confidence each impression happened to scan. So
+ * the join consumes matches positionally rather than keying a single value per
+ * text: a plain Map would keep only the last duplicate's confidence and hand it
+ * to every line sharing that text, which could let a badly-scanned line inherit
+ * a clean one's confidence and auto-apply a learned mapping it should not.
  */
 export function attachConfidences(
   structured: StructuredReceipt,
   transcribed: TranscribedLine[]
 ): StructuredReceiptLine[] {
-  const byKey = new Map(transcribed.map((line) => [confidenceKey(line.text), line.confidence]));
+  const byKey = new Map<string, number[]>();
+  for (const line of transcribed) {
+    const key = confidenceKey(line.text);
+    const bucket = byKey.get(key);
+    if (bucket) bucket.push(line.confidence);
+    else byKey.set(key, [line.confidence]);
+  }
 
-  return structured.lines.map((line) => ({
-    ...line,
-    ocrConfidence: byKey.get(confidenceKey(line.rawText)) ?? null,
-  }));
+  return structured.lines.map((line) => {
+    const bucket = byKey.get(confidenceKey(line.rawText));
+    // shift() so the Nth structured line with this text takes the Nth
+    // transcription's confidence, in receipt order.
+    const confidence = bucket?.shift();
+    return { ...line, ocrConfidence: confidence ?? null };
+  });
 }
 
 export async function isStructurerAvailable(): Promise<boolean> {
@@ -1788,7 +1832,7 @@ export async function structureReceipt(rawText: string): Promise<StructuredRecei
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd backend && npx vitest run test/receipts/receipt-structurer.test.ts`
-Expected: PASS, 10 tests.
+Expected: PASS, 12 tests.
 
 - [ ] **Step 5: Commit**
 
