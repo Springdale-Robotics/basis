@@ -1,9 +1,10 @@
 import { Job } from 'bullmq';
 import { db } from '../config/database.js';
-import { sessions, notifications, auditLog, leftovers } from '../db/schema/index.js';
-import { lt, and, isNotNull } from 'drizzle-orm';
+import { sessions, notifications, auditLog, leftovers, receiptScans } from '../db/schema/index.js';
+import { lt, and, isNotNull, inArray, eq } from 'drizzle-orm';
 import { redis } from '../config/redis.js';
 import { logger } from '../lib/logger.js';
+import { config } from '../config/index.js';
 import * as fs from 'fs/promises';
 import type { CleanupJobData } from './index.js';
 
@@ -29,6 +30,9 @@ export async function processCleanupJob(job: Job<CleanupJobData>): Promise<void>
         break;
       case 'old_leftovers':
         await cleanupOldLeftovers();
+        break;
+      case 'old_receipt_scans':
+        await cleanupOldReceiptScans();
         break;
     }
 
@@ -113,6 +117,70 @@ async function cleanupOldLeftovers(): Promise<void> {
     .returning({ id: leftovers.id });
 
   logger.info({ count: result.length }, 'Cleaned up old finished leftovers');
+}
+
+/**
+ * Receipt scans age on two clocks. A confirmed scan's image is dead weight
+ * after a week, but the record and its OCR text are cheap history worth
+ * keeping. An abandoned review is swept whole after 30 days — unlike
+ * image-parse sessions there is no hard expiry, because coming back to a
+ * half-reviewed receipt is the normal case.
+ */
+async function cleanupOldReceiptScans(): Promise<void> {
+  const now = Date.now();
+  const imageCutoff = new Date(now - config.RECEIPT_IMAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const scanCutoff = new Date(now - config.RECEIPT_SCAN_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+  // Abandoned reviews (and failed parses) go away entirely.
+  const stale = await db
+    .delete(receiptScans)
+    .where(
+      and(
+        inArray(receiptScans.status, ['review', 'processing', 'failed']),
+        lt(receiptScans.updatedAt, scanCutoff)
+      )
+    )
+    .returning({ id: receiptScans.id, imagePath: receiptScans.imagePath });
+
+  for (const scan of stale) {
+    if (!scan.imagePath) continue;
+    try {
+      await fs.unlink(scan.imagePath);
+    } catch {
+      // Already gone; nothing to do.
+    }
+  }
+
+  // Confirmed scans keep their record, lose their image.
+  const confirmed = await db
+    .select({ id: receiptScans.id, imagePath: receiptScans.imagePath })
+    .from(receiptScans)
+    .where(
+      and(
+        eq(receiptScans.status, 'confirmed'),
+        lt(receiptScans.confirmedAt, imageCutoff),
+        isNotNull(receiptScans.imagePath)
+      )
+    );
+
+  for (const scan of confirmed) {
+    if (scan.imagePath) {
+      try {
+        await fs.unlink(scan.imagePath);
+      } catch {
+        // Already gone.
+      }
+    }
+    await db
+      .update(receiptScans)
+      .set({ imagePath: null })
+      .where(eq(receiptScans.id, scan.id));
+  }
+
+  logger.info(
+    { deletedScans: stale.length, imagesPruned: confirmed.length },
+    'Cleaned up old receipt scans'
+  );
 }
 
 async function cleanupOrphanedFiles(householdId?: string): Promise<void> {

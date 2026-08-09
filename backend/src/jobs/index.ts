@@ -125,7 +125,7 @@ export interface NotificationJobData {
 }
 
 export interface CleanupJobData {
-  type: 'expired_sessions' | 'old_notifications' | 'old_audit_logs' | 'orphaned_files' | 'old_leftovers';
+  type: 'expired_sessions' | 'old_notifications' | 'old_audit_logs' | 'orphaned_files' | 'old_leftovers' | 'old_receipt_scans';
   householdId?: string;
 }
 
@@ -376,6 +376,16 @@ export async function scheduleRecurringJobs(): Promise<void> {
     {
       repeat: { pattern: '0 5 * * 0' }, // Every Sunday at 5 AM
       jobId: 'cleanup:old_leftovers',
+    }
+  );
+
+  // Prune receipt scan images and abandoned reviews weekly
+  await cleanupQueue.add(
+    'old_receipt_scans',
+    { type: 'old_receipt_scans' },
+    {
+      repeat: { pattern: '0 5 * * 0' }, // Every Sunday at 5 AM
+      jobId: 'cleanup:old_receipt_scans',
     }
   );
 
