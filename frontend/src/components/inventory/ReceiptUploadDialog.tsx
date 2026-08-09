@@ -35,10 +35,18 @@ export function ReceiptUploadDialog({ open, onOpenChange }: ReceiptUploadDialogP
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
-  // Set when the dialog closes or unmounts, so work that resolves afterwards
-  // knows to stay quiet. stopPolling alone is not enough: during the upload
-  // await there is no interval yet for it to clear.
-  const cancelledRef = useRef(false);
+
+  // Identifies the current upload attempt. Bumped when an attempt starts and
+  // again whenever the dialog closes or unmounts, so any async work that
+  // resolves later can tell whether it still owns the dialog.
+  //
+  // A single boolean is not enough here. Close mid-upload, reopen, start a
+  // second upload, and the first promise resolves into a flag the second
+  // attempt has already re-armed — the stale attempt reads "not cancelled",
+  // clobbers pollRef with its own interval, and can navigate to the abandoned
+  // scan. Comparing a captured generation against the current one distinguishes
+  // "this attempt was cancelled" from "some attempt is active."
+  const attemptRef = useRef(0);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current !== null) {
@@ -49,14 +57,14 @@ export function ReceiptUploadDialog({ open, onOpenChange }: ReceiptUploadDialogP
 
   useEffect(
     () => () => {
-      cancelledRef.current = true;
+      attemptRef.current += 1;
       stopPolling();
     },
     [stopPolling]
   );
 
   const reset = useCallback(() => {
-    cancelledRef.current = true;
+    attemptRef.current += 1;
     stopPolling();
     setUploadProgress(0);
     setStage(null);
@@ -72,7 +80,11 @@ export function ReceiptUploadDialog({ open, onOpenChange }: ReceiptUploadDialogP
   const handleFile = async (file: File) => {
     setBusy(true);
     setError(null);
-    cancelledRef.current = false;
+
+    // Claim this attempt. Anything that resolves later compares against this
+    // and stays quiet if a newer attempt — or a close — has superseded it.
+    const attempt = (attemptRef.current += 1);
+    const isCurrent = () => attemptRef.current === attempt;
 
     try {
       const { id } = await receiptsApi.uploadScan(file, setUploadProgress);
@@ -81,33 +93,37 @@ export function ReceiptUploadDialog({ open, onOpenChange }: ReceiptUploadDialogP
       // nothing — the promise above still settles. Without this guard we would
       // start an interval nobody is tracking and, minutes later, yank the
       // browser to the review page for a dialog the user already dismissed.
-      if (cancelledRef.current) return;
+      if (!isCurrent()) return;
 
       setStage('queued');
 
       pollRef.current = window.setInterval(async () => {
         try {
           const status = await receiptsApi.getScanStatus(id);
+          // A tick already in flight when the dialog closes still resolves;
+          // stopPolling only prevents future ones.
+          if (!isCurrent()) return;
           setStage(status.processingStage);
 
           if (status.status === 'review') {
             stopPolling();
-            reset();
             onOpenChange(false);
             navigate(`/inventory/receipts/${id}`);
+            reset();
           } else if (status.status === 'failed') {
             stopPolling();
             setBusy(false);
             setError(status.errorMessage ?? 'The receipt could not be read.');
           }
         } catch {
+          if (!isCurrent()) return;
           stopPolling();
           setBusy(false);
           setError('Lost contact with the server while the receipt was processing.');
         }
       }, 2000);
     } catch (err) {
-      if (cancelledRef.current) return;
+      if (!isCurrent()) return;
       setBusy(false);
       setError(err instanceof Error ? err.message : 'Upload failed');
     }
