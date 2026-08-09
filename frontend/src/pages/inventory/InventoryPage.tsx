@@ -20,6 +20,7 @@ import {
   Clock,
   ClipboardCheck,
   MoreVertical,
+  Receipt,
 } from 'lucide-react';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
 import { ConfidenceBadge, type ConfidenceBand } from '@/components/inventory/ConfidenceBadge';
@@ -38,6 +39,7 @@ import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { AreaForm } from '@/components/inventory/AreaForm';
 import { ItemForm } from '@/components/inventory/ItemForm';
 import { BulkAddDialog } from '@/components/inventory/BulkAddDialog';
+import { ReceiptUploadDialog } from '@/components/inventory/ReceiptUploadDialog';
 import { ManageStockDialog } from '@/components/inventory/ManageStockDialog';
 import { LeftoverCard } from '@/components/inventory/LeftoverCard';
 import { LeftoverForm } from '@/components/inventory/LeftoverForm';
@@ -152,6 +154,7 @@ export function InventoryPage() {
   const [bulkEditArea, setBulkEditArea] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | undefined>();
   const [bulkAddDialogOpen, setBulkAddDialogOpen] = useState(false);
+  const [receiptDialogOpen, setReceiptDialogOpen] = useState(false);
   const [manageStockItem, setManageStockItem] = useState<InventoryItem | null>(null);
   const [leftoverFormOpen, setLeftoverFormOpen] = useState(false);
   const [editingLeftover, setEditingLeftover] = useState<Leftover | null>(null);
@@ -1246,6 +1249,14 @@ export function InventoryPage() {
               <Plus className="mr-2 h-4 w-4" />
               Bulk Add
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setReceiptDialogOpen(true)}
+            >
+              <Receipt className="mr-2 h-4 w-4" />
+              Scan Receipt
+            </Button>
           </div>
         )}
       </div>
@@ -1726,6 +1737,8 @@ export function InventoryPage() {
         onSubmit={(items) => batchCreateMutation.mutate(items)}
         isSubmitting={batchCreateMutation.isPending}
       />
+
+      <ReceiptUploadDialog open={receiptDialogOpen} onOpenChange={setReceiptDialogOpen} />
 
       <ManageStockDialog
         open={!!manageStockItem}
