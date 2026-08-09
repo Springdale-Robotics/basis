@@ -5107,7 +5107,16 @@ export default function ReceiptScanPage() {
               ? 'Set a merchant before confirming.'
               : 'Ready to add to inventory.'}
         </p>
-        <Button disabled={blocked || confirm.isPending} onClick={() => confirm.mutate()}>
+        {/* Also blocked while a line-level PATCH is in flight: once every line is
+            resolved, `blocked` is false regardless of whether an edit to a
+            resolved line (its area, its conversion) has landed yet, so a quick
+            click could confirm against stale line state. */}
+        <Button
+          disabled={
+            blocked || confirm.isPending || updateLine.isPending || createItem.isPending
+          }
+          onClick={() => confirm.mutate()}
+        >
           {confirm.isPending ? 'Adding…' : 'Add to inventory'}
         </Button>
       </div>
