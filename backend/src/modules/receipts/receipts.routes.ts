@@ -17,7 +17,7 @@ import {
 import { queueReceiptParse } from '../../jobs/index.js';
 import { isOcrAvailable } from './receipt-ocr.js';
 import { isStructurerAvailable } from './receipt-structurer.js';
-import { createScan, getScan, rematchScanLines } from './receipts.service.js';
+import { createScan, getScan, rematchScanLines, confirmScan } from './receipts.service.js';
 import {
   updateScanSchema,
   updateLineSchema,
@@ -366,6 +366,15 @@ export default async function receiptsRoutes(app: FastifyInstance): Promise<void
       await queueReceiptParse({ scanId: scan.id, householdId: request.user!.householdId });
 
       return { success: true, data: { id: scan.id, status: 'processing' } };
+    }
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/scans/:id/confirm',
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
+    async (request) => {
+      const result = await confirmScan(request.params.id, request.user!.householdId);
+      return { success: true, data: result };
     }
   );
 

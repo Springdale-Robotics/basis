@@ -1,16 +1,19 @@
 import { randomUUID } from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { db } from '../../config/database.js';
 import { config } from '../../config/index.js';
 import { logger } from '../../lib/logger.js';
 import { Errors } from '../../lib/errors.js';
 import { queueReceiptParse } from '../../jobs/index.js';
+import { emitInventoryEvent } from '../../websocket/events.js';
 import {
   receiptScans,
   receiptScanLines,
+  receiptLineLinks,
   inventoryItems,
+  inventoryStock,
   type ReceiptScan,
   type ReceiptScanLine,
   type ReceiptProcessingStage,
@@ -18,15 +21,19 @@ import {
 import type { MatchSuggestion } from '../recipes/ingredient-matching.service.js';
 import { transcribeReceipt } from './receipt-ocr.js';
 import { structureReceipt, attachConfidences } from './receipt-structurer.js';
-import { matchReceiptLine } from './receipt-line-matcher.js';
+import {
+  matchReceiptLine,
+  multiplyQuantity,
+  normalizeMerchant,
+  buildLineKey,
+} from './receipt-line-matcher.js';
 
 /**
  * Owns the scan lifecycle: upload -> queue -> OCR -> structure -> match ->
  * review. The only two terminal states `processReceiptScan` leaves behind are
  * 'review' and 'failed' — a failed parse becomes a reviewable, retryable
  * record rather than a lost job, so this function must never throw.
- *
- * Task 8 adds `confirmScan` to this same file later.
+ * `confirmScan`, below, closes the loop by turning a reviewed scan into stock.
  */
 
 const UPLOAD_DIR = join(config.STORAGE_PATH, 'receipts');
@@ -353,4 +360,176 @@ export async function rematchScanLines(scanId: string, householdId: string): Pro
         .where(eq(receiptScanLines.id, line.id));
     }
   }
+}
+
+export interface ConfirmResult {
+  stockCreated: number;
+  linksSaved: number;
+  ignoredCount: number;
+}
+
+interface ConfirmPlan {
+  line: ReceiptScanLine;
+  areaId: string;
+  quantity: string;
+  unit: string | null;
+}
+
+/**
+ * Turn a reviewed scan into stock, and remember every decision.
+ *
+ * Every line must be resolved first — unlike /shopping-list/put-away, which
+ * silently skips what it cannot place, this refuses. Silence here would mean a
+ * user believing their pantry was updated when half the receipt was dropped.
+ * Everything is validated before the transaction opens: a confirm that writes
+ * 20 stock rows and then discovers line 21 has no area is exactly the
+ * half-applied state this design forbids.
+ */
+export async function confirmScan(
+  scanId: string,
+  householdId: string
+): Promise<ConfirmResult> {
+  const scan = await db.query.receiptScans.findFirst({
+    where: and(eq(receiptScans.id, scanId), eq(receiptScans.householdId, householdId)),
+  });
+  if (!scan) throw Errors.notFound('Receipt scan', scanId);
+
+  if (scan.status === 'confirmed') {
+    throw Errors.conflict('This scan has already been confirmed');
+  }
+  if (scan.status !== 'review') {
+    throw Errors.validation(`A scan in status "${scan.status}" cannot be confirmed`);
+  }
+
+  const merchant = (scan.merchant ?? '').trim();
+  if (merchant.length === 0) {
+    throw Errors.validation(
+      'Set the merchant before confirming — it is part of every saved line mapping.'
+    );
+  }
+
+  const lines = await db
+    .select()
+    .from(receiptScanLines)
+    .where(eq(receiptScanLines.scanId, scanId))
+    .orderBy(asc(receiptScanLines.lineIndex));
+
+  const unresolved = lines.filter((line) => line.resolution === 'unresolved');
+  if (unresolved.length > 0) {
+    throw Errors.validation(
+      `${unresolved.length} line(s) still need a decision before this receipt can be confirmed.`,
+      {
+        unresolvedLineIds: unresolved.map((line) => line.id),
+        unresolvedLines: unresolved.map((line) => line.rawText),
+      }
+    );
+  }
+
+  const linked = lines.filter((line) => line.resolution === 'link');
+  const ignoredCount = lines.length - linked.length;
+
+  // Resolve every line's item and area up front so anything missing fails
+  // before any write — see the module-level note above.
+  const plans: ConfirmPlan[] = [];
+  const missingArea: string[] = [];
+
+  for (const line of linked) {
+    if (!line.itemId || !line.unitsPerCount) {
+      // A 'link' line without both is a data-integrity gap, not a user
+      // decision the reviewer skipped — surface it the same way as any
+      // other unresolved line rather than crashing on a null assertion.
+      throw Errors.validation(
+        `Line "${line.rawText}" is marked linked but is missing an item or conversion.`,
+        { lineId: line.id }
+      );
+    }
+
+    const item = await db.query.inventoryItems.findFirst({
+      where: and(eq(inventoryItems.id, line.itemId), eq(inventoryItems.householdId, householdId)),
+    });
+    if (!item) throw Errors.notFound('Inventory item', line.itemId);
+
+    const areaId = line.targetAreaId ?? item.defaultAreaId ?? scan.defaultAreaId;
+    if (!areaId) {
+      missingArea.push(line.rawText);
+      continue;
+    }
+
+    plans.push({
+      line,
+      areaId,
+      quantity: multiplyQuantity(line.count, line.unitsPerCount),
+      unit: item.defaultUnit,
+    });
+  }
+
+  if (missingArea.length > 0) {
+    throw Errors.validation(
+      `${missingArea.length} line(s) have no storage area. Set a default area for the scan, or pick one per line.`,
+      { linesWithoutArea: missingArea }
+    );
+  }
+
+  const addedAt = scan.purchasedAt ?? new Date();
+  const normalizedMerchant = normalizeMerchant(merchant);
+
+  await db.transaction(async (tx) => {
+    for (const plan of plans) {
+      const numericQuantity = Number(plan.quantity);
+      const pricePerUnit =
+        plan.line.price !== null && numericQuantity > 0
+          ? (Number(plan.line.price) / numericQuantity).toFixed(4)
+          : null;
+
+      await tx.insert(inventoryStock).values({
+        itemId: plan.line.itemId!,
+        areaId: plan.areaId,
+        quantity: plan.quantity,
+        unit: plan.unit,
+        source: 'purchase',
+        pricePerUnit,
+        originalQuantity: plan.quantity,
+        addedAt,
+      });
+
+      const { lineKey, keyKind } = buildLineKey(plan.line.merchantCode, plan.line.rawText);
+
+      await tx
+        .insert(receiptLineLinks)
+        .values({
+          householdId,
+          merchant: normalizedMerchant,
+          lineKey,
+          keyKind,
+          itemId: plan.line.itemId!,
+          unitsPerCount: plan.line.unitsPerCount!,
+          useCount: 1,
+          lastUsedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [receiptLineLinks.householdId, receiptLineLinks.merchant, receiptLineLinks.lineKey],
+          set: {
+            itemId: plan.line.itemId!,
+            unitsPerCount: plan.line.unitsPerCount!,
+            useCount: sql`${receiptLineLinks.useCount} + 1`,
+            lastUsedAt: new Date(),
+            updatedAt: new Date(),
+          },
+        });
+    }
+
+    await tx
+      .update(receiptScans)
+      .set({ status: 'confirmed', confirmedAt: new Date(), updatedAt: new Date() })
+      .where(eq(receiptScans.id, scanId));
+  });
+
+  emitInventoryEvent(householdId, { action: 'quantity_changed' });
+
+  logger.info(
+    { scanId, stockCreated: plans.length, ignoredCount },
+    'Receipt scan confirmed'
+  );
+
+  return { stockCreated: plans.length, linksSaved: plans.length, ignoredCount };
 }
