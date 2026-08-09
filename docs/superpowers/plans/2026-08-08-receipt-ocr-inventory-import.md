@@ -5319,6 +5319,12 @@ with the surrounding grid as `<div className="grid gap-6 lg:grid-cols-[1fr,360px
 
 - [ ] **Step 6: Write the scan history page**
 
+The history page needs an **in-app entry point**, not just a registered route: add
+a link beside the "Scan Receipt" button on `InventoryPage`. A page reachable only
+by typing a URL makes nothing findable, and this page hosts the link manager — the
+only screen where a user can correct a mapping that is silently auto-applying to
+every scan.
+
 Create `frontend/src/pages/inventory/ReceiptsPage.tsx`:
 
 ```tsx
