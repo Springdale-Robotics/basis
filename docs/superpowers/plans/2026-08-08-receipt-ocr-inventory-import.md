@@ -2924,9 +2924,21 @@ export default async function receiptsRoutes(app: FastifyInstance): Promise<void
         throw Errors.validation('Expected multipart/form-data');
       }
 
-      const data = await request.file();
+      // Bound the upload at the multipart layer. The app-wide limit is far
+      // looser (MAX_UPLOAD_SIZE_MB), so without this the whole file is resident
+      // in memory before createScan's own size check ever runs — the tighter
+      // limit would reject after the damage, not prevent it.
+      const data = await request.file({
+        limits: { fileSize: config.RECEIPT_MAX_SIZE_MB * 1024 * 1024 },
+      });
       if (!data) throw Errors.validation('No file uploaded');
 
+      const buffer = await data.toBuffer();
+
+      // Read fields only AFTER the stream is consumed. @fastify/multipart
+      // populates `fields` as it parses, so a client that appends the file
+      // before its other fields — the natural FormData order — would otherwise
+      // hand us an empty object and we would silently drop defaultAreaId.
       const fields = data.fields as Record<string, { value?: string }>;
       const defaultAreaId = fields?.defaultAreaId?.value || undefined;
       if (defaultAreaId) {
@@ -2939,7 +2951,6 @@ export default async function receiptsRoutes(app: FastifyInstance): Promise<void
         if (!area) throw Errors.notFound('Storage area', defaultAreaId);
       }
 
-      const buffer = await data.toBuffer();
       const scanId = await createScan(
         request.user!.householdId,
         request.user!.id,
