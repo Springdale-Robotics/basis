@@ -1853,6 +1853,29 @@ git commit -m "feat(receipts): structure OCR text into receipt lines via ollama"
 - Modify: `backend/src/jobs/index.ts` — queue, job data type, worker registration, close, enqueue helper
 - Test: `backend/test/receipts/receipts.service.test.ts`
 
+> **Two corrections found in review, both normative.**
+>
+> **1. `processReceiptScan` must never throw — and the code below does, in three
+> places.** The initial scan lookup sits outside the `try`, so a transient DB
+> error escapes; after BullMQ exhausts `attempts: 2` the job is gone while the
+> row stays `processing` forever, with no path left to move it. `failScan` is
+> called unguarded from inside the `catch`, so if its own write fails the
+> exception escapes too. And the `!scan.imagePath` branch merely logs and
+> returns, wedging the scan in `processing` — the one state worse than `failed`,
+> because the UI has nothing to offer the user. All three must resolve to
+> `failed` (or, where the scan id cannot be resolved at all, log and return
+> without throwing).
+>
+> **2. `getScan` must not recompute suggestions per line against a freshly
+> fetched catalog.** `matchSingleIngredient` loads the household's entire
+> inventory catalog and scores it in memory, so a 40-line receipt costs ~40 full
+> catalog fetches per read — on an endpoint a review UI polls. Fetch the catalog
+> once per `getScan` and thread it through, and skip suggestion computation
+> entirely for lines that are already `link` or `ignore` — a resolved line has no
+> use for suggestions. This adds an optional pre-fetched-items parameter to
+> `matchSingleIngredient` and an optional catalog parameter to
+> `matchReceiptLine`; both are additive and backward compatible.
+
 **Interfaces:**
 - Consumes: `transcribeReceipt` (Task 4); `structureReceipt`, `attachConfidences` (Task 5); `matchReceiptLine` (Task 3); schema from Task 1.
 - Produces:
