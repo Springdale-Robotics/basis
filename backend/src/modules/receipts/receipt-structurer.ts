@@ -20,6 +20,14 @@ export interface StructuredReceiptLine {
 export interface StructuredReceipt {
   merchant: string | null;
   purchasedAt: string | null;
+  /**
+   * Set when the model returned a purchased_at that `new Date(...)` cannot
+   * parse. `purchasedAt` is nulled out in that case rather than passed
+   * through — an Invalid Date reaching the DB driver throws on
+   * `toISOString()`, which used to fail the whole scan (and discard every
+   * correctly-parsed line) over a field the review UI lets the user fix.
+   */
+  purchasedAtWarning: string | null;
   lines: StructuredReceiptLine[];
 }
 
@@ -76,9 +84,16 @@ function extractJsonObject(text: string): string {
 export function parseStructuredResponse(json: string): StructuredReceipt {
   const parsed = responseSchema.parse(JSON.parse(extractJsonObject(json)));
 
+  const rawPurchasedAt = parsed.purchased_at?.trim() || null;
+  const purchasedAtIsValid = rawPurchasedAt !== null && !Number.isNaN(new Date(rawPurchasedAt).getTime());
+
   return {
     merchant: parsed.merchant?.trim() || null,
-    purchasedAt: parsed.purchased_at?.trim() || null,
+    purchasedAt: purchasedAtIsValid ? rawPurchasedAt : null,
+    purchasedAtWarning:
+      rawPurchasedAt !== null && !purchasedAtIsValid
+        ? `The purchase date ("${rawPurchasedAt}") could not be read. Set it before confirming.`
+        : null,
     lines: parsed.lines
       .map((line) => ({
         rawText: line.raw_text.trim(),

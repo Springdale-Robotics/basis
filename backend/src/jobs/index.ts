@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Queue, Worker, Job } from 'bullmq';
 import { redis } from '../config/redis.js';
 import { logger } from '../lib/logger.js';
@@ -511,11 +512,27 @@ export async function queueBugReportDelivery(reportId: string): Promise<void> {
   });
 }
 
-// Helper to queue a receipt scan parse
+// Helper to queue a receipt scan parse. Pinned to a per-scan id so two rapid
+// enqueues of a freshly-created scan collapse into one job.
 export async function queueReceiptParse(data: ReceiptJobData): Promise<void> {
   await receiptQueue.add('parse', data, {
     // NB: bullmq >=5.66 rejects ':' in custom job ids (see queueInventoryCheck).
     jobId: `receipt-${data.scanId}`,
+  });
+}
+
+// Helper to re-queue a receipt scan parse (the /reprocess route). Deliberately
+// NOT `queueReceiptParse`: `receiptQueue` keeps recently finished jobs around
+// (removeOnComplete: 50, removeOnFail: 100), so the original `receipt-<id>`
+// job's hash typically still exists — BullMQ's addStandardJob dedups on job
+// id existence and returns early *without enqueuing* when it finds a match
+// (see node_modules/bullmq/dist/cjs/scripts/addStandardJob-9.js,
+// handleDuplicatedJob). Reusing that id here would make reprocess a silent
+// no-op: the scan flips to 'processing' in the DB but nothing ever runs it.
+// A fresh, unique id per reprocess attempt guarantees the job actually lands.
+export async function queueReceiptReprocess(data: ReceiptJobData): Promise<void> {
+  await receiptQueue.add('parse', data, {
+    jobId: `receipt-retry-${data.scanId}-${randomUUID()}`,
   });
 }
 

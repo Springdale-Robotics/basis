@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { eq } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { db } from '../../src/config/database.js';
 import {
   inventoryAreas,
@@ -9,6 +9,14 @@ import {
   receiptScanLines,
 } from '../../src/db/schema/index.js';
 import { setupRouteTest, type RouteTestContext, type TestUser } from '../helpers/route-harness.js';
+import { receiptQueue, queueReceiptParse } from '../../src/jobs/index.js';
+
+vi.mock('../../src/websocket/events.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/websocket/events.js')>();
+  return { ...actual, emitInventoryEvent: vi.fn() };
+});
+
+const { emitInventoryEvent } = await import('../../src/websocket/events.js');
 
 let ctx: RouteTestContext;
 let user: TestUser;
@@ -355,6 +363,7 @@ describe('PATCH /api/v1/receipts/scans/:id/lines/:lineId', () => {
 
 describe('POST /api/v1/receipts/scans/:id/lines/:lineId/create-item', () => {
   it('creates the item and links the line in one call', async () => {
+    vi.mocked(emitInventoryEvent).mockClear();
     const { scanId, lineId } = await seedScan();
     const res = await user.fetch(
       `/api/v1/receipts/scans/${scanId}/lines/${lineId}/create-item`,
@@ -380,6 +389,43 @@ describe('POST /api/v1/receipts/scans/:id/lines/:lineId/create-item', () => {
     expect(line?.resolution).toBe('link');
     expect(line?.itemId).toBe(body.data.item.id);
     expect(line?.unitsPerCount).toBe('2000.000');
+
+    // Other clients' inventory caches must invalidate for an item created
+    // mid-review, same as one created from /items/quick-create.
+    expect(emitInventoryEvent).toHaveBeenCalledWith(
+      user.householdId,
+      expect.objectContaining({ itemId: body.data.item.id, action: 'created' })
+    );
+  });
+});
+
+describe('POST /api/v1/receipts/scans/:id/reprocess', () => {
+  it('actually enqueues a new parse job, even when a job hash for this scan id already exists', async () => {
+    const { scanId } = await seedScan();
+    await db
+      .update(receiptScans)
+      .set({ status: 'failed', imagePath: '/tmp/does-not-matter.jpg' })
+      .where(eq(receiptScans.id, scanId));
+
+    // Simulate the job BullMQ retains from the scan's original upload enqueue
+    // — receiptQueue keeps recently finished jobs around (removeOnComplete:
+    // 50, removeOnFail: 100), so this job id typically still exists by the
+    // time a user clicks "reprocess" on a failed scan.
+    await queueReceiptParse({ scanId, householdId: user.householdId });
+
+    const before = await receiptQueue.getJobCounts();
+    const totalBefore = Object.values(before).reduce((a, b) => a + b, 0);
+
+    const res = await user.fetch(`/api/v1/receipts/scans/${scanId}/reprocess`, { method: 'POST' });
+    expect(res.status).toBe(200);
+
+    const after = await receiptQueue.getJobCounts();
+    const totalAfter = Object.values(after).reduce((a, b) => a + b, 0);
+
+    // A second, real job must land in the queue — BullMQ's jobId dedup must
+    // not silently swallow the reprocess because `receipt-${scanId}` already
+    // exists. Before the fix this fails: totalAfter === totalBefore.
+    expect(totalAfter).toBe(totalBefore + 1);
   });
 });
 

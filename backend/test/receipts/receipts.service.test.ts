@@ -6,6 +6,7 @@ import {
   households,
   users,
   inventoryItems,
+  inventoryAreas,
   receiptScans,
   receiptScanLines,
   receiptLineLinks,
@@ -22,7 +23,7 @@ vi.mock('../../src/modules/receipts/receipt-structurer.js', async (importOrigina
 
 const { transcribeReceipt } = await import('../../src/modules/receipts/receipt-ocr.js');
 const { structureReceipt } = await import('../../src/modules/receipts/receipt-structurer.js');
-const { processReceiptScan, getScan } = await import(
+const { processReceiptScan, getScan, confirmScan } = await import(
   '../../src/modules/receipts/receipts.service.js'
 );
 
@@ -265,8 +266,121 @@ describe('processReceiptScan', () => {
     expect(scan?.parseWarnings.join(' ')).toMatch(/already confirmed/i);
   });
 
+  it('surfaces a nulled-date parse warning without failing the scan', async () => {
+    // Simulates what structureReceipt now returns for an LLM date it could
+    // not parse (see receipt-structurer.ts's parseStructuredResponse guard):
+    // purchasedAt is null, not the raw garbage string.
+    vi.mocked(transcribeReceipt).mockResolvedValue({
+      rawText: 'MILK',
+      lines: [{ text: 'MILK', confidence: 0.9 }],
+      processingTimeMs: 300,
+    });
+    vi.mocked(structureReceipt).mockResolvedValue({
+      merchant: 'Costco',
+      purchasedAt: null,
+      purchasedAtWarning: 'The purchase date ("not a real date") could not be read. Set it before confirming.',
+      lines: [{ rawText: 'MILK', code: null, count: 1, price: 3.5, ocrConfidence: null }],
+    });
+
+    const scanId = await makeScan();
+    await processReceiptScan(scanId, householdId);
+
+    const scan = await getScan(scanId, householdId);
+    expect(scan?.status).toBe('review');
+    expect(scan?.lines).toHaveLength(1);
+    expect(scan?.purchasedAt).toBeNull();
+    expect(scan?.parseWarnings.join(' ')).toMatch(/purchase date/i);
+  });
+
   it('scopes the fetch by household', async () => {
     const scanId = await makeScan();
     expect(await getScan(scanId, randomUUID())).toBeNull();
+  });
+});
+
+/**
+ * The round trip this whole feature depends on: confirmScan's
+ * buildLineKey/normalizeMerchant write and matchReceiptLine's
+ * buildLineKey/normalizeMerchant read must agree, or a learned link written
+ * by one receipt would never be found by the next. Every tier of the matcher
+ * is otherwise tested from seeded link fixtures (pre-written, never actually
+ * produced by confirmScan), and confirm's write is tested against the
+ * database (receipts.confirm.test.ts) — but nothing before this proved the
+ * two sides actually meet.
+ */
+describe('confirm -> match round trip', () => {
+  it('a link confirmScan writes is the link the next scan for the same merchant/code auto-resolves to', async () => {
+    const [area] = await db
+      .insert(inventoryAreas)
+      .values({ householdId, name: `Round Trip Pantry ${randomUUID().slice(0, 8)}` })
+      .returning({ id: inventoryAreas.id });
+
+    const [item] = await db
+      .insert(inventoryItems)
+      .values({ householdId, name: 'Round Trip Ketchup', defaultUnit: 'ml' })
+      .returning({ id: inventoryItems.id });
+
+    // First scan: already resolved (as if a user had just linked it in the
+    // review UI) — its own matching isn't what this test is about. What
+    // matters is that confirming it writes a learned link.
+    const [firstScan] = await db
+      .insert(receiptScans)
+      .values({
+        householdId,
+        scannedBy: userId,
+        merchant: 'Costco',
+        defaultAreaId: area.id,
+        status: 'review',
+      })
+      .returning({ id: receiptScans.id });
+
+    await db.insert(receiptScanLines).values({
+      scanId: firstScan.id,
+      householdId,
+      lineIndex: 0,
+      rawText: '8675309 KS KETCHUP',
+      merchantCode: '8675309',
+      count: '1.000',
+      price: '12.49',
+      resolution: 'link',
+      itemId: item.id,
+      unitsPerCount: '2000.000',
+    });
+
+    await confirmScan(firstScan.id, householdId);
+
+    const link = await db.query.receiptLineLinks.findFirst({
+      where: eq(receiptLineLinks.lineKey, '8675309'),
+    });
+    expect(link?.merchant).toBe('costco');
+    expect(link?.itemId).toBe(item.id);
+
+    // Second scan, same merchant and same merchant code, run through the
+    // real OCR -> structure -> match pipeline (only the OCR/LLM legs are
+    // mocked, as elsewhere in this file). If buildLineKey or
+    // normalizeMerchant ever forked between the write side (confirmScan)
+    // and the read side (matchReceiptLine), this line would come back
+    // 'unresolved' instead.
+    vi.mocked(transcribeReceipt).mockResolvedValue({
+      rawText: '8675309 KS KETCHUP 2CT',
+      lines: [{ text: '8675309 KS KETCHUP 2CT', confidence: 0.95 }],
+      processingTimeMs: 200,
+    });
+    vi.mocked(structureReceipt).mockResolvedValue({
+      merchant: 'Costco',
+      purchasedAt: null,
+      lines: [
+        { rawText: '8675309 KS KETCHUP 2CT', code: '8675309', count: 1, price: 12.99, ocrConfidence: null },
+      ],
+    });
+
+    const secondScanId = await makeScan();
+    await processReceiptScan(secondScanId, householdId);
+
+    const secondScan = await getScan(secondScanId, householdId);
+    expect(secondScan?.lines).toHaveLength(1);
+    expect(secondScan?.lines[0].resolution).toBe('link');
+    expect(secondScan?.lines[0].itemId).toBe(item.id);
+    expect(secondScan?.lines[0].unitsPerCount).toBe('2000.000');
   });
 });

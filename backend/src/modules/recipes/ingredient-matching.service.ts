@@ -447,6 +447,15 @@ export async function matchIngredients(
  * names against the same household in one request (e.g. a receipt scan with
  * dozens of lines) should fetch the catalog once and pass it here — without
  * it, every call re-queries the household's entire inventory.
+ *
+ * CONTRACT: when `items` is supplied, tenancy scoping becomes the caller's
+ * responsibility — this function trusts the list instead of re-querying by
+ * `householdId`. This service is shared with the recipes module, so every
+ * new caller that passes `items` MUST have fetched it scoped to the same
+ * `householdId` passed here. Violating that lets one household's items match
+ * against another household's ingredient text. Checked at runtime below
+ * rather than merely documented, since a caller getting this wrong would
+ * otherwise fail silently.
  */
 export async function matchSingleIngredient(
   name: string,
@@ -454,6 +463,12 @@ export async function matchSingleIngredient(
   unit?: string,
   items?: InventoryItem[]
 ): Promise<MatchSuggestion[]> {
+  if (items && !items.every((item) => item.householdId === householdId)) {
+    throw new Error(
+      'matchSingleIngredient: pre-fetched items must all belong to householdId — the caller is responsible for scoping them.'
+    );
+  }
+
   const catalog = items ?? await db.query.inventoryItems.findMany({
     where: eq(inventoryItems.householdId, householdId),
   });

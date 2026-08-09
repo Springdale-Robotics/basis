@@ -42,6 +42,8 @@ import { AreaForm } from '@/components/inventory/AreaForm';
 import { ItemForm } from '@/components/inventory/ItemForm';
 import { BulkAddDialog } from '@/components/inventory/BulkAddDialog';
 import { ReceiptUploadDialog } from '@/components/inventory/ReceiptUploadDialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { receiptsApi } from '@/api/receipts';
 import { ManageStockDialog } from '@/components/inventory/ManageStockDialog';
 import { LeftoverCard } from '@/components/inventory/LeftoverCard';
 import { LeftoverForm } from '@/components/inventory/LeftoverForm';
@@ -211,6 +213,24 @@ export function InventoryPage() {
     queryKey: ['inventory', 'low-stock'],
     queryFn: inventoryApi.getLowStockItems,
   });
+
+  // Disables "Scan Receipt" when Tesseract/Ollama aren't reachable, rather
+  // than letting every scan fail late (upload -> wait -> failed). Cheap and
+  // deliberately not live: a generous staleTime, no refetch-on-focus.
+  const { data: receiptStatus } = useQuery({
+    queryKey: ['receipts', 'status'],
+    queryFn: receiptsApi.getStatus,
+    staleTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+  const receiptScanUnavailableReason =
+    receiptStatus && !receiptStatus.available
+      ? !receiptStatus.ocrAvailable && !receiptStatus.structurerAvailable
+        ? 'Receipt scanning is unavailable: OCR and the local AI model are both unreachable.'
+        : !receiptStatus.ocrAvailable
+          ? 'Receipt scanning is unavailable: OCR is unreachable.'
+          : 'Receipt scanning is unavailable: the local AI model is unreachable.'
+      : null;
 
   const { data: confidenceData } = useQuery({
     queryKey: ['inventory', 'confidence'],
@@ -1252,14 +1272,34 @@ export function InventoryPage() {
               <Plus className="mr-2 h-4 w-4" />
               Bulk Add
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setReceiptDialogOpen(true)}
-            >
-              <Receipt className="mr-2 h-4 w-4" />
-              Scan Receipt
-            </Button>
+            {receiptScanUnavailableReason ? (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    {/* A disabled Button has pointer-events-none, so the
+                        trigger needs its own hoverable/focusable wrapper. */}
+                    <span tabIndex={0}>
+                      <Button variant="outline" size="sm" disabled className="pointer-events-none">
+                        <Receipt className="mr-2 h-4 w-4" />
+                        Scan Receipt
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{receiptScanUnavailableReason}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setReceiptDialogOpen(true)}
+              >
+                <Receipt className="mr-2 h-4 w-4" />
+                Scan Receipt
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"

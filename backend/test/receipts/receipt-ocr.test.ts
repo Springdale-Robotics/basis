@@ -1,9 +1,10 @@
 import { writeFile, mkdir, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import sharp from 'sharp';
-import { transcribeReceipt } from '../../src/modules/receipts/receipt-ocr.js';
+import { createWorker } from 'tesseract.js';
+import { transcribeReceipt, isOcrAvailable } from '../../src/modules/receipts/receipt-ocr.js';
 
 // Wraps the real sharp so HEIC conversion still actually runs (needed for the
 // "clear error on unsupported codec" test below to be genuine rather than
@@ -12,6 +13,14 @@ import { transcribeReceipt } from '../../src/modules/receipts/receipt-ocr.js';
 vi.mock('sharp', async (importOriginal) => {
   const actual = await importOriginal<typeof import('sharp')>();
   return { default: vi.fn(actual.default) };
+});
+
+// Wraps the real tesseract.js createWorker so every other test in this file
+// still exercises real OCR — only the isOcrAvailable timeout test below
+// overrides it, and only for that one call.
+vi.mock('tesseract.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('tesseract.js')>();
+  return { ...actual, createWorker: vi.fn(actual.createWorker) };
 });
 
 const workDir = join(tmpdir(), 'basis-receipt-ocr-test');
@@ -78,6 +87,27 @@ describe('transcribeReceipt', () => {
     }
 
     expect(sharp).toHaveBeenCalledWith(heicPath);
+  });
+});
+
+describe('isOcrAvailable', () => {
+  afterEach(() => {
+    vi.mocked(createWorker).mockClear();
+    vi.useRealTimers();
+  });
+
+  it('resolves false rather than hanging when worker init never settles', async () => {
+    // This is what's going on the inventory page's capability probe (a
+    // page-load path) — a worker init that never resolves must not hang
+    // that request. See the OCR_AVAILABILITY_TIMEOUT_MS bound in
+    // receipt-ocr.ts (5000ms, mirrored below via fake timers).
+    vi.mocked(createWorker).mockImplementationOnce(() => new Promise(() => {}));
+    vi.useFakeTimers();
+
+    const resultPromise = isOcrAvailable();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    await expect(resultPromise).resolves.toBe(false);
   });
 });
 

@@ -64,6 +64,35 @@ describe('parseStructuredResponse', () => {
       parseStructuredResponse(JSON.stringify({ lines: [{ raw_text: 'X', count: -2 }] }))
     ).toThrow(/count/i);
   });
+
+  it('nulls an unparseable purchase date and warns instead of failing the whole receipt', () => {
+    const result = parseStructuredResponse(
+      JSON.stringify({
+        merchant: 'Costco',
+        purchased_at: 'not a real date',
+        lines: [{ raw_text: 'MILK' }, { raw_text: 'EGGS' }],
+      })
+    );
+
+    // The lines survive — a garbage date must not discard correctly-parsed
+    // product lines.
+    expect(result.lines).toHaveLength(2);
+    expect(result.purchasedAt).toBeNull();
+    expect(result.purchasedAtWarning).toMatch(/date/i);
+  });
+
+  it('leaves purchasedAtWarning null for a well-formed date', () => {
+    const result = parseStructuredResponse(COSTCO_RESPONSE);
+    expect(result.purchasedAtWarning).toBeNull();
+  });
+
+  it('leaves purchasedAtWarning null when no date was given at all', () => {
+    const result = parseStructuredResponse(
+      JSON.stringify({ lines: [{ raw_text: 'MILK' }] })
+    );
+    expect(result.purchasedAt).toBeNull();
+    expect(result.purchasedAtWarning).toBeNull();
+  });
 });
 
 describe('attachConfidences', () => {

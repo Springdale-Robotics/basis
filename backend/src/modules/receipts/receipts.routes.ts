@@ -8,6 +8,7 @@ import { logger } from '../../lib/logger.js';
 import { Errors } from '../../lib/errors.js';
 import { authMiddleware } from '../../middleware/auth.middleware.js';
 import { requireInventoryAccess } from '../../middleware/permission.middleware.js';
+import { emitInventoryEvent } from '../../websocket/events.js';
 import {
   receiptScans,
   receiptScanLines,
@@ -15,7 +16,7 @@ import {
   inventoryItems,
   inventoryAreas,
 } from '../../db/schema/index.js';
-import { queueReceiptParse } from '../../jobs/index.js';
+import { queueReceiptReprocess } from '../../jobs/index.js';
 import { isOcrAvailable } from './receipt-ocr.js';
 import { isStructurerAvailable } from './receipt-structurer.js';
 import { createScan, getScan, rematchScanLines, confirmScan } from './receipts.service.js';
@@ -365,6 +366,11 @@ export default async function receiptsRoutes(app: FastifyInstance): Promise<void
         return created;
       });
 
+      // Mirrors /items/quick-create — other clients' inventory caches need to
+      // invalidate for an item created mid-review just as much as one created
+      // from the inventory page.
+      emitInventoryEvent(request.user!.householdId, { itemId: item.id, action: 'created' });
+
       const updated = await getScan(scan.id, request.user!.householdId);
       return { success: true, data: { item, scan: updated } };
     }
@@ -390,7 +396,7 @@ export default async function receiptsRoutes(app: FastifyInstance): Promise<void
         })
         .where(eq(receiptScans.id, scan.id));
 
-      await queueReceiptParse({ scanId: scan.id, householdId: request.user!.householdId });
+      await queueReceiptReprocess({ scanId: scan.id, householdId: request.user!.householdId });
 
       return { success: true, data: { id: scan.id, status: 'processing' } };
     }

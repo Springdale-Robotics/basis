@@ -13,7 +13,14 @@ import { ReceiptLineRow } from '@/components/inventory/ReceiptLineRow';
 import { receiptsApi } from '@/api/receipts';
 import { inventoryApi } from '@/api/inventory';
 import { useToast } from '@/hooks/useToast';
-import { getErrorMessage } from '@/lib/api-error';
+import { ApiError, getErrorMessage } from '@/lib/api-error';
+
+/** Shape of confirm's per-line refusal detail — see receipts.service.ts's `LineIssue`. */
+interface LineIssue {
+  lineId: string;
+  rawText: string;
+  reason: string;
+}
 
 export function ReceiptScanPage() {
   const { id = '' } = useParams();
@@ -24,6 +31,10 @@ export function ReceiptScanPage() {
   const [merchantDraft, setMerchantDraft] = useState<string | null>(null);
   const [showMatched, setShowMatched] = useState(false);
   const [showIgnored, setShowIgnored] = useState(false);
+  // Populated from confirm's 400 response so the offending rows are visible,
+  // not just named in a toast — raw text alone can't identify which of forty
+  // rows to fix when the same product line repeats.
+  const [flaggedLines, setFlaggedLines] = useState<Map<string, string>>(new Map());
 
   const scanQuery = useQuery({
     queryKey: ['receipt-scan', id],
@@ -49,7 +60,17 @@ export function ReceiptScanPage() {
   const updateLine = useMutation({
     mutationFn: ({ lineId, data }: { lineId: string; data: Parameters<typeof receiptsApi.updateLine>[2] }) =>
       receiptsApi.updateLine(id, lineId, data),
-    onSuccess: invalidate,
+    onSuccess: (_result, { lineId }) => {
+      // The edit that just landed is presumably an attempt to fix whatever
+      // confirm flagged — clear its highlight rather than leaving a stale one.
+      setFlaggedLines((prev) => {
+        if (!prev.has(lineId)) return prev;
+        const next = new Map(prev);
+        next.delete(lineId);
+        return next;
+      });
+      invalidate();
+    },
     onError: (error) =>
       toast({ title: 'Could not update the line', description: getErrorMessage(error), variant: 'destructive' }),
   });
@@ -83,6 +104,7 @@ export function ReceiptScanPage() {
   const confirm = useMutation({
     mutationFn: () => receiptsApi.confirmScan(id),
     onSuccess: (result) => {
+      setFlaggedLines(new Map());
       toast({
         title: 'Receipt added to inventory',
         description: `${result.stockCreated} item(s) stocked, ${result.linksSaved} mapping(s) remembered.`,
@@ -91,8 +113,49 @@ export function ReceiptScanPage() {
       queryClient.invalidateQueries({ queryKey: ['inventory-stock'] });
       navigate('/inventory');
     },
-    onError: (error) =>
-      toast({ title: 'Could not confirm', description: getErrorMessage(error), variant: 'destructive' }),
+    onError: (error) => {
+      // Confirm's 400 names exactly which rows it refused and why (raw text
+      // alone can't identify one of forty rows when the same product line
+      // repeats) — surface that instead of just "N line(s) could not be
+      // confirmed."
+      const issues: LineIssue[] =
+        ApiError.isApiError(error) && Array.isArray(error.details?.lines)
+          ? (error.details.lines as LineIssue[])
+          : [];
+
+      if (issues.length > 0) {
+        setFlaggedLines(new Map(issues.map((issue) => [issue.lineId, issue.reason])));
+        // The flagged rows may be sitting inside the collapsed "Matched"
+        // section (a line only fails confirm once it's linked) — open it so
+        // they're actually visible, then jump to the first one.
+        setShowMatched(true);
+        requestAnimationFrame(() => {
+          document
+            .getElementById(`receipt-line-${issues[0].lineId}`)
+            ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+
+        toast({
+          title: `${issues.length} line(s) could not be confirmed`,
+          description: (
+            <ul className="list-disc space-y-0.5 pl-4">
+              {issues.slice(0, 6).map((issue) => (
+                <li key={issue.lineId} className="text-xs">
+                  <span className="font-mono">{issue.rawText}</span> — {issue.reason}
+                </li>
+              ))}
+              {issues.length > 6 && (
+                <li className="text-xs">…and {issues.length - 6} more</li>
+              )}
+            </ul>
+          ),
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      toast({ title: 'Could not confirm', description: getErrorMessage(error), variant: 'destructive' });
+    },
   });
 
   const groups = useMemo(() => {
@@ -242,7 +305,12 @@ export function ReceiptScanPage() {
               </p>
             ) : (
               groups.unresolved.map((line) => (
-                <ReceiptLineRow key={line.id} line={line} {...lineProps} />
+                <ReceiptLineRow
+                  key={line.id}
+                  line={line}
+                  {...lineProps}
+                  flagReason={flaggedLines.get(line.id) ?? null}
+                />
               ))
             )}
           </section>
@@ -256,7 +324,12 @@ export function ReceiptScanPage() {
             </CollapsibleTrigger>
             <CollapsibleContent className="space-y-3 pt-2">
               {groups.matched.map((line) => (
-                <ReceiptLineRow key={line.id} line={line} {...lineProps} />
+                <ReceiptLineRow
+                  key={line.id}
+                  line={line}
+                  {...lineProps}
+                  flagReason={flaggedLines.get(line.id) ?? null}
+                />
               ))}
             </CollapsibleContent>
           </Collapsible>

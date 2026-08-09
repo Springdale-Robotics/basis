@@ -126,14 +126,40 @@ async function resolveRecognitionInput(imagePath: string): Promise<string | Buff
   throw new Error(`Unrecognized image format: ${imagePath}`);
 }
 
+// isStructurerAvailable (receipt-structurer.ts) bounds its probe the same
+// way. This one is about to sit on a page-load path (the inventory page's
+// capability check) rather than only ever running from a worker, so a hung
+// worker init — unlike transcribeReceipt's recognize() call, this has no
+// bound of its own — must not hang that request.
+const OCR_AVAILABILITY_TIMEOUT_MS = 5000;
+
 export async function isOcrAvailable(): Promise<boolean> {
+  let timedOut = false;
+  const workerPromise = createReceiptWorker();
+
   try {
-    const worker = await createReceiptWorker();
+    const worker = await Promise.race([
+      workerPromise,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          timedOut = true;
+          reject(new Error(`Tesseract worker init timed out after ${OCR_AVAILABILITY_TIMEOUT_MS}ms`));
+        }, OCR_AVAILABILITY_TIMEOUT_MS);
+      }),
+    ]);
     await worker.terminate();
     return true;
   } catch (error) {
     logger.warn({ error }, 'Tesseract worker could not be created');
     return false;
+  } finally {
+    // The race above abandons workerPromise on a timeout, not the worker
+    // init itself — if it eventually resolves, terminate it rather than
+    // leaking a worker thread. (On the non-timeout path the worker was
+    // already terminated above; this is a no-op there.)
+    if (timedOut) {
+      workerPromise.then((w) => w.terminate()).catch(() => {});
+    }
   }
 }
 

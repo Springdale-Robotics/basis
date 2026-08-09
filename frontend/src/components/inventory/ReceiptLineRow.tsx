@@ -18,6 +18,9 @@ interface ReceiptLineRowProps {
   onSetArea: (lineId: string, areaId: string | null) => void;
   onCreateItem: (lineId: string) => void;
   disabled?: boolean;
+  /** Set when confirm just refused this line — shown inline so the user
+   *  doesn't have to cross-reference the toast against forty rows. */
+  flagReason?: string | null;
 }
 
 /** A confidence low enough that the OCR read is worth eyeballing. */
@@ -33,6 +36,7 @@ export function ReceiptLineRow({
   onSetArea,
   onCreateItem,
   disabled,
+  flagReason,
 }: ReceiptLineRowProps) {
   const linkedItem = items.find((item) => item.id === line.itemId);
   const [conversion, setConversion] = useState(line.unitsPerCount ?? '1');
@@ -62,7 +66,12 @@ export function ReceiptLineRow({
   };
 
   return (
-    <div className="border rounded-lg p-3 space-y-3">
+    <div
+      id={`receipt-line-${line.id}`}
+      className={`border rounded-lg p-3 space-y-3 ${
+        flagReason ? 'border-destructive ring-1 ring-destructive' : ''
+      }`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -74,6 +83,12 @@ export function ReceiptLineRow({
               </Badge>
             )}
           </div>
+          {flagReason && (
+            <p className="text-xs text-destructive mt-1 flex items-center gap-1">
+              <AlertTriangle className="h-3 w-3" />
+              Could not confirm: {flagReason}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground mt-1">
             {line.merchantCode && <span className="mr-2">#{line.merchantCode}</span>}
             <span className="mr-2">×{Number(line.count)}</span>

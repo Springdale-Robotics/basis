@@ -195,6 +195,9 @@ export async function processReceiptScan(scanId: string, householdId: string): P
     if (!structured.merchant) {
       warnings.push('No merchant was detected. Set one before confirming.');
     }
+    if (structured.purchasedAtWarning) {
+      warnings.push(structured.purchasedAtWarning);
+    }
 
     // Same shop, same day, already confirmed — probably a re-scan of a receipt
     // that is already in the pantry. A warning, not a block: genuine repeat
