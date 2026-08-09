@@ -90,6 +90,15 @@ export const imageParseQueue = new Queue('image-parse', {
   },
 });
 
+export const receiptQueue = new Queue('receipts', {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 50,
+    removeOnFail: 100,
+    attempts: 2,
+  },
+});
+
 export const bugReportQueue = new Queue('bug-reports', {
   connection: redis,
   defaultJobOptions: {
@@ -151,6 +160,11 @@ export interface ImageParseJobData {
 
 export interface BugReportJobData {
   reportId: string;
+}
+
+export interface ReceiptJobData {
+  scanId: string;
+  householdId: string;
 }
 
 // Initialize workers
@@ -301,7 +315,25 @@ export async function initializeWorkers(): Promise<void> {
     logger.error({ jobId: job?.id, reportId: job?.data.reportId, error }, 'Bug report delivery failed');
   });
 
-  workers = [notificationWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, mediaWorker, imageParseWorker, bugReportWorker];
+  // Receipt scan worker
+  const receiptWorker = new Worker(
+    'receipts',
+    async (job: Job<ReceiptJobData>) => {
+      const { processReceiptJob } = await import('./receipts.worker.js');
+      return processReceiptJob(job);
+    },
+    { connection: redis, concurrency: 1 }
+  );
+
+  receiptWorker.on('completed', (job) => {
+    logger.info({ jobId: job.id, scanId: job.data.scanId }, 'Receipt scan job completed');
+  });
+
+  receiptWorker.on('failed', (job, error) => {
+    logger.error({ jobId: job?.id, scanId: job?.data.scanId, error }, 'Receipt scan job failed');
+  });
+
+  workers = [notificationWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, mediaWorker, imageParseWorker, bugReportWorker, receiptWorker];
   logger.info('Background workers initialized');
 }
 
@@ -417,6 +449,7 @@ export async function shutdownWorkers(): Promise<void> {
   await mediaQueue.close();
   await imageParseQueue.close();
   await bugReportQueue.close();
+  await receiptQueue.close();
 
   logger.info('All workers shut down');
 }
@@ -465,6 +498,14 @@ export async function queueBugReportDelivery(reportId: string): Promise<void> {
   await bugReportQueue.add('deliver', { reportId }, {
     // jobId scoped so a re-submit of the same row replaces the previous attempt
     jobId: `bug-report-${reportId}`,
+  });
+}
+
+// Helper to queue a receipt scan parse
+export async function queueReceiptParse(data: ReceiptJobData): Promise<void> {
+  await receiptQueue.add('parse', data, {
+    // NB: bullmq >=5.66 rejects ':' in custom job ids (see queueInventoryCheck).
+    jobId: `receipt-${data.scanId}`,
   });
 }
 
