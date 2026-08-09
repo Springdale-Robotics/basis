@@ -99,4 +99,31 @@ describe('old_receipt_scans cleanup', () => {
     const scan = await db.query.receiptScans.findFirst({ where: eq(receiptScans.id, scanId) });
     expect(scan).toBeDefined();
   });
+
+  // Discriminating cases: 10 days sits strictly between the two cutoffs
+  // (7-day image cutoff, 30-day scan cutoff). If the cutoffs were ever
+  // swapped between the two branches, these two would flip results while
+  // the coarser 1/30/45-day cases above would not notice.
+  it('prunes the image of a confirmed scan past the 7-day image cutoff but well within 30 days', async () => {
+    const imagePath = await makeImage('confirmed-mid.jpg');
+    const scanId = await seedScan({ status: 'confirmed', ageDays: 10, imagePath });
+
+    await processCleanupJob({ id: 'test', data: { type: 'old_receipt_scans' } } as never);
+
+    await expect(access(imagePath)).rejects.toThrow();
+    const scan = await db.query.receiptScans.findFirst({ where: eq(receiptScans.id, scanId) });
+    expect(scan).toBeDefined();
+    expect(scan?.imagePath).toBeNull();
+  });
+
+  it('keeps a review at 10 days — past the image cutoff but short of the scan cutoff', async () => {
+    const imagePath = await makeImage('review-mid.jpg');
+    const scanId = await seedScan({ status: 'review', ageDays: 10, imagePath });
+
+    await processCleanupJob({ id: 'test', data: { type: 'old_receipt_scans' } } as never);
+
+    const scan = await db.query.receiptScans.findFirst({ where: eq(receiptScans.id, scanId) });
+    expect(scan).toBeDefined();
+    await expect(access(imagePath)).resolves.toBeUndefined();
+  });
 });

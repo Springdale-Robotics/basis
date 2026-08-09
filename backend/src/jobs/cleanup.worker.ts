@@ -164,6 +164,10 @@ async function cleanupOldReceiptScans(): Promise<void> {
     );
 
   for (const scan of confirmed) {
+    await db
+      .update(receiptScans)
+      .set({ imagePath: null })
+      .where(eq(receiptScans.id, scan.id));
     if (scan.imagePath) {
       try {
         await fs.unlink(scan.imagePath);
@@ -171,10 +175,6 @@ async function cleanupOldReceiptScans(): Promise<void> {
         // Already gone.
       }
     }
-    await db
-      .update(receiptScans)
-      .set({ imagePath: null })
-      .where(eq(receiptScans.id, scan.id));
   }
 
   logger.info(
