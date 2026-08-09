@@ -93,4 +93,32 @@ describe('attachConfidences', () => {
     ]);
     expect(lines[0].ocrConfidence).toBeNull();
   });
+
+  it('gives each duplicate line its own transcription confidence', () => {
+    // Buying the same product twice prints two lines, each scanning at whatever
+    // confidence that impression happened to get. A single-value-per-text join
+    // would hand both lines the last one's confidence.
+    const structured = parseStructuredResponse(
+      JSON.stringify({
+        lines: [{ raw_text: 'MILK' }, { raw_text: 'MILK' }],
+      })
+    );
+    const lines = attachConfidences(structured, [
+      { text: 'MILK', confidence: 0.95 },
+      { text: 'MILK', confidence: 0.31 },
+    ]);
+    expect(lines[0].ocrConfidence).toBe(0.95);
+    expect(lines[1].ocrConfidence).toBe(0.31);
+  });
+
+  it('leaves the surplus duplicate null rather than reusing a confidence', () => {
+    const structured = parseStructuredResponse(
+      JSON.stringify({
+        lines: [{ raw_text: 'MILK' }, { raw_text: 'MILK' }],
+      })
+    );
+    const lines = attachConfidences(structured, [{ text: 'MILK', confidence: 0.95 }]);
+    expect(lines[0].ocrConfidence).toBe(0.95);
+    expect(lines[1].ocrConfidence).toBeNull();
+  });
 });
