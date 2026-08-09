@@ -4000,6 +4000,39 @@ git commit -m "feat(receipts): list, repoint, and forget learned line links"
 
 ---
 
+### Task 9b: Give learned links a human-readable description
+
+Added after Task 9's review. `receipt_line_links` stores only `lineKey`, which for
+code-keyed links — every Costco link, the primary target — is an opaque product
+number. The link manager is the only place a user can catch a mapping that is
+silently auto-applying to every scan, and it currently shows a number they cannot
+recognize. Retention makes it worse: scans are swept after 30 days while links live
+forever, so the original text disappears and the mapping becomes permanently
+unauditable.
+
+**Files:**
+- Create: `backend/drizzle/0011_receipt_link_description.sql` + journal entry + snapshot
+- Modify: `backend/src/db/schema/receipts.ts` — add the column
+- Modify: `backend/src/modules/receipts/receipts.service.ts` — write it in `confirmScan`'s upsert
+- Modify: `backend/src/modules/receipts/receipts.routes.ts` — select it in `GET /links`
+- Test: extend `backend/test/receipts/receipts.confirm.test.ts` and `receipts.links.test.ts`
+
+**Interfaces:**
+- Consumes: `receiptLineLinks` (Task 1), `confirmScan` (Task 8), `GET /links` (Task 9).
+- Produces: `receiptLineLinks.lastRawText` (nullable `varchar(500)`), surfaced as `lastRawText` on each `GET /links` row.
+
+Nullable, because links created before this migration have no text to backfill —
+the column fills in naturally the next time each mapping is used.
+
+Write it on **every** upsert, insert and update alike, so a store reformatting its
+printed description keeps the label current rather than freezing whatever text was
+on the first receipt.
+
+Migration follows the same hand-authored pattern as `0010` (drizzle-kit generate is
+broken here): the `.sql`, an `entries` append in `meta/_journal.json`, and a
+`meta/0011_snapshot.json` copied from `0010_snapshot.json` with `id` /`prevId`
+updated and the new column added.
+
 ### Task 10: Retention cleanup
 
 **Files:**
