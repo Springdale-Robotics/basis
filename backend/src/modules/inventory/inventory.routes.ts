@@ -63,6 +63,26 @@ async function assertHouseholdArea(areaId: string, householdId: string): Promise
 }
 
 /**
+ * Bulk form of assertHouseholdArea for routes that accept many area ids at once.
+ * Null/undefined entries are ignored (they clear rather than set an area), and
+ * the distinct remainder is checked in a single query.
+ */
+async function assertHouseholdAreas(
+  areaIds: Array<string | null | undefined>,
+  householdId: string
+): Promise<void> {
+  const distinct = [...new Set(areaIds.filter((id): id is string => Boolean(id)))];
+  if (distinct.length === 0) return;
+
+  const found = await db
+    .select({ id: inventoryAreas.id })
+    .from(inventoryAreas)
+    .where(and(inArray(inventoryAreas.id, distinct), eq(inventoryAreas.householdId, householdId)));
+
+  if (found.length !== distinct.length) throw Errors.notFound('Area');
+}
+
+/**
  * Validate that adding/replacing `key → target.unit` in a sizes map doesn't
  * create a cycle. We walk the chain from the proposed target unit; if it
  * comes back around to `key`, the entry would loop. Stops at depth 8 to
@@ -462,6 +482,10 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     async (request) => {
       const input = createItemSchema.parse(request.body);
 
+      if (input.defaultAreaId) {
+        await assertHouseholdArea(input.defaultAreaId, request.user!.householdId);
+      }
+
       // Generate internal ID if no barcode
       const internalId = input.barcode ? null : `HM-${randomBytes(3).toString('hex').toUpperCase()}`;
 
@@ -520,7 +544,13 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
       if (input.category !== undefined) updateData.category = input.category;
       if (input.keepInStock !== undefined) updateData.keepInStock = input.keepInStock;
       if (input.minStockQuantity !== undefined) updateData.minStockQuantity = input.minStockQuantity.toString();
-      if (input.defaultAreaId !== undefined) updateData.defaultAreaId = input.defaultAreaId;
+      if (input.defaultAreaId !== undefined) {
+        // A falsy value clears the default area and needs no ownership check.
+        if (input.defaultAreaId) {
+          await assertHouseholdArea(input.defaultAreaId, request.user!.householdId);
+        }
+        updateData.defaultAreaId = input.defaultAreaId;
+      }
       if (input.density !== undefined) updateData.density = input.density.toString();
       if (input.quantityUnitSizes !== undefined) {
         // Reject saves that would put the sizes map into a cycle (e.g.
@@ -727,6 +757,10 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
       const input = quickCreateItemSchema.parse(request.body);
 
       // Generate internal ID
+      if (input.defaultAreaId) {
+        await assertHouseholdArea(input.defaultAreaId, request.user!.householdId);
+      }
+
       const internalId = `HM-${randomBytes(3).toString('hex').toUpperCase()}`;
 
       const [item] = await db
@@ -752,6 +786,14 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
     { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
     async (request) => {
       const input = batchCreateItemsSchema.parse(request.body);
+
+      // Verify every distinct area up front in one query rather than once per
+      // item — a batch can carry 50 items, and none of them should be inserted
+      // if any names an area from another household.
+      await assertHouseholdAreas(
+        input.items.map((itemData) => itemData.defaultAreaId),
+        request.user!.householdId
+      );
 
       const createdItems = [];
 
@@ -867,6 +909,10 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           updateData.minStockQuantity = input.updates.minStockQuantity.toString();
         }
         if (input.updates.defaultAreaId !== undefined) {
+          // This schema is nullable — null clears the area and needs no check.
+          if (input.updates.defaultAreaId) {
+            await assertHouseholdArea(input.updates.defaultAreaId, request.user!.householdId);
+          }
           updateData.defaultAreaId = input.updates.defaultAreaId;
         }
         if (input.updates.defaultUnit !== undefined) {
@@ -1544,6 +1590,13 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           defaultAreaId: z.string().uuid().optional(),
         })
         .parse(request.body);
+
+      // This fallback area is written straight onto inventory_stock rows below,
+      // and inventory_stock's RLS policy constrains item_id only — nothing
+      // downstream would catch a foreign area.
+      if (defaultAreaId) {
+        await assertHouseholdArea(defaultAreaId, request.user!.householdId);
+      }
 
       // Get all checked items with itemId (can be added to inventory)
       const checkedItems = await db.query.shoppingList.findMany({

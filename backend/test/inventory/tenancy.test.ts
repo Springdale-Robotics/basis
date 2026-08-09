@@ -258,3 +258,156 @@ describe('inventory cross-household isolation', () => {
     expect(own.status).toBe(200);
   });
 });
+
+describe('inventory tenancy — defaultAreaId cannot point at another household', () => {
+  /**
+   * inventory_stock's RLS policy constrains item_id only, so nothing at the
+   * database layer catches a foreign area_id. An item carrying another
+   * household's defaultAreaId propagates into stock rows, and
+   * inventory_stock.areaId is onDelete: cascade — so the other household
+   * deleting that area silently deletes this household's stock.
+   */
+
+  it('POST /items refuses a foreign defaultAreaId and creates nothing', async () => {
+    const res = await userA.fetch('/api/v1/inventory/items', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Foreign Area Create',
+        defaultUnit: 'g',
+        defaultAreaId: bAreaId,
+      }),
+    });
+    expect(res.status).toBe(404);
+
+    const leaked = await db.query.inventoryItems.findFirst({
+      where: eq(inventoryItems.name, 'Foreign Area Create'),
+    });
+    expect(leaked).toBeUndefined();
+
+    // Positive control: the caller's own area is accepted.
+    const own = await userA.fetch('/api/v1/inventory/items', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Own Area Create', defaultUnit: 'g', defaultAreaId: aAreaId }),
+    });
+    expect(own.status).toBe(200);
+  });
+
+  it('PATCH /items/:id refuses a foreign defaultAreaId and leaves the item unchanged', async () => {
+    const before = await db.query.inventoryItems.findFirst({
+      where: eq(inventoryItems.id, aItemId),
+    });
+
+    const res = await userA.fetch(`/api/v1/inventory/items/${aItemId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ defaultAreaId: bAreaId }),
+    });
+    expect(res.status).toBe(404);
+
+    const after = await db.query.inventoryItems.findFirst({
+      where: eq(inventoryItems.id, aItemId),
+    });
+    expect(after?.defaultAreaId).toBe(before?.defaultAreaId ?? null);
+
+    // Positive control. (This schema is `.optional()` but not `.nullable()`,
+    // so clearing via null is a 400 from Zod — only batch-update accepts null.)
+    expect(
+      (
+        await userA.fetch(`/api/v1/inventory/items/${aItemId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ defaultAreaId: aAreaId }),
+        })
+      ).status
+    ).toBe(200);
+  });
+
+  it('POST /items/quick-create refuses a foreign defaultAreaId', async () => {
+    const res = await userA.fetch('/api/v1/inventory/items/quick-create', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Foreign Area Quick', defaultAreaId: bAreaId }),
+    });
+    expect(res.status).toBe(404);
+
+    const leaked = await db.query.inventoryItems.findFirst({
+      where: eq(inventoryItems.name, 'Foreign Area Quick'),
+    });
+    expect(leaked).toBeUndefined();
+
+    const own = await userA.fetch('/api/v1/inventory/items/quick-create', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Own Area Quick', defaultAreaId: aAreaId }),
+    });
+    expect(own.status).toBe(200);
+  });
+
+  it('POST /items/batch refuses the whole batch when one item names a foreign area', async () => {
+    const res = await userA.fetch('/api/v1/inventory/items/batch', {
+      method: 'POST',
+      body: JSON.stringify({
+        items: [
+          { name: 'Batch Good', defaultUnit: 'g', defaultAreaId: aAreaId },
+          { name: 'Batch Foreign', defaultUnit: 'g', defaultAreaId: bAreaId },
+        ],
+      }),
+    });
+    expect(res.status).toBe(404);
+
+    // All-or-nothing: the valid sibling must not have been inserted either.
+    const good = await db.query.inventoryItems.findFirst({
+      where: eq(inventoryItems.name, 'Batch Good'),
+    });
+    expect(good).toBeUndefined();
+
+    const own = await userA.fetch('/api/v1/inventory/items/batch', {
+      method: 'POST',
+      body: JSON.stringify({ items: [{ name: 'Batch Own', defaultUnit: 'g', defaultAreaId: aAreaId }] }),
+    });
+    expect(own.status).toBe(200);
+  });
+
+  it('POST /items/batch-update refuses a foreign defaultAreaId', async () => {
+    const res = await userA.fetch('/api/v1/inventory/items/batch-update', {
+      method: 'POST',
+      body: JSON.stringify({ itemIds: [aItemId], updates: { defaultAreaId: bAreaId } }),
+    });
+    expect(res.status).toBe(404);
+
+    const after = await db.query.inventoryItems.findFirst({
+      where: eq(inventoryItems.id, aItemId),
+    });
+    expect(after?.defaultAreaId).not.toBe(bAreaId);
+
+    const own = await userA.fetch('/api/v1/inventory/items/batch-update', {
+      method: 'POST',
+      body: JSON.stringify({ itemIds: [aItemId], updates: { defaultAreaId: aAreaId } }),
+    });
+    expect(own.status).toBe(200);
+  });
+
+  it('POST /shopping-list/put-away refuses a foreign fallback area', async () => {
+    // This one writes area_id straight onto inventory_stock, where RLS offers
+    // no protection at all.
+    const stockInBAreaBefore = (
+      await db.select().from(inventoryStock).where(eq(inventoryStock.areaId, bAreaId))
+    ).length;
+
+    const res = await userA.fetch('/api/v1/inventory/shopping-list/put-away', {
+      method: 'POST',
+      body: JSON.stringify({ defaultAreaId: bAreaId }),
+    });
+    expect(res.status).toBe(404);
+
+    // B legitimately has its own stock in that area, so count rather than
+    // asserting emptiness — what matters is that put-away added nothing.
+    const after = await db
+      .select()
+      .from(inventoryStock)
+      .where(eq(inventoryStock.areaId, bAreaId));
+    expect(after).toHaveLength(stockInBAreaBefore);
+
+    const own = await userA.fetch('/api/v1/inventory/shopping-list/put-away', {
+      method: 'POST',
+      body: JSON.stringify({ defaultAreaId: aAreaId }),
+    });
+    expect(own.status).toBe(200);
+  });
+});
