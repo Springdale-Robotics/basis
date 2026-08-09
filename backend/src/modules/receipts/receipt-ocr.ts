@@ -1,9 +1,12 @@
-import { access, open } from 'fs/promises';
+import { access, mkdir, open } from 'fs/promises';
+import { join } from 'path';
 import { createWorker } from 'tesseract.js';
 import type { Worker } from 'tesseract.js';
 import sharp from 'sharp';
 import { config } from '../../config/index.js';
 import { logger } from '../../lib/logger.js';
+
+const LANG_CACHE_DIR = join(config.STORAGE_PATH, 'tesseract');
 
 /**
  * Receipts are dense printed text, which is Tesseract's home turf and not
@@ -38,9 +41,23 @@ const workerOptions = {
   errorHandler: (error: unknown) => {
     logger.debug({ error }, 'Tesseract worker reported a recognition error');
   },
+  // Where tesseract.js caches the ~5MB language model it downloads on first
+  // use. Its default is the process CWD, which in production is the versioned
+  // release directory the `current` symlink points at — so every deploy would
+  // land in an empty directory and re-download the model on the next scan,
+  // and the copy would be orphaned when the old release is pruned. Pinning it
+  // under STORAGE_PATH makes the download survive deploys, and keeps a 5MB
+  // binary from appearing in the working tree during development.
+  cachePath: LANG_CACHE_DIR,
 };
 
-function createReceiptWorker(): Promise<Worker> {
+/**
+ * tesseract.js writes the cached model without creating intermediate
+ * directories, so ensure the directory exists before the first worker starts.
+ * Idempotent, and cheap enough to just await on each creation.
+ */
+async function createReceiptWorker(): Promise<Worker> {
+  await mkdir(LANG_CACHE_DIR, { recursive: true });
   return createWorker(config.RECEIPT_OCR_LANG, undefined, workerOptions);
 }
 

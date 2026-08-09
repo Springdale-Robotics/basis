@@ -93,3 +93,9 @@ models/
 walkthrough/
 .mcp.json
 backend/bin/
+
+# tesseract.js downloads its ~5MB language model at runtime. It is cached under
+# STORAGE_PATH, but older checkouts (and any run with a different CWD) can leave
+# a copy in the working tree.
+*.traineddata
+*.traineddata.gz
