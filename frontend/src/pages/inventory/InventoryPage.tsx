@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Plus,
@@ -21,6 +22,7 @@ import {
   ClipboardCheck,
   MoreVertical,
   Receipt,
+  History,
 } from 'lucide-react';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
 import { ConfidenceBadge, type ConfidenceBand } from '@/components/inventory/ConfidenceBadge';
@@ -131,6 +133,7 @@ function isItemIncomplete(item: InventoryItem): boolean {
 }
 
 export function InventoryPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { isAdvanced } = useInventoryTier();
   const { categories } = useCategories();
@@ -1256,6 +1259,14 @@ export function InventoryPage() {
             >
               <Receipt className="mr-2 h-4 w-4" />
               Scan Receipt
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate('/inventory/receipts')}
+            >
+              <History className="mr-2 h-4 w-4" />
+              Receipt History
             </Button>
           </div>
         )}
