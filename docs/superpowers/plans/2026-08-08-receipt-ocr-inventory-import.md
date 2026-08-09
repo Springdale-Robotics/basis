@@ -4218,6 +4218,15 @@ async function cleanupOldReceiptScans(): Promise<void> {
     );
 
   for (const scan of confirmed) {
+    // Null the row BEFORE unlinking, the same ordering rule the delete branch
+    // follows. Both operations can't be atomic, so fail toward an orphaned file:
+    // wasted disk is harmless, whereas a row still pointing at a vanished file
+    // breaks GET /scans/:id/image.
+    await db
+      .update(receiptScans)
+      .set({ imagePath: null })
+      .where(eq(receiptScans.id, scan.id));
+
     if (scan.imagePath) {
       try {
         await unlink(scan.imagePath);
@@ -4225,10 +4234,6 @@ async function cleanupOldReceiptScans(): Promise<void> {
         // Already gone.
       }
     }
-    await db
-      .update(receiptScans)
-      .set({ imagePath: null })
-      .where(eq(receiptScans.id, scan.id));
   }
 
   logger.info(
