@@ -232,46 +232,68 @@ export function ReceiptScanPage() {
         </div>
       </header>
 
-      <section className="space-y-3">
-        <h2 className="font-medium">Needs attention ({groups.unresolved.length})</h2>
-        {groups.unresolved.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Everything on this receipt is resolved.
-          </p>
-        ) : (
-          groups.unresolved.map((line) => (
-            <ReceiptLineRow key={line.id} line={line} {...lineProps} />
-          ))
-        )}
-      </section>
+      <div className="grid gap-6 lg:grid-cols-[1fr,360px]">
+        <div className="space-y-6">
+          <section className="space-y-3">
+            <h2 className="font-medium">Needs attention ({groups.unresolved.length})</h2>
+            {groups.unresolved.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Everything on this receipt is resolved.
+              </p>
+            ) : (
+              groups.unresolved.map((line) => (
+                <ReceiptLineRow key={line.id} line={line} {...lineProps} />
+              ))
+            )}
+          </section>
 
-      <Collapsible open={showMatched} onOpenChange={setShowMatched}>
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" className="px-0">
-            {showMatched ? <ChevronDown className="mr-2 h-4 w-4" /> : <ChevronRight className="mr-2 h-4 w-4" />}
-            Matched ({groups.matched.length})
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="space-y-3 pt-2">
-          {groups.matched.map((line) => (
-            <ReceiptLineRow key={line.id} line={line} {...lineProps} />
-          ))}
-        </CollapsibleContent>
-      </Collapsible>
+          <Collapsible open={showMatched} onOpenChange={setShowMatched}>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" className="px-0">
+                {showMatched ? <ChevronDown className="mr-2 h-4 w-4" /> : <ChevronRight className="mr-2 h-4 w-4" />}
+                Matched ({groups.matched.length})
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="space-y-3 pt-2">
+              {groups.matched.map((line) => (
+                <ReceiptLineRow key={line.id} line={line} {...lineProps} />
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
 
-      <Collapsible open={showIgnored} onOpenChange={setShowIgnored}>
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" className="px-0">
-            {showIgnored ? <ChevronDown className="mr-2 h-4 w-4" /> : <ChevronRight className="mr-2 h-4 w-4" />}
-            Ignored ({groups.ignored.length})
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="space-y-3 pt-2">
-          {groups.ignored.map((line) => (
-            <ReceiptLineRow key={line.id} line={line} {...lineProps} />
-          ))}
-        </CollapsibleContent>
-      </Collapsible>
+          <Collapsible open={showIgnored} onOpenChange={setShowIgnored}>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" className="px-0">
+                {showIgnored ? <ChevronDown className="mr-2 h-4 w-4" /> : <ChevronRight className="mr-2 h-4 w-4" />}
+                Ignored ({groups.ignored.length})
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="space-y-3 pt-2">
+              {groups.ignored.map((line) => (
+                <ReceiptLineRow key={line.id} line={line} {...lineProps} />
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
+        </div>
+
+        {/* OCR errors are only catchable against the original — desktop only,
+            since on a phone the user is holding the actual receipt. */}
+        <aside className="hidden lg:block">
+          <div className="sticky top-6 space-y-2">
+            <Label className="text-xs text-muted-foreground">Original receipt</Label>
+            <img
+              src={receiptsApi.getImageUrl(id)}
+              alt="Scanned receipt"
+              className="w-full rounded-lg border max-h-[80vh] object-contain"
+              onError={(e) => {
+                // Pruned by the retention sweep after confirmation — hide
+                // rather than show a broken-image frame.
+                e.currentTarget.style.display = 'none';
+              }}
+            />
+          </div>
+        </aside>
+      </div>
 
       <div className="sticky bottom-0 border-t bg-background py-4 flex items-center justify-between">
         <p className="text-sm text-muted-foreground">

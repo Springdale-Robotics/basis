@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { unlink } from 'fs/promises';
+import { readFile, unlink } from 'fs/promises';
 import type { FastifyInstance } from 'fastify';
 import { and, desc, eq, ilike } from 'drizzle-orm';
 import { db } from '../../config/database.js';
@@ -185,6 +185,30 @@ export default async function receiptsRoutes(app: FastifyInstance): Promise<void
       const scan = await getScan(request.params.id, request.user!.householdId);
       if (!scan) throw Errors.notFound('Receipt scan', request.params.id);
       return { success: true, data: { scan } };
+    }
+  );
+
+  // Serves the original photo so OCR errors can be checked against the source.
+  // Fetched directly by <img src>, not through the API client.
+  app.get<{ Params: { id: string } }>(
+    '/scans/:id/image',
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
+    async (request, reply) => {
+      const scan = await requireScan(request.params.id, request.user!.householdId);
+      if (!scan.imagePath) {
+        // Pruned by the retention sweep, or never stored.
+        throw Errors.notFound('Receipt image', request.params.id);
+      }
+
+      try {
+        const buffer = await readFile(scan.imagePath);
+        return reply
+          .header('Content-Type', scan.imageMimeType ?? 'image/jpeg')
+          .header('Cache-Control', 'private, max-age=3600')
+          .send(buffer);
+      } catch {
+        throw Errors.notFound('Receipt image', request.params.id);
+      }
     }
   );
 

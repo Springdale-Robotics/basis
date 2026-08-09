@@ -124,6 +124,9 @@ export const receiptsApi = {
 
   deleteScan: (id: string) => apiDelete<{ message: string }>(`/receipts/scans/${id}`),
 
+  // The <img> element fetches this directly; cookies ride along on same-origin.
+  getImageUrl: (id: string) => `/api/v1/receipts/scans/${id}/image`,
+
   listLinks: (params?: { merchant?: string; search?: string }) =>
     apiGet<{ links: ReceiptLineLink[] }>('/receipts/links', { params }),
 
