@@ -44,6 +44,49 @@ async function seedScan(merchant: string | null = 'Costco'): Promise<{ scanId: s
   return { scanId: scan.id, lineId: line.id };
 }
 
+/**
+ * Hand-build a multipart/form-data body with an explicit boundary and part
+ * order. `route-harness.ts`'s `fetch` wrapper unconditionally injects
+ * `content-type: application/json` whenever a body is present (see its
+ * `...(init.body ? { 'content-type': 'application/json' } : {})`), which
+ * would collide with the boundary-bearing content-type a native `FormData`
+ * body needs — and since fetch only auto-computes that header when none is
+ * already set, letting the harness win would silently send the wrong
+ * content-type. Building the body by hand lets the test set 'content-type'
+ * itself (same lowercase key as the harness, so it cleanly overwrites the
+ * default rather than folding into a duplicate header), and — just as
+ * importantly — lets the test control exact part order, which is the whole
+ * point of the field-ordering regression test below.
+ */
+function buildMultipart(
+  parts: Array<
+    | { type: 'file'; name: string; filename: string; contentType: string; data: Buffer }
+    | { type: 'field'; name: string; value: string }
+  >
+): { body: Buffer; contentType: string } {
+  const boundary = `testBoundary${randomUUID().replace(/-/g, '')}`;
+  const chunks: Buffer[] = [];
+  for (const part of parts) {
+    chunks.push(Buffer.from(`--${boundary}\r\n`));
+    if (part.type === 'file') {
+      chunks.push(
+        Buffer.from(
+          `Content-Disposition: form-data; name="${part.name}"; filename="${part.filename}"\r\n` +
+            `Content-Type: ${part.contentType}\r\n\r\n`
+        )
+      );
+      chunks.push(part.data);
+      chunks.push(Buffer.from('\r\n'));
+    } else {
+      chunks.push(
+        Buffer.from(`Content-Disposition: form-data; name="${part.name}"\r\n\r\n${part.value}\r\n`)
+      );
+    }
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  return { body: Buffer.concat(chunks), contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
 beforeAll(async () => {
   ctx = await setupRouteTest();
   const householdId = await ctx.createHousehold();
@@ -64,6 +107,125 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await ctx.close();
+});
+
+describe('POST /api/v1/receipts/scans', () => {
+  it('persists a scan row for the uploading household and user', async () => {
+    const { body, contentType } = buildMultipart([
+      {
+        type: 'file',
+        name: 'file',
+        filename: 'receipt.jpg',
+        contentType: 'image/jpeg',
+        data: Buffer.from('fake-receipt-bytes'),
+      },
+    ]);
+
+    const res = await user.fetch('/api/v1/receipts/scans', {
+      method: 'POST',
+      headers: { 'content-type': contentType },
+      body,
+    });
+    expect(res.status).toBe(200);
+
+    const resBody = await res.json();
+    const scan = await db.query.receiptScans.findFirst({
+      where: eq(receiptScans.id, resBody.data.id),
+    });
+    expect(scan?.householdId).toBe(user.householdId);
+    expect(scan?.scannedBy).toBe(user.id);
+  });
+
+  it('applies defaultAreaId even when the file part precedes it (natural FormData order)', async () => {
+    // @fastify/multipart only populates `fields` with what has been parsed so
+    // far; a client that appends the file before its other fields — which is
+    // exactly what happens when you build a FormData and call
+    // `form.append('file', blob)` before `form.append('defaultAreaId', id)` —
+    // must still have that field honored. This is the regression test for
+    // the "read fields before consuming the stream" bug.
+    //
+    // The file must be large enough to make busboy apply backpressure on its
+    // internal parser (its per-part buffer is a few KB): with a tiny file the
+    // whole request arrives in one chunk and busboy parses straight through
+    // to the trailing field before the handler even reads `data.fields`, so
+    // the bug can't be observed. 1MB reliably stalls the parser until the
+    // file stream is drained. Verified against the pre-fix code (fields read
+    // before `toBuffer()`): with this same 1MB payload it failed with
+    // `defaultAreaId` persisted as null; with a small payload the pre-fix
+    // code passed too, which is why this uses 1MB rather than a few bytes.
+    const { body, contentType } = buildMultipart([
+      {
+        type: 'file',
+        name: 'file',
+        filename: 'receipt.jpg',
+        contentType: 'image/jpeg',
+        data: Buffer.alloc(1024 * 1024, 7),
+      },
+      { type: 'field', name: 'defaultAreaId', value: areaId },
+    ]);
+
+    const res = await user.fetch('/api/v1/receipts/scans', {
+      method: 'POST',
+      headers: { 'content-type': contentType },
+      body,
+    });
+    expect(res.status).toBe(200);
+
+    const resBody = await res.json();
+    const scan = await db.query.receiptScans.findFirst({
+      where: eq(receiptScans.id, resBody.data.id),
+    });
+    expect(scan?.defaultAreaId).toBe(areaId);
+  });
+
+  it('404s on a defaultAreaId from another household', async () => {
+    const otherHouseholdId = await ctx.createHousehold();
+    const [foreignArea] = await db
+      .insert(inventoryAreas)
+      .values({ householdId: otherHouseholdId, name: 'Someone else pantry' })
+      .returning({ id: inventoryAreas.id });
+
+    const { body, contentType } = buildMultipart([
+      {
+        type: 'file',
+        name: 'file',
+        filename: 'receipt.jpg',
+        contentType: 'image/jpeg',
+        data: Buffer.from('fake-receipt-bytes'),
+      },
+      { type: 'field', name: 'defaultAreaId', value: foreignArea.id },
+    ]);
+
+    const res = await user.fetch('/api/v1/receipts/scans', {
+      method: 'POST',
+      headers: { 'content-type': contentType },
+      body,
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('rejects an oversized upload with a clean client error, not a 500', async () => {
+    const oversized = Buffer.alloc(16 * 1024 * 1024, 1); // over the 15MB default
+    const { body, contentType } = buildMultipart([
+      {
+        type: 'file',
+        name: 'file',
+        filename: 'receipt.jpg',
+        contentType: 'image/jpeg',
+        data: oversized,
+      },
+    ]);
+
+    const res = await user.fetch('/api/v1/receipts/scans', {
+      method: 'POST',
+      headers: { 'content-type': contentType },
+      body,
+    });
+    expect(res.status).toBe(400);
+
+    const resBody = await res.json();
+    expect(resBody.error.message).toMatch(/size|large|MB/i);
+  });
 });
 
 describe('GET /api/v1/receipts/scans/:id', () => {
