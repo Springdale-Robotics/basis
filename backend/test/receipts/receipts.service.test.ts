@@ -133,6 +133,52 @@ describe('processReceiptScan', () => {
     expect(scan?.lines[0].resolution).toBe('link');
     expect(scan?.lines[0].itemId).toBe(oliveOilId);
     expect(scan?.lines[0].unitsPerCount).toBe('2000.000');
+    // A resolved line has no use for suggestions — getScan must not compute
+    // them (or spend a catalog scan doing so) for a line the user already
+    // decided about.
+    expect(scan?.lines[0].suggestions).toEqual([]);
+  });
+
+  it('still computes suggestions for a line that stays unresolved', async () => {
+    vi.mocked(transcribeReceipt).mockResolvedValue({
+      rawText: 'OLIVE OIL',
+      lines: [{ text: 'OLIVE OIL', confidence: 0.9 }],
+      processingTimeMs: 300,
+    });
+    vi.mocked(structureReceipt).mockResolvedValue({
+      merchant: 'Trader Joes',
+      purchasedAt: null,
+      lines: [{ rawText: 'OLIVE OIL', code: null, count: 1, price: 8.99, ocrConfidence: null }],
+    });
+
+    const scanId = await makeScan();
+    await processReceiptScan(scanId, householdId);
+
+    const scan = await getScan(scanId, householdId);
+    expect(scan?.lines[0].resolution).toBe('unresolved');
+    expect(scan?.lines[0].suggestions.length).toBeGreaterThan(0);
+    expect(scan?.lines[0].suggestions[0].itemId).toBe(oliveOilId);
+  });
+
+  it('fails the scan when the row has no stored image', async () => {
+    const [scan] = await db
+      .insert(receiptScans)
+      .values({
+        householdId,
+        scannedBy: userId,
+        imageMimeType: 'image/jpeg',
+        status: 'processing',
+      })
+      .returning({ id: receiptScans.id });
+
+    await processReceiptScan(scan.id, householdId);
+
+    const result = await getScan(scan.id, householdId);
+    expect(result?.status).toBe('failed');
+    expect(result?.errorMessage).toMatch(/no stored image/i);
+    // Neither OCR nor structuring should ever have been reached.
+    expect(transcribeReceipt).not.toHaveBeenCalled();
+    expect(structureReceipt).not.toHaveBeenCalled();
   });
 
   it('fails the scan when OCR reads nothing', async () => {

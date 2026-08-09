@@ -10,6 +10,7 @@ import { queueReceiptParse } from '../../jobs/index.js';
 import {
   receiptScans,
   receiptScanLines,
+  inventoryItems,
   type ReceiptScan,
   type ReceiptScanLine,
   type ReceiptProcessingStage,
@@ -111,6 +112,25 @@ async function failScan(scanId: string, message: string): Promise<void> {
 }
 
 /**
+ * failScan, guarded. A scan wedged in 'processing' forever (no error, no
+ * retry button — just a spinner) is worse than one marked 'failed', so every
+ * call site that exists purely to record a failure must not itself be able
+ * to throw and escape that guarantee. If this write fails too — plausible,
+ * since the same outage likely caused the failure being recorded — log it
+ * and give up; there is nothing further to fall back to.
+ */
+async function safeFailScan(scanId: string, message: string): Promise<void> {
+  try {
+    await failScan(scanId, message);
+  } catch (error) {
+    logger.error(
+      { scanId, error },
+      'Failed to record receipt scan failure — scan may be stuck in its current state'
+    );
+  }
+}
+
+/**
  * OCR -> structure -> match. Terminal states are 'review' or 'failed'; this
  * never throws, so a failed parse is a reviewable record rather than a lost
  * job.
@@ -118,12 +138,29 @@ async function failScan(scanId: string, message: string): Promise<void> {
 export async function processReceiptScan(scanId: string, householdId: string): Promise<void> {
   const startedAt = Date.now();
 
-  const scan = await db.query.receiptScans.findFirst({
-    where: and(eq(receiptScans.id, scanId), eq(receiptScans.householdId, householdId)),
-  });
+  let scan: ReceiptScan | undefined;
+  try {
+    scan = await db.query.receiptScans.findFirst({
+      where: and(eq(receiptScans.id, scanId), eq(receiptScans.householdId, householdId)),
+    });
+  } catch (error) {
+    // The scan id is known even though the lookup itself failed, so there is
+    // something to mark failed — unlike the "row genuinely doesn't exist"
+    // case below, where there is nothing to update.
+    logger.error({ scanId, error }, 'Receipt scan lookup failed');
+    await safeFailScan(scanId, error instanceof Error ? error.message : 'Receipt scan lookup failed');
+    return;
+  }
 
-  if (!scan || !scan.imagePath) {
-    logger.warn({ scanId }, 'Receipt scan missing or has no image; nothing to process');
+  if (!scan) {
+    logger.warn({ scanId }, 'Receipt scan not found; nothing to process');
+    return;
+  }
+
+  if (!scan.imagePath) {
+    // Reachable: imagePath is nullable. Leaving the scan in 'processing' here
+    // would strand it with nothing for the review UI to show.
+    await safeFailScan(scanId, 'This scan has no stored image to process.');
     return;
   }
 
@@ -136,7 +173,7 @@ export async function processReceiptScan(scanId: string, householdId: string): P
     const linesWithConfidence = attachConfidences(structured, transcription.lines);
 
     if (linesWithConfidence.length === 0) {
-      await failScan(scanId, 'The receipt was read but contained no product lines.');
+      await safeFailScan(scanId, 'The receipt was read but contained no product lines.');
       return;
     }
 
@@ -218,7 +255,7 @@ export async function processReceiptScan(scanId: string, householdId: string): P
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Receipt parsing failed';
     logger.error({ scanId, error }, 'Receipt scan processing failed');
-    await failScan(scanId, message);
+    await safeFailScan(scanId, message);
   }
 }
 
@@ -239,8 +276,24 @@ export async function getScan(
 
   const merchant = scan.merchant ?? '';
 
+  // Fetched once and threaded through every line's match call below, rather
+  // than letting each line's tier-3 fuzzy match re-query the household's
+  // entire catalog — this endpoint is polled by the review UI, and the
+  // common case (right after OCR) is exactly the worst case: every line
+  // still unresolved.
+  const catalog = await db.query.inventoryItems.findMany({
+    where: eq(inventoryItems.householdId, householdId),
+  });
+
   const withSuggestions: ScanLineWithSuggestions[] = [];
   for (const line of lines) {
+    // A resolved line has no use for suggestions — the user already decided.
+    // Skip the matcher entirely rather than compute and discard them.
+    if (line.resolution === 'link' || line.resolution === 'ignore') {
+      withSuggestions.push({ ...line, suggestions: [] });
+      continue;
+    }
+
     // Suggestions are recomputed on read rather than stored: the catalog moves
     // under a scan that sits in review, and a stale suggestion list is worse
     // than none.
@@ -251,7 +304,8 @@ export async function getScan(
         merchant,
         ocrConfidence: line.ocrConfidence !== null ? Number(line.ocrConfidence) : null,
       },
-      householdId
+      householdId,
+      catalog
     );
     withSuggestions.push({ ...line, suggestions: match.suggestions });
   }

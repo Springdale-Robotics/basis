@@ -1,6 +1,11 @@
 import { and, eq } from 'drizzle-orm';
 import { db } from '../../config/database.js';
-import { receiptLineLinks, ingredientAliases, inventoryItems } from '../../db/schema/index.js';
+import {
+  receiptLineLinks,
+  ingredientAliases,
+  inventoryItems,
+  type InventoryItem,
+} from '../../db/schema/index.js';
 import {
   matchSingleIngredient,
   type MatchSuggestion,
@@ -130,7 +135,14 @@ async function findAliasSuggestion(
 
 export async function matchReceiptLine(
   input: ReceiptLineMatchInput,
-  householdId: string
+  householdId: string,
+  /**
+   * Pre-fetched household catalog, forwarded to the tier-3 fuzzy match.
+   * Optional and additive: omitting it re-queries the catalog per call, same
+   * as before. `getScan` fetches it once per read and passes it through here
+   * for every line rather than paying a full catalog scan per line.
+   */
+  catalog?: InventoryItem[]
 ): Promise<ReceiptLineMatchResult> {
   const merchant = normalizeMerchant(input.merchant);
   const { lineKey, keyKind } = buildLineKey(input.merchantCode, input.rawText);
@@ -193,7 +205,7 @@ export async function matchReceiptLine(
   }
 
   // Tier 3 — fuzzy.
-  const fuzzy = await matchSingleIngredient(normalizedText, householdId);
+  const fuzzy = await matchSingleIngredient(normalizedText, householdId, undefined, catalog);
   for (const candidate of fuzzy) {
     if (suggestions.some((s) => s.itemId === candidate.itemId)) continue;
     suggestions.push(candidate);
