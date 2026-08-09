@@ -105,6 +105,9 @@ describe('POST /api/v1/receipts/scans/:id/confirm', () => {
     expect(row.areaId).toBe(areaId);
     // 65.97 spread across 6000 ml
     expect(Number(row.pricePerUnit)).toBeCloseTo(0.011, 3);
+    // Dated to the receipt's purchase date (seedScan sets it to 2026-08-01),
+    // not to whenever confirm happened to run.
+    expect(row.addedAt.toISOString()).toBe('2026-08-01T00:00:00.000Z');
   });
 
   it('saves a learned link keyed on the item code', async () => {
