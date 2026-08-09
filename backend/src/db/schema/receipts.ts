@@ -110,6 +110,11 @@ export const receiptLineLinks = pgTable('receipt_line_links', {
   unitsPerCount: decimal('units_per_count', { precision: 10, scale: 3 }).notNull(),
   useCount: integer('use_count').notNull().default(0),
   lastUsedAt: timestamp('last_used_at'),
+  // The confirmed line's raw receipt text, refreshed on every upsert (not
+  // just insert) so a store reformatting its printed description keeps the
+  // label current. Descriptive only — lineKey remains the sole match key.
+  // Nullable: links from before this column existed have nothing to backfill.
+  lastRawText: varchar('last_raw_text', { length: 500 }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 }, (table) => ({

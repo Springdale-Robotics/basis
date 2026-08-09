@@ -557,6 +557,7 @@ export async function confirmScan(
           unitsPerCount: plan.line.unitsPerCount!,
           useCount: 1,
           lastUsedAt: new Date(),
+          lastRawText: plan.line.rawText,
         })
         .onConflictDoUpdate({
           target: [receiptLineLinks.householdId, receiptLineLinks.merchant, receiptLineLinks.lineKey],
@@ -565,6 +566,7 @@ export async function confirmScan(
             unitsPerCount: plan.line.unitsPerCount!,
             useCount: sql`${receiptLineLinks.useCount} + 1`,
             lastUsedAt: new Date(),
+            lastRawText: plan.line.rawText,
             updatedAt: new Date(),
           },
         });

@@ -9,7 +9,12 @@ let user: TestUser;
 let oilId: string;
 let spinachId: string;
 
-async function seedLink(merchant: string, lineKey: string, itemId: string): Promise<string> {
+async function seedLink(
+  merchant: string,
+  lineKey: string,
+  itemId: string,
+  opts: { lastRawText?: string | null } = {}
+): Promise<string> {
   const [link] = await db
     .insert(receiptLineLinks)
     .values({
@@ -19,6 +24,7 @@ async function seedLink(merchant: string, lineKey: string, itemId: string): Prom
       keyKind: 'code',
       itemId,
       unitsPerCount: '2000.000',
+      lastRawText: opts.lastRawText ?? null,
     })
     .returning({ id: receiptLineLinks.id });
   return link.id;
@@ -55,6 +61,16 @@ describe('GET /api/v1/receipts/links', () => {
     const body = await res.json();
     const link = body.data.links.find((l: { lineKey: string }) => l.lineKey === 'code-list-1');
     expect(link.itemName).toBe('Olive Oil');
+  });
+
+  it('includes the last raw receipt text so a code-keyed link is recognizable', async () => {
+    await seedLink('costco', 'code-list-3', oilId, { lastRawText: '1234567 KS ORG EVOO' });
+    const res = await user.fetch('/api/v1/receipts/links');
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    const link = body.data.links.find((l: { lineKey: string }) => l.lineKey === 'code-list-3');
+    expect(link.lastRawText).toBe('1234567 KS ORG EVOO');
   });
 
   it('filters by merchant, case-insensitively against the normalized stored value', async () => {

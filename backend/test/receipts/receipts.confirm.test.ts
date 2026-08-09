@@ -166,6 +166,38 @@ describe('POST /api/v1/receipts/scans/:id/confirm', () => {
     expect(links[0].useCount).toBe(2);
   });
 
+  it('saves the line\'s raw text on the learned link', async () => {
+    const scanId = await seedScan([
+      { rawText: '4242424 KS ORG BLUEBERRY', merchantCode: '4242424' },
+    ]);
+    await confirm(scanId);
+
+    const link = await db.query.receiptLineLinks.findFirst({
+      where: eq(receiptLineLinks.lineKey, '4242424'),
+    });
+    expect(link?.lastRawText).toBe('4242424 KS ORG BLUEBERRY');
+  });
+
+  it('updates the stored raw text when a later scan\'s printed description differs', async () => {
+    // Same merchantCode (so the same lineKey) but different printed text —
+    // proves lastRawText tracks the store's current description rather than
+    // freezing whatever text was on the first receipt.
+    const first = await seedScan([
+      { rawText: '5555555 KS ORG EVOO 1L', merchantCode: '5555555' },
+    ]);
+    await confirm(first);
+
+    const second = await seedScan([
+      { rawText: '5555555 KS ORGANIC EVOO 1LTR', merchantCode: '5555555' },
+    ]);
+    await confirm(second);
+
+    const link = await db.query.receiptLineLinks.findFirst({
+      where: eq(receiptLineLinks.lineKey, '5555555'),
+    });
+    expect(link?.lastRawText).toBe('5555555 KS ORGANIC EVOO 1LTR');
+  });
+
   it('refuses when any line is unresolved, naming the line', async () => {
     const scanId = await seedScan([
       { rawText: 'KNOWN', merchantCode: '1' },

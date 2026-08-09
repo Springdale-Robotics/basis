@@ -431,6 +431,7 @@ export default async function receiptsRoutes(app: FastifyInstance): Promise<void
           itemUnit: inventoryItems.defaultUnit,
           useCount: receiptLineLinks.useCount,
           lastUsedAt: receiptLineLinks.lastUsedAt,
+          lastRawText: receiptLineLinks.lastRawText,
         })
         .from(receiptLineLinks)
         .innerJoin(inventoryItems, eq(inventoryItems.id, receiptLineLinks.itemId))
