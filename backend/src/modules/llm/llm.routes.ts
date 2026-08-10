@@ -5,7 +5,7 @@ import { authMiddleware, requireAdmin } from '../../middleware/auth.middleware.j
 import { Errors } from '../../lib/errors.js';
 import { config } from '../../config/index.js';
 import { detectHardware } from './llm-hardware.js';
-import { catalogWithFit, combinedFootprint, CATALOG } from './llm-catalog.js';
+import { catalogWithFit, combinedFootprint, normalizeTag, CATALOG } from './llm-catalog.js';
 import { isReachable, listInstalledTags, deleteModel } from './ollama-client.js';
 import { getTextModel, getVisionModel, setModel } from './llm-settings.js';
 import { startPull } from './llm.ws.js';
@@ -19,7 +19,8 @@ const pullSchema = z.object({ tag: z.string().min(1).max(200) });
 
 /** Refuse a pull we can already tell will not fit, rather than dying at 90%. */
 async function assertDiskSpaceFor(tag: string): Promise<void> {
-  const entry = CATALOG.find((m) => m.tag === tag);
+  const wanted = normalizeTag(tag);
+  const entry = CATALOG.find((m) => normalizeTag(m.tag) === wanted);
   if (!entry) return; // unknown tag from the advanced field — size unknowable
 
   let freeBytes: number;
@@ -58,6 +59,10 @@ export async function llmRoutes(app: FastifyInstance): Promise<void> {
       getVisionModel(),
     ]);
 
+    // Ollama reports `moondream` as `moondream:latest`; comparing raw strings
+    // would flag a perfectly good selection as missing.
+    const installedNormalized = new Set(installed.map(normalizeTag));
+
     return {
       success: true,
       data: {
@@ -67,8 +72,8 @@ export async function llmRoutes(app: FastifyInstance): Promise<void> {
         // A selection whose model is gone must be visible here — otherwise
         // deleting the active model turns every scan into a silent failure.
         missing: {
-          text: reachable && !installed.includes(text),
-          vision: reachable && !installed.includes(vision),
+          text: reachable && !installedNormalized.has(normalizeTag(text)),
+          vision: reachable && !installedNormalized.has(normalizeTag(vision)),
         },
         footprint: combinedFootprint([text, vision], hw),
       },
@@ -78,6 +83,7 @@ export async function llmRoutes(app: FastifyInstance): Promise<void> {
   app.put('/settings', { preHandler: [authMiddleware, requireAdmin()] }, async (request) => {
     const input = updateSettingsSchema.parse(request.body);
     const installed = await listInstalledTags();
+    const installedNormalized = new Set(installed.map(normalizeTag));
 
     const requested = (
       [
@@ -92,7 +98,7 @@ export async function llmRoutes(app: FastifyInstance): Promise<void> {
     // a 400 while half their change silently took effect. The frontend submits
     // both fields together, so this is the normal path, not an edge case.
     for (const [, tag] of requested) {
-      if (!installed.includes(tag)) {
+      if (!installedNormalized.has(normalizeTag(tag))) {
         throw Errors.validation(`${tag} is not installed. Install it before selecting it.`);
       }
     }

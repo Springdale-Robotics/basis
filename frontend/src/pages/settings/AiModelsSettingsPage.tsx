@@ -16,6 +16,7 @@ import {
   llmApi,
   connectLlmSocket,
   cancelPull,
+  isTagInstalled,
   type HardwareProfile,
   type LlmStatus,
   type ModelRole,
@@ -300,7 +301,10 @@ export function AiModelsSettingsPage() {
     const next = new Map(installing);
 
     for (const [tag, entry] of installing) {
-      if (status.installed.includes(tag)) {
+      // Normalised: Ollama reports a pulled `moondream` as `moondream:latest`,
+      // so a raw includes() would never match and the row would spin until the
+      // timeout, then revert to "Install" on a model that installed fine.
+      if (isTagInstalled(status.installed, tag)) {
         next.delete(tag);
         changed = true;
         selectMutation.mutate({ role: entry.role, tag });

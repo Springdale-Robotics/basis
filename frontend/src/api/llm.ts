@@ -5,6 +5,26 @@ export type FitVerdict = 'recommended' | 'fits' | 'cpu-only' | 'too-large';
 export type DriverState = 'ok' | 'missing' | 'nouveau' | 'not-applicable';
 export type ModelRole = 'text' | 'vision';
 
+/**
+ * Ollama reports a versionless tag back as `name:latest` — `/api/tags` lists
+ * `moondream` as `moondream:latest`. Comparing a catalog tag or a stored
+ * selection to that list without normalising misses on exactly those tags,
+ * which shows up as a row that never leaves "Installing…" after a pull that
+ * in fact succeeded.
+ *
+ * Mirrors `normalizeTag` in `backend/src/modules/llm/llm-catalog.ts` — keep
+ * the two in step.
+ */
+export function normalizeTag(tag: string): string {
+  return tag.includes(':') ? tag : `${tag}:latest`;
+}
+
+/** True when `tag` appears in `installed`, comparing normalised on both sides. */
+export function isTagInstalled(installed: string[], tag: string): boolean {
+  const wanted = normalizeTag(tag);
+  return installed.some((t) => normalizeTag(t) === wanted);
+}
+
 export interface HardwareProfile {
   /** Populated only when a working driver reports it. */
   gpu: { name: string; vramTotalMb: number; vramFreeMb: number } | null;

@@ -3,6 +3,7 @@ import {
   CATALOG,
   computeFit,
   combinedFootprint,
+  normalizeTag,
   type CatalogModel,
 } from '../../src/modules/llm/llm-catalog.js';
 import type { HardwareProfile } from '../../src/modules/llm/llm-hardware.js';
@@ -110,6 +111,27 @@ describe('combinedFootprint', () => {
     // and must not be guessed at.
     expect(combinedFootprint(['some/unknown:tag'], hw()).totalVramMb).toBe(0);
   });
+
+  it('resolves a selection written in the other tag shape', () => {
+    // Ollama round-trips `moondream` as `moondream:latest`, so a stored
+    // selection can arrive in either shape. Failing to match would silently
+    // contribute 0 here and under-report the VRAM warning by the whole model.
+    const entry = CATALOG.find((m) => m.tag === 'moondream:latest');
+    expect(entry).toBeDefined();
+    expect(combinedFootprint(['moondream'], hw()).totalVramMb).toBe(entry!.vramMb);
+    expect(combinedFootprint(['moondream:latest'], hw()).totalVramMb).toBe(entry!.vramMb);
+  });
+});
+
+describe('normalizeTag', () => {
+  it('appends :latest to a versionless tag', () => {
+    expect(normalizeTag('moondream')).toBe('moondream:latest');
+  });
+
+  it('leaves an already-versioned tag alone', () => {
+    expect(normalizeTag('qwen2.5:7b')).toBe('qwen2.5:7b');
+    expect(normalizeTag('moondream:latest')).toBe('moondream:latest');
+  });
 });
 
 describe('CATALOG', () => {
@@ -123,5 +145,14 @@ describe('CATALOG', () => {
   it('has no duplicate tags', () => {
     const tags = CATALOG.map((m) => m.tag);
     expect(new Set(tags).size).toBe(tags.length);
+  });
+
+  it('writes every tag in the shape Ollama reports back', () => {
+    // A bare entry would compare unequal to what /api/tags returns for it at
+    // every site that does not normalise — this keeps the catalog itself from
+    // reintroducing that class of bug.
+    for (const m of CATALOG) {
+      expect(normalizeTag(m.tag)).toBe(m.tag);
+    }
   });
 });
