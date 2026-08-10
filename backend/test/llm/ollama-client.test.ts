@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  isReachable, listInstalledTags, pullModel, type PullProgress,
+  isReachable, listInstalledTags, pullModel, deleteModel, type PullProgress,
 } from '../../src/modules/llm/ollama-client.js';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -93,5 +93,42 @@ describe('pullModel', () => {
   it('throws when the request itself fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('bad tag', { status: 404 })));
     await expect(pullModel('nope:1b', () => {})).rejects.toThrow();
+  });
+
+  it('handles a final line with no trailing newline', async () => {
+    // Ollama's last frame often arrives unterminated; without the post-loop
+    // flush the success status would be silently dropped.
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('{"status":"downloading","completed":1,"total":2}\n'));
+        controller.enqueue(encoder.encode('{"status":"success"}'));
+        controller.close();
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(stream, { status: 200 })));
+
+    const seen: PullProgress[] = [];
+    await pullModel('x:1b', (p) => seen.push(p));
+    expect(seen.map((p) => p.status)).toEqual(['downloading', 'success']);
+  });
+});
+
+describe('deleteModel', () => {
+  it('sends the tag and resolves on success', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await deleteModel('qwen2.5:7b');
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/api/delete');
+    expect(init.method).toBe('DELETE');
+    expect(JSON.parse(String(init.body)).name).toBe('qwen2.5:7b');
+  });
+
+  it('throws with the server text on a non-OK status', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('model not found', { status: 404 })));
+    await expect(deleteModel('nope:1b')).rejects.toThrow(/model not found/);
   });
 });
