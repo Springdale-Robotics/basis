@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { config } from '../../config/index.js';
 import { logger } from '../../lib/logger.js';
+import { getTextModel } from '../llm/llm-settings.js';
 import type { TranscribedLine } from './receipt-ocr.js';
 
 /**
@@ -146,12 +147,13 @@ export function attachConfidences(
 
 export async function isStructurerAvailable(): Promise<boolean> {
   try {
+    const model = await getTextModel();
     const response = await fetch(`${config.OLLAMA_HOST}/api/tags`, {
       signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) return false;
     const data = (await response.json()) as { models?: Array<{ name: string }> };
-    return (data.models ?? []).some((m) => m.name.startsWith(config.OLLAMA_LLM_MODEL.split(':')[0]));
+    return (data.models ?? []).some((m) => m.name.startsWith(model.split(':')[0]));
   } catch {
     return false;
   }
@@ -162,11 +164,12 @@ export async function structureReceipt(rawText: string): Promise<StructuredRecei
   const timeout = setTimeout(() => controller.abort(), config.RECEIPT_STRUCTURE_TIMEOUT_MS);
 
   try {
+    const model = await getTextModel();
     const response = await fetch(`${config.OLLAMA_HOST}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: config.OLLAMA_LLM_MODEL,
+        model,
         prompt: `${PROMPT}${rawText}`,
         stream: false,
         format: 'json',

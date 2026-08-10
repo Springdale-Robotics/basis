@@ -1,5 +1,6 @@
 import { config } from '../../../config/index.js';
 import { logger } from '../../../lib/logger.js';
+import { getVisionModel } from '../../llm/llm-settings.js';
 import type { VisionProvider, VisionResult } from './index.js';
 
 interface OllamaGenerateResponse {
@@ -27,6 +28,12 @@ interface OllamaTagsResponse {
 export class OllamaVisionProvider implements VisionProvider {
   name = 'ollama';
   private host: string;
+  /**
+   * Last model name resolved from settings. Seeded with the env default so
+   * getModel()/isLightweightModel() have a sane answer before the first
+   * call, then kept current by resolveModel() on every call path so a
+   * selection change takes effect without a restart.
+   */
   private model: string;
   private cachedAvailability: { available: boolean; checkedAt: number } | null = null;
   private availabilityCacheTtl = 30000; // 30 seconds
@@ -34,6 +41,12 @@ export class OllamaVisionProvider implements VisionProvider {
   constructor() {
     this.host = config.OLLAMA_HOST;
     this.model = config.OLLAMA_VLM_MODEL;
+  }
+
+  /** Resolves the current selection and caches it in `this.model` for getModel()/isLightweightModel(). */
+  private async resolveModel(): Promise<string> {
+    this.model = await getVisionModel();
+    return this.model;
   }
 
   getModel(): string {
@@ -60,6 +73,7 @@ export class OllamaVisionProvider implements VisionProvider {
     }
 
     try {
+      const model = await this.resolveModel();
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5000);
 
@@ -77,14 +91,14 @@ export class OllamaVisionProvider implements VisionProvider {
 
       // Check if our configured model is available
       const modelAvailable = data.models?.some(
-        (m) => m.name === this.model || m.name.startsWith(this.model.split(':')[0])
+        (m) => m.name === model || m.name.startsWith(model.split(':')[0])
       );
 
       this.cachedAvailability = { available: modelAvailable, checkedAt: Date.now() };
 
       if (!modelAvailable) {
         logger.warn(
-          { model: this.model, availableModels: data.models?.map((m) => m.name) },
+          { model, availableModels: data.models?.map((m) => m.name) },
           'Ollama vision model not found'
         );
       }
@@ -103,8 +117,9 @@ export class OllamaVisionProvider implements VisionProvider {
     prompt: string
   ): Promise<VisionResult> {
     const startTime = Date.now();
+    const model = await this.resolveModel();
 
-    logger.info({ host: this.host, model: this.model, bufferSize: imageBuffer.length }, 'Starting Ollama parseImage');
+    logger.info({ host: this.host, model, bufferSize: imageBuffer.length }, 'Starting Ollama parseImage');
 
     // Convert image to base64
     const imageBase64 = imageBuffer.toString('base64');
@@ -123,7 +138,7 @@ export class OllamaVisionProvider implements VisionProvider {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: this.model,
+          model,
           prompt,
           images: [imageBase64],
           stream: false,
@@ -146,7 +161,7 @@ export class OllamaVisionProvider implements VisionProvider {
 
       logger.info(
         {
-          model: this.model,
+          model,
           processingTimeMs,
           totalDuration: data.total_duration,
           evalCount: data.eval_count,
