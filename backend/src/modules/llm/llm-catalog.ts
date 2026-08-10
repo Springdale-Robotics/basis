@@ -112,10 +112,24 @@ export const CATALOG: CatalogModel[] = [
   },
 ];
 
-/** A GPU is only usable when a working driver reports it. */
+/**
+ * A GPU is only usable when a working driver reports it.
+ *
+ * Total, not free. Ollama keeps a model resident for its five-minute
+ * keep-alive, so `vramFreeMb` on an 8GB card reads ~3GB for a while after any
+ * scan: every catalog entry would flip to cpu-only/too-large and the
+ * footprint alert would fire, then silently revert about a minute later once
+ * the model unloads and the hardware cache expires. Badges that flap on
+ * transient state are worse than none. VRAM is effectively Ollama's alone and
+ * it swaps models rather than stacking them, so total capacity is the honest
+ * number — and it is the one the settings page quotes back to the user.
+ *
+ * The RAM path deliberately does the opposite and uses MemAvailable: Postgres,
+ * Redis and the app itself genuinely contend for system memory.
+ */
 function usableVramMb(hw: HardwareProfile): number {
   if (hw.driverState !== 'ok' || !hw.gpu) return 0;
-  return hw.gpu.vramFreeMb;
+  return hw.gpu.vramTotalMb;
 }
 
 export function computeFit(model: CatalogModel, hw: HardwareProfile): FitVerdict {

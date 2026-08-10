@@ -39,25 +39,37 @@ describe('computeFit', () => {
   });
 
   it('requires headroom, not just bare capacity', () => {
-    // 7800MB into 8000MB free is under the 15% reserve: it would fit on paper
-    // and thrash in practice.
+    // 7800MB into 8192MB total is under the 15% reserve (threshold 6963MB): it
+    // would fit on paper and thrash in practice.
     expect(computeFit(model({ vramMb: 7800 }), hw())).not.toBe('fits');
   });
 
   it('falls back to CPU when the model exceeds VRAM but fits RAM', () => {
-    // Corrected fixture: with the default hw()'s GPU headroom threshold
-    // (8000 * 0.85 = 6800MB) already higher than the max possible RAM budget
-    // (6122 available - 1500 reserve = 4622MB), no vramMb value can exceed GPU
-    // capacity while still fitting the RAM budget on that hardware — a 12000MB
-    // model (as originally written here) is too-large for both, not cpu-only.
-    // Shrinking the GPU opens room between the two thresholds so this test can
-    // actually exercise the CPU-fallback path it's named for.
+    // The two thresholds have to leave room between them or this test cannot
+    // exercise the path it is named for:
+    //   GPU headroom = vramTotalMb - 15% = 4000 - 600 = 3400MB
+    //   RAM budget   = ramAvailableMb - RAM_RESERVE_MB = 6122 - 1500 = 4622MB
+    // 4000 sits between: too big for the card, small enough for RAM. On the
+    // default hw() the GPU threshold (6963MB) is already above the maximum
+    // RAM budget, so no value could land in between — hence the smaller card.
     expect(
       computeFit(
         model({ vramMb: 4000 }),
-        hw({ gpu: { name: 'RTX 3050', vramTotalMb: 8192, vramFreeMb: 4000 } })
+        hw({ gpu: { name: 'RTX 3050', vramTotalMb: 4000, vramFreeMb: 3800 } })
       )
     ).toBe('cpu-only');
+  });
+
+  it('judges fit on total VRAM, not what happens to be free right now', () => {
+    // Ollama holds a model resident for its keep-alive, so free VRAM collapses
+    // for minutes after any scan. Judging on it makes every badge flap:
+    //   correct  = vramTotalMb - 15% = 8192 - 1229 = 6963MB → 4700 fits
+    //   if buggy = vramFreeMb  - 15% = 3000 -  450 = 2550MB → 4700 does not
+    // 4700 is the real footprint of the default text model, so this is exactly
+    // what an admin would see on the settings page a minute after a receipt
+    // scan — badges reading "too large" on a card that runs the model fine.
+    const busyCard = hw({ gpu: { name: 'RTX 3050', vramTotalMb: 8192, vramFreeMb: 3000 } });
+    expect(computeFit(model({ vramMb: 4700 }), busyCard)).toBe('fits');
   });
 
   it('is too-large when it fits neither', () => {
@@ -104,6 +116,14 @@ describe('combinedFootprint', () => {
 
   it('does not flag a pair that fits', () => {
     expect(combinedFootprint(['qwen2.5:1.5b'], hw()).exceedsVram).toBe(false);
+  });
+
+  it('compares against total VRAM, not what is free right now', () => {
+    // Same reason as computeFit: otherwise the alert fires for a minute after
+    // every scan and then withdraws itself. 4700 is under the 8192 total and
+    // over the 3000 momentarily free.
+    const busyCard = hw({ gpu: { name: 'RTX 3050', vramTotalMb: 8192, vramFreeMb: 3000 } });
+    expect(combinedFootprint(['qwen2.5:7b'], busyCard).exceedsVram).toBe(false);
   });
 
   it('ignores tags that are not in the catalog', () => {
