@@ -109,7 +109,9 @@ Resolution (in this fix):
   favorites, ratings, play_queues, play_queue_items), the polymorphic
   `permissions` table (hardened at the app layer in P0), cloud/remote/integration
   tables (may be cross-household by design), ops/system tables (admin+worker
-  only), and the dead `receipt_scans`/`custom_units`.
+  only), and the dead `receipt_scans`/`custom_units`. Added later, same
+  reasoning: `system_settings` (LLM setup GUI) — box-level configuration, no
+  tenant data, no `householdId` column, no RLS policy.
 - [x] **Stage 4 — audit (done).** Confirmed the base handle (no request context)
   bypasses RLS and sees all households — so workers, migrations, backups, seed,
   and the pre-auth session lookup are unaffected (the passing worker/backup/

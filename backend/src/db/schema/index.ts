@@ -38,3 +38,6 @@ export * from './bug-reports.js';
 
 // Receipt OCR -> inventory import
 export * from './receipts.js';
+
+// Box-level settings (LLM model selection, etc.) — not household-scoped
+export * from './system-settings.js';
