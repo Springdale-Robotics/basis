@@ -329,6 +329,17 @@ echo "Once signed in, return here and click 'Check again'."`,
       }
     },
   },
+  {
+    id: 'ollama',
+    description: 'Install Ollama (local AI model runtime)',
+    // `bash -lc` so the curl|sh install works as it does for the other
+    // shell-piped installers here.
+    argv: ['bash', '-lc', 'curl -fsSL https://ollama.com/install.sh | sh'],
+    postCheck: async () => {
+      const { isReachable } = await import('../llm/ollama-client.js');
+      return isReachable();
+    },
+  },
 ];
 
 /**
