@@ -5,7 +5,15 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
 import { cn, formatFileSize } from '@/lib/utils';
-import type { CatalogEntry, FitVerdict, LlmStatus, ModelRole, PullState } from '@/api/llm';
+import {
+  isTagInstalled,
+  normalizeTag,
+  type CatalogEntry,
+  type FitVerdict,
+  type LlmStatus,
+  type ModelRole,
+  type PullState,
+} from '@/api/llm';
 
 /** MB → a rounded "N GB" string, dropping a trailing ".0". Mirrors the copy
  *  used for hardware VRAM elsewhere on this page. */
@@ -129,8 +137,8 @@ function ModelRow({
   onRemove: (tag: string) => void;
   onCancelPull?: (pullId: string) => void;
 }) {
-  const isInstalled = status.installed.includes(model.tag);
-  const isSelected = status.selected[role] === model.tag;
+  const isInstalled = isTagInstalled(status.installed, model.tag);
+  const isSelected = normalizeTag(status.selected[role]) === normalizeTag(model.tag);
   const isBusy = busyTags?.has(model.tag) ?? false;
   const actionsDisabled = Boolean(disabled) || isBusy;
   const progress = pullProgress?.get(model.tag);

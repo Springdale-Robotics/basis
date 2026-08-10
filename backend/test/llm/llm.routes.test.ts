@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { inArray } from 'drizzle-orm';
 import { db } from '../../src/config/database.js';
 import { systemSettings } from '../../src/db/schema/index.js';
@@ -152,6 +152,57 @@ describe('PUT /api/v1/llm/settings', () => {
     const after = await (await admin.fetch('/api/v1/llm/status')).json();
     expect(after.data.selected.text).toBe('previous-tag');
     expect(after.data.selected.vision).toBe(before.data.selected.vision);
+  });
+});
+
+describe('tag normalization against what Ollama reports', () => {
+  // Ollama reports a versionless tag back as `name:latest` — `moondream`
+  // comes out of /api/tags as `moondream:latest`. Every comparison between a
+  // selection and that list has to normalise, or a model that is installed
+  // and working reads as missing and can never be selected.
+  const setSetting = async (key: string, value: string): Promise<void> => {
+    await db
+      .insert(systemSettings)
+      .values({ key, value })
+      .onConflictDoUpdate({ target: systemSettings.key, set: { value, updatedAt: new Date() } });
+  };
+
+  afterEach(async () => {
+    await db
+      .delete(systemSettings)
+      .where(inArray(systemSettings.key, ['llm.textModel', 'llm.visionModel']));
+  });
+
+  it('accepts a bare tag on PUT when Ollama reports it with :latest', async () => {
+    vi.mocked(listInstalledTags).mockResolvedValueOnce(['moondream:latest']);
+
+    const res = await admin.fetch('/api/v1/llm/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ visionModel: 'moondream' }),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('does not flag a bare selection as missing when Ollama reports :latest', async () => {
+    await setSetting('llm.textModel', 'qwen2.5:7b');
+    await setSetting('llm.visionModel', 'moondream');
+    vi.mocked(listInstalledTags).mockResolvedValueOnce(['qwen2.5:7b', 'moondream:latest']);
+
+    const body = await (await admin.fetch('/api/v1/llm/status')).json();
+    expect(body.data.missing.vision).toBe(false);
+    expect(body.data.missing.text).toBe(false);
+  });
+
+  it('counts a :latest selection toward the combined VRAM footprint', async () => {
+    // A selection that fails to resolve against the catalog contributes 0 and
+    // silently under-reports the "these two won't both fit" warning.
+    await setSetting('llm.textModel', 'qwen2.5:7b');
+    await setSetting('llm.visionModel', 'moondream:latest');
+    vi.mocked(listInstalledTags).mockResolvedValueOnce(['qwen2.5:7b', 'moondream:latest']);
+
+    const body = await (await admin.fetch('/api/v1/llm/status')).json();
+    // 4700 (qwen2.5:7b) + 1800 (moondream) — not 4700 + 0.
+    expect(body.data.footprint.totalVramMb).toBe(6500);
   });
 });
 

@@ -17,6 +17,20 @@ export interface CatalogModel {
 
 export type FitVerdict = 'recommended' | 'fits' | 'cpu-only' | 'too-large';
 
+/**
+ * Ollama reports a versionless tag back as `name:latest` — `/api/tags` lists
+ * `moondream` as `moondream:latest`. Strict string comparison between what an
+ * admin selected (or what the catalog holds) and what Ollama reports would
+ * therefore miss on exactly those tags, which reads to the user as "the pull
+ * never finished" or "the selected model isn't installed" on a box where it
+ * plainly is. Normalise both sides of every such comparison.
+ *
+ * Mirrored in `frontend/src/api/llm.ts` — keep the two in step.
+ */
+export function normalizeTag(tag: string): string {
+  return tag.includes(':') ? tag : `${tag}:latest`;
+}
+
 /** Leave the GPU room to breathe; a model at 98% of VRAM thrashes. */
 const VRAM_HEADROOM = 0.15;
 /** Keep this much RAM for Postgres, Redis and the app itself. */
@@ -87,7 +101,9 @@ export const CATALOG: CatalogModel[] = [
     notes: 'Older and weaker at reading text. Kept because existing installs use it.',
   },
   {
-    tag: 'moondream',
+    // Explicitly `:latest` — every other entry is versioned, and Ollama
+    // reports a versionless tag back as `:latest` anyway.
+    tag: 'moondream:latest',
     role: 'vision',
     label: 'Moondream',
     downloadBytes: 1_700_000_000,
@@ -131,7 +147,11 @@ export function combinedFootprint(
   hw: HardwareProfile
 ): { totalVramMb: number; exceedsVram: boolean } {
   const totalVramMb = tags.reduce((sum, tag) => {
-    const entry = CATALOG.find((m) => m.tag === tag);
+    // Both sides normalised: a stored `moondream:latest` selection has to
+    // resolve against the catalog whichever shape either one is written in,
+    // or the footprint silently under-reports by that model's whole size.
+    const wanted = normalizeTag(tag);
+    const entry = CATALOG.find((m) => normalizeTag(m.tag) === wanted);
     return sum + (entry?.vramMb ?? 0);
   }, 0);
 
