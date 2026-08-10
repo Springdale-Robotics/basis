@@ -1,9 +1,7 @@
 import { randomUUID } from 'crypto';
 import type { Server } from 'socket.io';
-import { db } from '../../config/database.js';
-import { sessions, users } from '../../db/schema/index.js';
-import { eq, and, gt } from 'drizzle-orm';
 import { logger } from '../../lib/logger.js';
+import { requireAdminSocket } from '../../websocket/require-admin-socket.js';
 import { pullModel } from './ollama-client.js';
 
 export interface PullState {
@@ -90,53 +88,19 @@ export function cancelPull(pullId: string): boolean {
   return true;
 }
 
-function parseCookie(header: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const pair of header.split(';')) {
-    const [k, ...v] = pair.trim().split('=');
-    if (k) out[k] = decodeURIComponent(v.join('='));
-  }
-  return out;
-}
-
 /**
  * socket.io namespace for LLM model-pull progress.
  *
- * Trust model (copied verbatim from install.ws.ts): authenticated via session
- * cookie, admin role required. This namespace exposes what is installed on
- * the host, so it must be gated exactly as /install is.
+ * Trust model: authenticated via session cookie, admin role required — the
+ * same gate /install uses, and now literally the same code (see
+ * websocket/require-admin-socket.ts). This namespace exposes what is
+ * installed on the host, so it must be gated exactly as /install is.
  */
 export function registerLlmNamespace(server: Server): void {
   io = server;
   const ns = server.of('/llm');
 
-  ns.use(async (socket, next) => {
-    try {
-      const cookies = parseCookie(socket.handshake.headers.cookie ?? '');
-      const sessionId = cookies['session'];
-      if (!sessionId) return next(new Error('Authentication required'));
-
-      const now = new Date();
-      const result = await db
-        .select({ session: sessions, user: users })
-        .from(sessions)
-        .innerJoin(users, eq(sessions.userId, users.id))
-        .where(and(eq(sessions.id, sessionId), gt(sessions.expiresAt, now)))
-        .limit(1);
-
-      if (result.length === 0) return next(new Error('Session expired'));
-      const { user } = result[0];
-      if (user.role !== 'admin') return next(new Error('Admin role required'));
-
-      // Stash on the socket for later logging.
-      (socket as any).userId = user.id;
-      (socket as any).householdId = user.householdId;
-      next();
-    } catch (err) {
-      logger.error({ err }, '/llm namespace auth failed');
-      next(new Error('Authentication failed'));
-    }
-  });
+  requireAdminSocket(ns, '/llm');
 
   ns.on('connection', (socket) => {
     // Replay live pulls so a client that reconnects mid-download catches up.
