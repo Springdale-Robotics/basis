@@ -62,6 +62,7 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
   { label: 'Sessions', href: '/settings/sessions', description: 'Where you are signed in', soon: true },
   { label: 'Updates', href: '/settings/updates', description: 'App version and available updates' },
   { label: 'System', href: '/settings/system', description: 'Server status and diagnostics' },
+  { label: 'AI Models', href: '/settings/ai-models', description: 'Local models for receipts and photo scanning' },
   { label: 'Bug Reports', href: '/settings/bug-reports', description: 'Reports submitted from this household' },
   { label: 'Terminal', href: '/settings/terminal', description: 'Run server commands from the browser' },
 ];
@@ -116,6 +117,7 @@ export const ADMIN_ONLY_SETTINGS = [
   '/settings/features',
   '/settings/updates',
   '/settings/system',
+  '/settings/ai-models',
   '/settings/bug-reports',
   '/settings/terminal',
 ];
