@@ -18,6 +18,7 @@ import { GroupsSettingsPage } from './GroupsSettingsPage';
 import { FeaturePermissionsPage } from './FeaturePermissionsPage';
 import { FeatureSettingsPage } from './FeatureSettingsPage';
 import { RemoteAccessSettingsPage } from './RemoteAccessSettingsPage';
+import { AiModelsSettingsPage } from './AiModelsSettingsPage';
 import { TerminalSettingsPage } from './TerminalSettingsPage';
 import { UpdatesSettingsPage } from './UpdatesSettingsPage';
 import { SystemSettingsPage } from './SystemSettingsPage';
@@ -128,6 +129,7 @@ export function SettingsPage() {
             />
             <Route path="updates" element={<UpdatesSettingsPage />} />
             <Route path="system" element={<SystemSettingsPage />} />
+            <Route path="ai-models" element={<AiModelsSettingsPage />} />
             <Route path="bug-reports" element={<BugReportsSettingsPage />} />
             <Route path="terminal" element={<TerminalSettingsPage />} />
           </Routes>
