@@ -20,7 +20,7 @@ vi.mock('fs/promises', async (importOriginal) => {
 
 // Imported after the mock so per-test overrides (mockResolvedValueOnce) can
 // reach the same mock instances the routes call.
-const { isReachable, listInstalledTags } = await import('../../src/modules/llm/ollama-client.js');
+const { isReachable, listInstalledTags, pullModel } = await import('../../src/modules/llm/ollama-client.js');
 const { statfs } = await import('fs/promises');
 
 let ctx: RouteTestContext;
@@ -165,6 +165,14 @@ describe('POST /api/v1/llm/models/pull', () => {
   });
 
   it('starts a pull and returns a pullId when there is room on disk', async () => {
+    // Mocked rather than relying on the real filesystem — the previous
+    // version of this test called the real statfs against STORAGE_PATH,
+    // which would false-fail on a disk-constrained CI runner.
+    vi.mocked(statfs).mockResolvedValueOnce({
+      bavail: 1_000_000_000_000,
+      bsize: 1,
+    } as Awaited<ReturnType<typeof statfs>>);
+
     const res = await admin.fetch('/api/v1/llm/models/pull', {
       method: 'POST',
       body: JSON.stringify({ tag: 'qwen2.5:3b' }),
@@ -176,6 +184,8 @@ describe('POST /api/v1/llm/models/pull', () => {
   });
 
   it('rejects a pull it can already tell will not fit, without ever calling pullModel', async () => {
+    // Isolate from any pullModel calls earlier tests in this file made.
+    pullModel.mockClear();
     // Free space reported as effectively zero — every catalog entry needs more.
     vi.mocked(statfs).mockResolvedValueOnce({ bavail: 1, bsize: 1 } as Awaited<
       ReturnType<typeof statfs>
@@ -189,6 +199,12 @@ describe('POST /api/v1/llm/models/pull', () => {
     const body = await res.json();
     expect(body.error.message).toMatch(/not enough disk space/i);
     expect(body.error.message).toMatch(/Qwen 2\.5 VL 7B/);
+    // The name of this test promises the disk check runs before the pull
+    // starts — assert that, not just the response shape, so a regression
+    // that reorders assertDiskSpaceFor() after startPull() (which would
+    // still return 400, since the throw still propagates before the route
+    // handler's return) is actually caught.
+    expect(pullModel).not.toHaveBeenCalled();
   });
 
   it('does not block a pull for a tag outside the curated catalog', async () => {

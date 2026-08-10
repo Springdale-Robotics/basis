@@ -52,4 +52,30 @@ describe('pull registry', () => {
   it('returns false when cancelling an unknown pull', () => {
     expect(cancelPull('nope')).toBe(false);
   });
+
+  it('reaps a finished pull after the retention window, but not before', async () => {
+    // Unbounded growth of the registry was a review finding: every pull,
+    // whatever its outcome, used to leave a permanent Map entry.
+    vi.useFakeTimers();
+    try {
+      pullModel.mockResolvedValue(undefined);
+      const id = startPull('qwen2.5:3b');
+
+      // Flush the pullModel promise chain (then/finally) without advancing
+      // the clock — the timer these settle isn't the reap timer itself.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getPull(id)?.state).toBe('done');
+
+      // A client reconnecting right after completion must still see the
+      // outcome — just under the retention window, the entry survives.
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 1);
+      expect(getPull(id)?.state).toBe('done');
+
+      // Past the window, the entry is gone.
+      await vi.advanceTimersByTimeAsync(1);
+      expect(getPull(id)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

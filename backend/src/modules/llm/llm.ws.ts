@@ -25,6 +25,9 @@ export interface PullState {
 const pulls = new Map<string, PullState>();
 const controllers = new Map<string, AbortController>();
 
+/** How long a finished pull stays readable before it is reaped. */
+const TERMINAL_RETENTION_MS = 10 * 60 * 1000;
+
 let io: Server | null = null;
 
 function emit(state: PullState): void {
@@ -64,6 +67,13 @@ export function startPull(tag: string): string {
     .finally(() => {
       controllers.delete(id);
       emit(state);
+      // Terminal states linger briefly so a client that reconnects right after
+      // a pull finishes still sees the outcome, then are reaped. Without this
+      // the map grows for the life of the process — slowly, since this is an
+      // admin-only action, but without any bound.
+      const reap = setTimeout(() => pulls.delete(id), TERMINAL_RETENTION_MS);
+      // Do not hold the event loop open on a timer nobody is waiting for.
+      reap.unref?.();
     });
 
   return id;
