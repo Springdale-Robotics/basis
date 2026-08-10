@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { eq, inArray } from 'drizzle-orm';
 import { db } from '../../src/config/database.js';
 import { systemSettings } from '../../src/db/schema/index.js';
@@ -11,11 +11,18 @@ import {
   VISION_MODEL_KEY,
 } from '../../src/modules/llm/llm-settings.js';
 
-afterEach(async () => {
+const clearModelSettings = async (): Promise<void> => {
   await db
     .delete(systemSettings)
     .where(inArray(systemSettings.key, [TEXT_MODEL_KEY, VISION_MODEL_KEY]));
-});
+};
+
+// `system_settings` is box-global by design — no householdId, no RLS policy —
+// so these two keys are shared mutable state across every llm test file. Clear
+// on the way in as well as out, so this file is self-seeding rather than
+// dependent on a sibling's cleanup having run first.
+beforeAll(clearModelSettings);
+afterEach(clearModelSettings);
 
 describe('llm settings accessor', () => {
   it('falls back to the env default when unset', async () => {

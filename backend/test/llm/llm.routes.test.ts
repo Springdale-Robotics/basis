@@ -28,6 +28,15 @@ let admin: TestUser;
 let member: TestUser;
 
 beforeAll(async () => {
+  // `system_settings` is box-global by design — no householdId, no RLS policy —
+  // so these two keys are shared mutable state across every llm test file, the
+  // only table in the suite without per-household isolation. Clearing here as
+  // well as in afterAll makes this file self-seeding: relying on a sibling's
+  // cleanup made `missing.text` flip to true depending on file order.
+  await db
+    .delete(systemSettings)
+    .where(inArray(systemSettings.key, ['llm.textModel', 'llm.visionModel']));
+
   ctx = await setupRouteTest();
   const householdId = await ctx.createHousehold();
   admin = await ctx.createUser(householdId, 'admin');
