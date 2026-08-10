@@ -156,7 +156,16 @@ export async function llmRoutes(app: FastifyInstance): Promise<void> {
     '/models/:tag',
     { preHandler: [authMiddleware, requireAdmin()] },
     async (request) => {
-      await deleteModel(decodeURIComponent(request.params.tag));
+      let tag: string;
+      try {
+        tag = decodeURIComponent(request.params.tag);
+      } catch {
+        // decodeURIComponent throws URIError on malformed input like `%zz`,
+        // which would otherwise surface as an unhandled 500 on what is
+        // plainly a bad request.
+        throw Errors.validation('That model tag is not valid URL-encoded text.');
+      }
+      await deleteModel(tag);
       return { success: true, data: { message: 'Model removed' } };
     }
   );

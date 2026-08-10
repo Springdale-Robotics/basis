@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Socket } from 'socket.io-client';
-import { AlertTriangle, ChevronDown, Cpu, Download, MemoryStick, MonitorX } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Cpu, Download, MonitorX } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -81,7 +81,8 @@ function HardwareSummaryCard({ hw }: { hw: HardwareProfile }) {
         <p className="text-sm">{describeHardware(hw)}</p>
         {!hw.hasAvx2 && (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <MemoryStick className="h-3.5 w-3.5" />
+            {/* AVX2 is a CPU instruction set, not memory. */}
+            <Cpu className="h-3.5 w-3.5" />
             This CPU lacks AVX2 — CPU-only inference will be noticeably slower.
           </p>
         )}
@@ -417,6 +418,13 @@ export function AiModelsSettingsPage() {
     setRemoveTarget({ tag, role });
   };
 
+  // Scoped to this field's own pull. `installMutation` is shared with the
+  // catalog rows, so gating on its isPending greyed out the advanced input
+  // whenever any row was installing — two unrelated operations blocking each
+  // other. Set on click, cleared by the socket effect on the terminal event
+  // (or by the mutation's onError).
+  const advancedPullPending = advancedPullTag !== null;
+
   const busyTags = useMemo(() => {
     const tags = new Set(installing.keys());
     if (selectMutation.isPending && selectMutation.variables) {
@@ -538,12 +546,12 @@ export function AiModelsSettingsPage() {
                       placeholder="e.g. llama3.1:8b-instruct-q4_K_M"
                       value={advancedTag}
                       onChange={(e) => setAdvancedTag(e.target.value)}
-                      disabled={actionsDisabled || installMutation.isPending}
+                      disabled={actionsDisabled || advancedPullPending}
                     />
                   </div>
                   <Button
                     onClick={handleAdvancedPull}
-                    disabled={actionsDisabled || !advancedTag.trim() || installMutation.isPending}
+                    disabled={actionsDisabled || !advancedTag.trim() || advancedPullPending}
                   >
                     Pull
                   </Button>
