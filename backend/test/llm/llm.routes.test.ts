@@ -21,7 +21,7 @@ vi.mock('fs/promises', async (importOriginal) => {
 
 // Imported after the mock so per-test overrides (mockResolvedValueOnce) can
 // reach the same mock instances the routes call.
-const { isReachable, listInstalledTags, pullModel } = await import('../../src/modules/llm/ollama-client.js');
+const { isReachable, listInstalledTags, pullModel, deleteModel } = await import('../../src/modules/llm/ollama-client.js');
 const { statfs } = await import('fs/promises');
 
 let ctx: RouteTestContext;
@@ -213,6 +213,31 @@ describe('tag normalization against what Ollama reports', () => {
     const body = await (await admin.fetch('/api/v1/llm/status')).json();
     // 4700 (qwen2.5:7b) + 1800 (moondream) — not 4700 + 0.
     expect(body.data.footprint.totalVramMb).toBe(6500);
+  });
+});
+
+describe('DELETE /api/v1/llm/models/:tag', () => {
+  it('refuses a non-admin', async () => {
+    // Destructive and irreversible short of re-downloading gigabytes; a
+    // household member must not be able to reach it.
+    vi.mocked(deleteModel).mockClear();
+    const res = await member.fetch(`/api/v1/llm/models/${encodeURIComponent('qwen2.5:7b')}`, {
+      method: 'DELETE',
+    });
+    expect(res.status).toBe(403);
+    expect(deleteModel).not.toHaveBeenCalled();
+  });
+
+  it('passes the URL-decoded tag through to Ollama', async () => {
+    // The frontend encodeURIComponent()s the tag, so the colon arrives as
+    // %3A. Ollama needs the real tag — deleting "qwen2.5%3A7b" would 404
+    // while the model it was meant to remove stays on disk.
+    vi.mocked(deleteModel).mockClear();
+    const res = await admin.fetch(`/api/v1/llm/models/${encodeURIComponent('qwen2.5:7b')}`, {
+      method: 'DELETE',
+    });
+    expect(res.status).toBe(200);
+    expect(deleteModel).toHaveBeenCalledWith('qwen2.5:7b');
   });
 });
 
