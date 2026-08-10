@@ -18,6 +18,9 @@
 #   3. (Optional) systemd unit installation — for production deployments that
 #      want auto-start. Disabled by default; pass --systemd to opt in.
 #   4. Permissions on the data directory.
+#   5. GPU driver + Ollama — auto-installed when a supported NVIDIA GPU is
+#      present. Never reboots; reports when one is required. Opt out with
+#      --no-gpu.
 #
 # What it does NOT do:
 #   - Install Docker, Node, or other base dependencies — see the project's
@@ -33,6 +36,8 @@ set -euo pipefail
 INSTALL_USER="${INSTALL_USER:-${SUDO_USER:-${USER:-root}}}"
 INSTALL_DATA_DIR="${INSTALL_DATA_DIR:-/var/lib/homemanager}"
 ENABLE_SYSTEMD=0
+ENABLE_GPU=1
+NEEDS_REBOOT=0
 DRY_RUN=0
 
 while [[ $# -gt 0 ]]; do
@@ -40,6 +45,7 @@ while [[ $# -gt 0 ]]; do
     --user) INSTALL_USER="$2"; shift 2 ;;
     --data-dir) INSTALL_DATA_DIR="$2"; shift 2 ;;
     --systemd) ENABLE_SYSTEMD=1; shift ;;
+    --no-gpu) ENABLE_GPU=0; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help)
       sed -n '2,/^# *$/p' "$0" | sed 's/^# *//'
@@ -53,6 +59,7 @@ done
 
 C_RESET=$'\e[0m'; C_BLUE=$'\e[34m'; C_GREEN=$'\e[32m'; C_YELLOW=$'\e[33m'; C_RED=$'\e[31m'
 log()  { echo "${C_BLUE}::${C_RESET} $*"; }
+info() { echo "${C_BLUE}i${C_RESET}  $*"; }
 ok()   { echo "${C_GREEN}✓${C_RESET}  $*"; }
 warn() { echo "${C_YELLOW}!${C_RESET}  $*"; }
 err()  { echo "${C_RED}✗${C_RESET}  $*" >&2; }
@@ -111,6 +118,62 @@ step_data_dir() {
   ok "Data directory owned by $INSTALL_USER"
 }
 
+# ─── GPU + Ollama ─────────────────────────────────────────────────────────
+#
+# Auto-installs when a supported GPU is present. Rationale for doing this at
+# install time rather than from the web UI: the driver swap needs a reboot of
+# the very box that serves the UI, and during a first install a reboot is
+# expected and cheap. Opt out with --no-gpu.
+step_gpu() {
+  if [[ $ENABLE_GPU -eq 0 ]]; then
+    info "Skipping GPU setup (--no-gpu)."
+    return
+  fi
+
+  # lspci sees the card even with no driver installed — that is how we tell
+  # "no GPU" apart from "GPU, no driver".
+  local card
+  card="$(lspci 2>/dev/null | grep -iE 'vga|3d controller' | grep -i nvidia || true)"
+  if [[ -z "$card" ]]; then
+    info "No NVIDIA GPU detected — AI features will run on CPU."
+    return
+  fi
+
+  ok "NVIDIA GPU detected: ${card#*: }"
+
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    ok "Proprietary driver already active."
+  elif ! command -v ubuntu-drivers >/dev/null 2>&1; then
+    warn "A GPU is present but this is not an Ubuntu system."
+    warn "Install the NVIDIA driver with your distribution's tooling, then re-run."
+    return
+  else
+    warn "GPU is present but has no working driver (likely nouveau)."
+    warn "Installing the recommended NVIDIA driver — this downloads ~600MB."
+    if [[ $DRY_RUN -eq 0 ]]; then
+      ubuntu-drivers install || {
+        warn "Driver install failed. AI features will run on CPU until it is resolved."
+        return
+      }
+    fi
+    NEEDS_REBOOT=1
+  fi
+
+  if command -v ollama >/dev/null 2>&1; then
+    ok "Ollama already installed."
+  else
+    info "Installing Ollama..."
+    if [[ $DRY_RUN -eq 0 ]]; then
+      curl -fsSL https://ollama.com/install.sh | sh || {
+        warn "Ollama install failed. Install it later from Settings → AI models."
+        return
+      }
+    fi
+  fi
+
+  ok "Pick your models in the app under Settings → AI models."
+}
+
 step_systemd_unit() {
   [[ $ENABLE_SYSTEMD -eq 1 ]] || return 0
   log "Installing systemd unit"
@@ -158,16 +221,28 @@ main() {
   log "Target user:    $INSTALL_USER"
   log "Data directory: $INSTALL_DATA_DIR"
   [[ $ENABLE_SYSTEMD -eq 1 ]] && log "systemd unit:   enabled" || log "systemd unit:   skipped (pass --systemd to opt in)"
+  [[ $ENABLE_GPU -eq 1 ]] && log "GPU setup:      enabled" || log "GPU setup:      skipped (--no-gpu)"
   [[ $DRY_RUN -eq 1 ]] && warn "DRY RUN — no changes will be made"
   echo
 
   step_tailscale_operator
   step_data_dir
+  step_gpu
   step_systemd_unit
 
   echo
   ok "Done. The web UI will no longer prompt for sudo."
   echo "    Next step: open the app and complete first-run setup."
+
+  if [[ $NEEDS_REBOOT -eq 1 ]]; then
+    echo
+    warn "A reboot is required for the GPU driver to take effect."
+    warn "Run: sudo reboot"
+    if command -v ollama >/dev/null 2>&1; then
+      warn "Ollama re-probes for the GPU each time it starts, and the reboot"
+      warn "restarts its systemd service — no extra steps needed afterward."
+    fi
+  fi
 }
 
 main "$@"
