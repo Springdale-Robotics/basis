@@ -54,8 +54,10 @@ export interface ModelRoleSectionProps {
   onRemove: (tag: string) => void;
   /** True when Ollama is unreachable — actions are disabled, catalog stays visible. */
   disabled?: boolean;
-  /** The tag currently mid-operation (install, select, or remove), if any. */
-  busyTag?: string | null;
+  /** Tags currently mid-operation (install, select, or remove). A set, not a
+   *  single tag, so installing a text model and a vision model at once can
+   *  each show their own busy state. */
+  busyTags?: Set<string>;
 }
 
 function ModelRow({
@@ -63,7 +65,7 @@ function ModelRow({
   role,
   status,
   disabled,
-  busyTag,
+  busyTags,
   onSelect,
   onInstall,
   onRemove,
@@ -72,14 +74,14 @@ function ModelRow({
   role: ModelRole;
   status: LlmStatus;
   disabled?: boolean;
-  busyTag?: string | null;
+  busyTags?: Set<string>;
   onSelect: (tag: string) => void;
   onInstall: (tag: string) => void;
   onRemove: (tag: string) => void;
 }) {
   const isInstalled = status.installed.includes(model.tag);
   const isSelected = status.selected[role] === model.tag;
-  const isBusy = busyTag === model.tag;
+  const isBusy = busyTags?.has(model.tag) ?? false;
   const actionsDisabled = Boolean(disabled) || isBusy;
 
   return (
@@ -104,7 +106,7 @@ function ModelRow({
           <>
             <Button size="sm" onClick={() => onSelect(model.tag)} disabled={actionsDisabled}>
               {isBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Select
+              {isBusy ? 'Selecting…' : 'Select'}
             </Button>
             <Button
               size="sm"
@@ -141,10 +143,11 @@ export function ModelRoleSection({
   onInstall,
   onRemove,
   disabled,
-  busyTag,
+  busyTags,
 }: ModelRoleSectionProps) {
   const selectedTag = status.selected[role];
   const isMissing = status.missing[role];
+  const isReinstalling = busyTags?.has(selectedTag) ?? false;
 
   return (
     <Card>
@@ -167,9 +170,9 @@ export function ModelRoleSection({
               <Button
                 size="sm"
                 onClick={() => onInstall(selectedTag)}
-                disabled={disabled || busyTag === selectedTag}
+                disabled={disabled || isReinstalling}
               >
-                {busyTag === selectedTag && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {isReinstalling && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Re-install {selectedTag}
               </Button>
             </AlertDescription>
@@ -183,7 +186,7 @@ export function ModelRoleSection({
             role={role}
             status={status}
             disabled={disabled}
-            busyTag={busyTag}
+            busyTags={busyTags}
             onSelect={onSelect}
             onInstall={onInstall}
             onRemove={onRemove}
