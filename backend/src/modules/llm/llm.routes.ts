@@ -17,19 +17,58 @@ const updateSettingsSchema = z.object({
 
 const pullSchema = z.object({ tag: z.string().min(1).max(200) });
 
+/**
+ * Where Ollama keeps its blobs on a systemd install. Deliberately not the
+ * app's STORAGE_PATH: the two may share a filesystem on any given box, but
+ * nothing guarantees it, and measuring the wrong volume both false-refuses
+ * viable pulls and waves through ones that will die at 90%.
+ */
+const DEFAULT_OLLAMA_MODELS_PATH = '/usr/share/ollama/.ollama/models';
+
+/**
+ * True when OLLAMA_HOST points at another machine. Its disk is not ours to
+ * measure, so no local statfs could say anything useful and the pre-check has
+ * to stand down rather than guess.
+ */
+function ollamaIsRemote(): boolean {
+  try {
+    // URL keeps IPv6 literals bracketed — `[::1]` — so strip those to compare.
+    const hostname = new URL(config.OLLAMA_HOST).hostname.replace(/^\[|\]$/g, '');
+    return !['localhost', '127.0.0.1', '::1', '0.0.0.0', ''].includes(hostname);
+  } catch {
+    // Unparseable host: assume local and let the check run. A wrong skip is
+    // worse than a wrong measurement — the latter still fails loudly.
+    return false;
+  }
+}
+
+/** Free bytes on the filesystem Ollama will write the blobs to, or null when
+ *  none of the candidates can be measured. `/` is the last resort: the models
+ *  directory does not exist until the first pull creates it. */
+async function ollamaFreeBytes(): Promise<number | null> {
+  const configured = process.env.OLLAMA_MODELS?.trim();
+  for (const path of [configured || DEFAULT_OLLAMA_MODELS_PATH, '/']) {
+    try {
+      const stats = await statfs(path);
+      return stats.bavail * stats.bsize;
+    } catch {
+      // Not there — fall through to the next candidate.
+    }
+  }
+  return null;
+}
+
 /** Refuse a pull we can already tell will not fit, rather than dying at 90%. */
 async function assertDiskSpaceFor(tag: string): Promise<void> {
   const wanted = normalizeTag(tag);
   const entry = CATALOG.find((m) => normalizeTag(m.tag) === wanted);
   if (!entry) return; // unknown tag from the advanced field — size unknowable
 
-  let freeBytes: number;
-  try {
-    const stats = await statfs(config.STORAGE_PATH);
-    freeBytes = stats.bavail * stats.bsize;
-  } catch {
-    return; // a statfs failure must not block a pull that might well succeed
-  }
+  if (ollamaIsRemote()) return; // that machine's disk is invisible from here
+
+  const freeBytes = await ollamaFreeBytes();
+  // A statfs failure must not block a pull that might well succeed.
+  if (freeBytes === null) return;
 
   if (freeBytes < entry.downloadBytes * 1.1) {
     throw Errors.validation(

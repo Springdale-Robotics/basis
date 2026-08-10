@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { inArray } from 'drizzle-orm';
 import { db } from '../../src/config/database.js';
+import { config } from '../../src/config/index.js';
 import { systemSettings } from '../../src/db/schema/index.js';
 import { setupRouteTest, type RouteTestContext, type TestUser } from '../helpers/route-harness.js';
 
@@ -265,6 +266,41 @@ describe('POST /api/v1/llm/models/pull', () => {
     // still return 400, since the throw still propagates before the route
     // handler's return) is actually caught.
     expect(pullModel).not.toHaveBeenCalled();
+  });
+
+  it('skips the disk pre-check entirely when Ollama is on another machine', async () => {
+    // OLLAMA_HOST is env-configurable per the spec. When it points off-box we
+    // cannot see that machine's disk, so measuring a local filesystem would
+    // refuse a perfectly viable pull based on a volume the blobs never touch.
+    const originalHost = config.OLLAMA_HOST;
+    config.OLLAMA_HOST = 'http://gpu-box.lan:11434';
+    vi.mocked(statfs).mockClear();
+
+    try {
+      const res = await admin.fetch('/api/v1/llm/models/pull', {
+        method: 'POST',
+        body: JSON.stringify({ tag: 'qwen2.5vl:7b' }),
+      });
+      expect(res.status).toBe(200);
+      expect(statfs).not.toHaveBeenCalled();
+    } finally {
+      config.OLLAMA_HOST = originalHost;
+    }
+  });
+
+  it('still runs the pre-check for a loopback Ollama', async () => {
+    // The other half of the skip: a local Ollama writes to a disk we can
+    // measure, so the guard must stay active there.
+    expect(config.OLLAMA_HOST).toMatch(/localhost|127\.0\.0\.1/);
+    vi.mocked(statfs).mockResolvedValueOnce({ bavail: 1, bsize: 1 } as Awaited<
+      ReturnType<typeof statfs>
+    >);
+
+    const res = await admin.fetch('/api/v1/llm/models/pull', {
+      method: 'POST',
+      body: JSON.stringify({ tag: 'qwen2.5vl:7b' }),
+    });
+    expect(res.status).toBe(400);
   });
 
   it('does not block a pull for a tag outside the curated catalog', async () => {
