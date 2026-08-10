@@ -457,8 +457,12 @@ async function probe(cmd: string, args: string[]): Promise<string | null> {
 }
 
 async function detectDriverState(hasNvidiaSmi: boolean, cardPresent: boolean): Promise<DriverState> {
-  if (!cardPresent) return 'not-applicable';
+  // A working nvidia-smi is proof of a card on its own. Checking cardPresent
+  // first would report 'not-applicable' on any machine where lspci is absent
+  // (minimal images often ship nvidia-smi without pciutils) — a profile that
+  // contradicts its own populated `gpu` field.
   if (hasNvidiaSmi) return 'ok';
+  if (!cardPresent) return 'not-applicable';
   const modules = await readFile('/proc/modules', 'utf8').catch(() => '');
   return /^nouveau /m.test(modules) ? 'nouveau' : 'missing';
 }
@@ -466,7 +470,10 @@ async function detectDriverState(hasNvidiaSmi: boolean, cardPresent: boolean): P
 let cached: { at: number; profile: HardwareProfile } | null = null;
 
 export async function detectHardware(): Promise<HardwareProfile> {
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.profile;
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    const p = cached.profile;
+    return { ...p, gpu: p.gpu ? { ...p.gpu } : null };
+  }
 
   const [smiOut, lspciOut, meminfo, cpuinfo] = await Promise.all([
     probe('nvidia-smi', [
@@ -484,7 +491,7 @@ export async function detectHardware(): Promise<HardwareProfile> {
   const profile: HardwareProfile = {
     gpu,
     gpuNameFromPci: fromPci?.name ?? null,
-    driverState: await detectDriverState(gpu !== null, fromPci !== null),
+    driverState: await detectDriverState(gpu !== null, gpu !== null || fromPci !== null),
     ramTotalMb: Math.floor(totalmem() / 1024 / 1024),
     ramAvailableMb: parseMemAvailable(meminfo) || Math.floor(totalmem() / 1024 / 1024),
     cpuCores: cpus().length,
@@ -493,7 +500,10 @@ export async function detectHardware(): Promise<HardwareProfile> {
 
   logger.debug({ profile }, 'Detected LLM hardware');
   cached = { at: Date.now(), profile };
-  return profile;
+  // Hand out a copy: the cached object lives for 60s, and a caller that mutated
+  // it — annotating a recommendation, decrementing vramFreeMb — would corrupt
+  // every other caller's view for the rest of the TTL.
+  return { ...profile, gpu: profile.gpu ? { ...profile.gpu } : null };
 }
 
 /** Test seam — clears the cache so a test can vary the environment. */
@@ -508,6 +518,8 @@ Run: `cd backend && npx vitest run test/llm/llm-hardware.test.ts`
 Expected: PASS, 6 tests.
 
 If `parseMemAvailable` returns 6122 rather than 6123, adjust the *test* to the real floor-division result — the fixture is the source of truth, not the expectation I wrote.
+
+**Also add a mocked-`execFile` test covering `detectHardware`'s four driver-state branches** — working driver, card with `nouveau`, card with nothing loaded, and no card — plus one asserting that mutating a returned profile does not affect the next call. Mock `child_process` and `fs/promises` rather than invoking the real commands; the constraint is that tests never shell out, not that `detectHardware` goes untested. These branches are the module's whole point, and the parser tests do not touch them.
 
 - [ ] **Step 6: Commit**
 
