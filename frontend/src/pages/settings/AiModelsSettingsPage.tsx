@@ -390,6 +390,24 @@ export function AiModelsSettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The advanced field is cleared by the socket's terminal event, so a socket
+  // that drops mid-pull would leave it disabled with nothing to re-enable it —
+  // the catalog rows have the poll reaper above as their backstop, this path
+  // had none. Same timeout, same "we just lost visibility" wording: the pull
+  // itself carries on server-side either way.
+  useEffect(() => {
+    if (!advancedPullTag) return;
+    const tag = advancedPullTag;
+    const timer = setTimeout(() => {
+      setAdvancedPullTag(null);
+      toast({
+        title: 'Still installing',
+        description: `${tag} may still be downloading, or it may have failed. Try again if it doesn't appear shortly.`,
+      });
+    }, INSTALL_POLL_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [advancedPullTag]);
+
   const handleCancelPull = (pullId: string) => {
     if (socketRef.current) cancelPull(socketRef.current, pullId);
   };
