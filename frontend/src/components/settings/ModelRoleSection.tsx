@@ -39,8 +39,12 @@ const FIT_BADGE: Record<
   },
 };
 
-function FitBadge({ fit }: { fit: FitVerdict }) {
-  const { variant, label, className } = FIT_BADGE[fit];
+function FitBadge({ fit }: { fit?: FitVerdict }) {
+  // No verdict means the tag isn't in the catalog, so there is no size on file
+  // to judge it against. Say that rather than guessing.
+  const { variant, label, className } = fit
+    ? FIT_BADGE[fit]
+    : { variant: 'outline' as const, label: 'Fit unknown — not in the catalog', className: undefined };
   return (
     <Badge variant={variant} className={cn('whitespace-normal font-normal', className)}>
       {label}
@@ -88,11 +92,31 @@ export function PullProgressRow({
   );
 }
 
+/**
+ * What one row needs to render. A catalog entry supplies all of it; a tag
+ * pulled through the advanced field supplies only its name — there is no size,
+ * no blurb and no fit verdict on file for a tag outside the catalog.
+ */
+export interface ModelRowData {
+  tag: string;
+  label: string;
+  fit?: FitVerdict;
+  downloadBytes?: number;
+  vramMb?: number;
+  notes?: string;
+}
+
 export interface ModelRoleSectionProps {
   role: ModelRole;
   title: string;
   description: string;
   models: CatalogEntry[];
+  /** Installed tags with no catalog row — pulled through the advanced field,
+   *  possibly in an earlier session. Rendered after the catalog so they can
+   *  actually be selected; without a row there is no control anywhere that
+   *  would make such a pull usable. Shown under both roles, since an
+   *  arbitrary tag's role cannot be inferred from its name. */
+  extraTags?: string[];
   status: LlmStatus;
   /** Select an already-installed model for this role. */
   onSelect: (tag: string) => void;
@@ -126,7 +150,7 @@ function ModelRow({
   onRemove,
   onCancelPull,
 }: {
-  model: CatalogEntry;
+  model: ModelRowData;
   role: ModelRole;
   status: LlmStatus;
   disabled?: boolean;
@@ -150,10 +174,12 @@ function ModelRow({
           <span className="text-sm font-medium">{model.label}</span>
           <FitBadge fit={model.fit} />
         </div>
-        <p className="text-xs text-muted-foreground">
-          {formatFileSize(model.downloadBytes)} download · {formatGb(model.vramMb)} VRAM
-        </p>
-        <p className="text-xs text-muted-foreground">{model.notes}</p>
+        {model.downloadBytes !== undefined && model.vramMb !== undefined && (
+          <p className="text-xs text-muted-foreground">
+            {formatFileSize(model.downloadBytes)} download · {formatGb(model.vramMb)} VRAM
+          </p>
+        )}
+        {model.notes && <p className="text-xs text-muted-foreground">{model.notes}</p>}
       </div>
       {progress ? (
         <div className="w-full shrink-0 sm:w-64">
@@ -203,6 +229,7 @@ export function ModelRoleSection({
   title,
   description,
   models,
+  extraTags,
   status,
   onSelect,
   onInstall,
@@ -270,6 +297,29 @@ export function ModelRoleSection({
             onCancelPull={onCancelPull}
           />
         ))}
+
+        {extraTags && extraTags.length > 0 && (
+          <>
+            <p className="pt-1 text-xs font-medium text-muted-foreground">
+              Also installed on this server
+            </p>
+            {extraTags.map((tag) => (
+              <ModelRow
+                key={tag}
+                model={{ tag, label: tag }}
+                role={role}
+                status={status}
+                disabled={disabled}
+                busyTags={busyTags}
+                pullProgress={pullProgress}
+                onSelect={onSelect}
+                onInstall={onInstall}
+                onRemove={onRemove}
+                onCancelPull={onCancelPull}
+              />
+            ))}
+          </>
+        )}
       </CardContent>
     </Card>
   );

@@ -17,6 +17,7 @@ import {
   connectLlmSocket,
   cancelPull,
   isTagInstalled,
+  normalizeTag,
   type HardwareProfile,
   type LlmStatus,
   type ModelRole,
@@ -440,6 +441,15 @@ export function AiModelsSettingsPage() {
   const visionModels = catalog.models.filter((m) => m.role === 'vision');
   const actionsDisabled = !status.reachable;
 
+  // Tags Ollama reports that the catalog doesn't cover — pulled through the
+  // advanced field, possibly in an earlier session. Without a row of their own
+  // no control anywhere can select them, so the pull only consumes disk. The
+  // role of an arbitrary tag can't be inferred from its name, so they appear
+  // under both sections and the admin picks.
+  const uncataloguedTags = status.installed.filter(
+    (tag) => !catalog.models.some((m) => normalizeTag(m.tag) === normalizeTag(tag))
+  );
+
   return (
     <div className="space-y-6">
       <HardwareSummaryCard hw={hardware} />
@@ -453,6 +463,7 @@ export function AiModelsSettingsPage() {
         title="Receipt & text understanding"
         description="Parses receipt text into line items — prices, quantities, store names."
         models={textModels}
+        extraTags={uncataloguedTags}
         status={status}
         disabled={actionsDisabled}
         busyTags={busyTags}
@@ -468,6 +479,7 @@ export function AiModelsSettingsPage() {
         title="Image understanding"
         description="Reads photos — recipes, handwritten lists, receipts you snap instead of scan."
         models={visionModels}
+        extraTags={uncataloguedTags}
         status={status}
         disabled={actionsDisabled}
         busyTags={busyTags}
@@ -504,7 +516,8 @@ export function AiModelsSettingsPage() {
                   Fit can&apos;t be predicted for a tag outside the catalog above — there&apos;s no
                   size on file for it. If it&apos;s too large for this machine, the pull will
                   succeed but the model will simply fail to load. Only pull a tag you already know
-                  fits.
+                  fits. Once it&apos;s pulled it appears under &ldquo;Also installed on this
+                  server&rdquo; in both sections above, ready to select for either role.
                 </AlertDescription>
               </Alert>
 
