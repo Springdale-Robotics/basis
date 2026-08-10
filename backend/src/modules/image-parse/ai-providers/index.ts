@@ -3,6 +3,7 @@
 import { config } from '../../../config/index.js';
 import { logger } from '../../../lib/logger.js';
 import { isReachable } from '../../llm/ollama-client.js';
+import { getVisionModel } from '../../llm/llm-settings.js';
 
 export interface VisionResult {
   rawText: string;
@@ -169,7 +170,23 @@ export async function getVisionProviderStatus(): Promise<VisionProviderStatus> {
     };
   }
 
-  // Fallback for unknown provider (shouldn't happen)
+  if (provider.name === 'ollama') {
+    return {
+      available: true,
+      name: provider.name,
+      // Read from settings rather than provider.getModel(). The auto path
+      // above gates the Ollama backstop on isReachable() rather than
+      // isAvailable(), so resolveModel() has never run on this instance and
+      // getModel() would still be echoing the OLLAMA_VLM_MODEL env default —
+      // reporting llava:7b on a box where an admin selected qwen2.5vl:7b.
+      model: await getVisionModel(),
+      expectedProcessingMs: 150000, // Default CPU estimate
+    };
+  }
+
+  // Fallback for a provider with no branch of its own above. Unreachable for
+  // the three that exist today; kept so adding a fourth degrades to a vague
+  // status rather than to nothing.
   return {
     available: true,
     name: provider.name,
