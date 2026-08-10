@@ -18,9 +18,11 @@
 #   3. (Optional) systemd unit installation — for production deployments that
 #      want auto-start. Disabled by default; pass --systemd to opt in.
 #   4. Permissions on the data directory.
-#   5. GPU driver + Ollama — auto-installed when a supported NVIDIA GPU is
-#      present. Never reboots; reports when one is required. Opt out with
-#      --no-gpu.
+#   5. NVIDIA driver — auto-installed when a supported GPU is present. Never
+#      reboots; reports when one is required. Opt out with --no-gpu.
+#   6. Ollama — always installed. It is what actually runs the models, so a
+#      CPU-only box needs it just as much as a GPU one; --no-gpu skips the
+#      driver work above, not this.
 #
 # What it does NOT do:
 #   - Install Docker, Node, or other base dependencies — see the project's
@@ -118,15 +120,21 @@ step_data_dir() {
   ok "Data directory owned by $INSTALL_USER"
 }
 
-# ─── GPU + Ollama ─────────────────────────────────────────────────────────
+# ─── GPU driver ───────────────────────────────────────────────────────────
 #
 # Auto-installs when a supported GPU is present. Rationale for doing this at
 # install time rather than from the web UI: the driver swap needs a reboot of
 # the very box that serves the UI, and during a first install a reboot is
 # expected and cheap. Opt out with --no-gpu.
+#
+# Every early return below is about driver work only. Ollama is installed by
+# step_ollama regardless — it used to live at the bottom of this function,
+# where all three of these returns skipped straight past it and left a
+# CPU-only box (the common self-hosted case) with no inference runtime at all
+# under a message claiming AI features would work.
 step_gpu() {
   if [[ $ENABLE_GPU -eq 0 ]]; then
-    info "Skipping GPU setup (--no-gpu)."
+    info "Skipping NVIDIA driver setup (--no-gpu)."
     return
   fi
 
@@ -135,7 +143,9 @@ step_gpu() {
   local card
   card="$(lspci 2>/dev/null | grep -iE 'vga|3d controller' | grep -i nvidia || true)"
   if [[ -z "$card" ]]; then
-    info "No NVIDIA GPU detected — AI features will run on CPU."
+    info "No NVIDIA GPU detected — nothing to install here. Models will run on"
+    info "the CPU: workable for the smaller ones, minutes per scan rather than"
+    info "seconds."
     return
   fi
 
@@ -166,12 +176,23 @@ step_gpu() {
     fi
     NEEDS_REBOOT=1
   fi
+}
 
+# ─── Ollama ───────────────────────────────────────────────────────────────
+#
+# Unconditional, and deliberately not part of step_gpu: Ollama is the thing
+# that actually runs the models, and a box with no GPU is exactly the case
+# where having it preinstalled matters most. --no-gpu opts out of the driver
+# work, not out of inference.
+step_ollama() {
+  log "Ollama"
   if command -v ollama >/dev/null 2>&1; then
     ok "Ollama already installed."
   else
     info "Installing Ollama..."
-    if [[ $DRY_RUN -eq 0 ]]; then
+    if [[ $DRY_RUN -eq 1 ]]; then
+      echo "    (dry-run) curl -fsSL https://ollama.com/install.sh | sh"
+    else
       curl -fsSL https://ollama.com/install.sh | sh || {
         warn "Ollama install failed. Install it later from Settings → AI models."
         return
@@ -229,13 +250,15 @@ main() {
   log "Target user:    $INSTALL_USER"
   log "Data directory: $INSTALL_DATA_DIR"
   [[ $ENABLE_SYSTEMD -eq 1 ]] && log "systemd unit:   enabled" || log "systemd unit:   skipped (pass --systemd to opt in)"
-  [[ $ENABLE_GPU -eq 1 ]] && log "GPU setup:      enabled" || log "GPU setup:      skipped (--no-gpu)"
+  [[ $ENABLE_GPU -eq 1 ]] && log "NVIDIA driver:  enabled" || log "NVIDIA driver:  skipped (--no-gpu)"
+  log "Ollama:         always installed"
   [[ $DRY_RUN -eq 1 ]] && warn "DRY RUN — no changes will be made"
   echo
 
   step_tailscale_operator
   step_data_dir
   step_gpu
+  step_ollama
   step_systemd_unit
 
   echo
