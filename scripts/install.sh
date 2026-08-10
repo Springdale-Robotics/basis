@@ -141,8 +141,16 @@ step_gpu() {
 
   ok "NVIDIA GPU detected: ${card#*: }"
 
-  if command -v nvidia-smi >/dev/null 2>&1; then
+  # Test nvidia-smi's exit status, not merely its presence. dpkg unpacks the
+  # binary the moment the driver package installs, but the kernel module only
+  # loads after a reboot — so `command -v` succeeds during the pre-reboot
+  # window and would report a non-functional driver as active, swallowing the
+  # reboot reminder on any re-run before that reboot happens.
+  if nvidia-smi >/dev/null 2>&1; then
     ok "Proprietary driver already active."
+  elif command -v nvidia-smi >/dev/null 2>&1; then
+    warn "Driver is installed but not loaded yet — the reboot is still pending."
+    NEEDS_REBOOT=1
   elif ! command -v ubuntu-drivers >/dev/null 2>&1; then
     warn "A GPU is present but this is not an Ubuntu system."
     warn "Install the NVIDIA driver with your distribution's tooling, then re-run."
