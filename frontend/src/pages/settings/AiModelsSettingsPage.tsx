@@ -1,20 +1,36 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Cpu, Download, MemoryStick, MonitorX } from 'lucide-react';
+import type { Socket } from 'socket.io-client';
+import { AlertTriangle, ChevronDown, Cpu, Download, MemoryStick, MonitorX } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { GuidedInstallDialog } from '@/components/settings/GuidedInstallDialog';
-import { ModelRoleSection } from '@/components/settings/ModelRoleSection';
+import { ModelRoleSection, PullProgressRow } from '@/components/settings/ModelRoleSection';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
-import { llmApi, type HardwareProfile, type LlmStatus, type ModelRole } from '@/api/llm';
+import {
+  llmApi,
+  connectLlmSocket,
+  cancelPull,
+  type HardwareProfile,
+  type LlmStatus,
+  type ModelRole,
+  type PullState,
+} from '@/api/llm';
 import { toast } from '@/hooks/useToast';
 import { getErrorMessage } from '@/lib/api-error';
+import { cn } from '@/lib/utils';
 
 /** How long to keep polling `status` after an install click before giving up
  *  on auto-selecting and telling the user it's still going in the background.
- *  Task 12 replaces this poll with real progress over the /llm socket. */
+ *  Kept as a last-resort fallback for the unlikely case a pull's terminal
+ *  event never arrives (e.g. the socket was down the whole time) — the
+ *  normal path now resolves immediately off `pull:progress` over the /llm
+ *  socket instead of waiting on this timeout. */
 const INSTALL_POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** MB → a rounded "N GB" string, dropping a trailing ".0". */
@@ -180,6 +196,21 @@ export function AiModelsSettingsPage() {
 
   const [installing, setInstalling] = useState<Map<string, InstallEntry>>(new Map());
   const [removeTarget, setRemoveTarget] = useState<{ tag: string; role: ModelRole } | null>(null);
+  // Live pull progress from the /llm socket, keyed by tag (matches `installing`
+  // and the catalog). Holds only pulls that are currently 'running' — terminal
+  // events remove their entry once handled (see the socket effect below), so a
+  // row's presence here is exactly "show the progress bar, not the button."
+  const [pullProgress, setPullProgress] = useState<Map<string, PullState>>(new Map());
+  const socketRef = useRef<Socket | null>(null);
+  // Advanced field: the tag currently locked in as pulling, if any. Cleared
+  // by the socket effect once that tag's pull reaches a terminal state.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedTag, setAdvancedTag] = useState('');
+  const [advancedPullTag, setAdvancedPullTag] = useState<string | null>(null);
+  const advancedPullTagRef = useRef<string | null>(null);
+  useEffect(() => {
+    advancedPullTagRef.current = advancedPullTag;
+  }, [advancedPullTag]);
 
   const { data: hardware, isLoading: hardwareLoading } = useQuery({
     queryKey: ['llm', 'hardware'],
@@ -194,9 +225,9 @@ export function AiModelsSettingsPage() {
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['llm', 'status'],
     queryFn: llmApi.getStatus,
-    // Poll while any install is in flight so we notice each model land and
-    // can auto-select it — the only "progress" this task builds; Task 12
-    // swaps this for the real thing over the /llm socket.
+    // The socket effect below invalidates this query the instant a pull
+    // reports 'done', so this poll rarely does the work in practice — it's
+    // the fallback for a socket that never delivers a terminal event.
     refetchInterval: installing.size > 0 ? 2000 : false,
   });
 
@@ -292,6 +323,78 @@ export function AiModelsSettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, installing]);
 
+  // Live pull progress over the /llm socket namespace — same connection
+  // pattern as the /install namespace used by the guided-install terminal
+  // (PtyTerminal / GuidedInstallDialog): session cookie carries auth, no
+  // token plumbing. On connect the server replays any pull still running,
+  // so a refresh mid-download picks progress back up instead of looking
+  // idle. Connects once per mount and disconnects on unmount — a settings
+  // page users visit and leave repeatedly shouldn't leak sockets.
+  useEffect(() => {
+    const socket = connectLlmSocket();
+    socketRef.current = socket;
+
+    socket.on('pull:progress', (state: PullState) => {
+      setPullProgress((prev) => {
+        const next = new Map(prev);
+        if (state.state === 'running') {
+          next.set(state.tag, state);
+        } else {
+          next.delete(state.tag);
+        }
+        return next;
+      });
+
+      if (state.state === 'failed' || state.state === 'cancelled') {
+        // A real signal, not a guess: clear the tag from `installing`
+        // immediately instead of waiting on the timeout, and show Ollama's
+        // own message verbatim — it distinguishes disk-full from
+        // network-refused, which a generic "pull failed" would not.
+        setInstalling((prev) => {
+          if (!prev.has(state.tag)) return prev;
+          const next = new Map(prev);
+          next.delete(state.tag);
+          return next;
+        });
+        toast({
+          title: state.state === 'failed' ? `${state.tag} failed to install` : 'Install cancelled',
+          description:
+            state.state === 'failed'
+              ? (state.error ?? 'The pull ended without a specific error.')
+              : `${state.tag} was cancelled.`,
+          variant: state.state === 'failed' ? 'destructive' : undefined,
+        });
+      }
+
+      if (state.state === 'done') {
+        queryClient.invalidateQueries({ queryKey: ['llm', 'status'] });
+      }
+
+      if (state.state !== 'running' && advancedPullTagRef.current === state.tag) {
+        setAdvancedPullTag(null);
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+    };
+    // Mount-once: queryClient and toast are stable across renders. Re-running
+    // this per-render would tear down and reopen the socket constantly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleCancelPull = (pullId: string) => {
+    if (socketRef.current) cancelPull(socketRef.current, pullId);
+  };
+
+  const handleAdvancedPull = () => {
+    const tag = advancedTag.trim();
+    if (!tag) return;
+    setAdvancedPullTag(tag);
+    installMutation.mutate(tag, { onError: () => setAdvancedPullTag(null) });
+  };
+
   const handleInstall = (role: ModelRole, tag: string) => {
     setInstalling((prev) => {
       const next = new Map(prev);
@@ -349,6 +452,8 @@ export function AiModelsSettingsPage() {
         status={status}
         disabled={actionsDisabled}
         busyTags={busyTags}
+        pullProgress={pullProgress}
+        onCancelPull={handleCancelPull}
         onSelect={(tag) => handleSelect('text', tag)}
         onInstall={(tag) => handleInstall('text', tag)}
         onRemove={(tag) => handleRemoveRequest('text', tag)}
@@ -362,12 +467,75 @@ export function AiModelsSettingsPage() {
         status={status}
         disabled={actionsDisabled}
         busyTags={busyTags}
+        pullProgress={pullProgress}
+        onCancelPull={handleCancelPull}
         onSelect={(tag) => handleSelect('vision', tag)}
         onInstall={(tag) => handleInstall('vision', tag)}
         onRemove={(tag) => handleRemoveRequest('vision', tag)}
       />
 
       <FootprintNotice footprint={status.footprint} hw={hardware} />
+
+      <Card>
+        <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+          <CardHeader className="pb-3">
+            <CollapsibleTrigger className="flex w-full items-center justify-between text-left">
+              <div>
+                <CardTitle className="text-base">Advanced</CardTitle>
+                <CardDescription>Pull any Ollama tag, not just the catalog above.</CardDescription>
+              </div>
+              <ChevronDown
+                className={cn(
+                  'h-5 w-5 shrink-0 text-muted-foreground transition-transform',
+                  advancedOpen && 'rotate-180'
+                )}
+              />
+            </CollapsibleTrigger>
+          </CardHeader>
+          <CollapsibleContent>
+            <CardContent className="space-y-3 pt-0">
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>
+                  Fit can&apos;t be predicted for a tag outside the catalog above — there&apos;s no
+                  size on file for it. If it&apos;s too large for this machine, the pull will
+                  succeed but the model will simply fail to load. Only pull a tag you already know
+                  fits.
+                </AlertDescription>
+              </Alert>
+
+              {advancedPullTag && pullProgress.get(advancedPullTag) ? (
+                <div className="max-w-sm space-y-1.5">
+                  <p className="text-sm font-medium">{advancedPullTag}</p>
+                  <PullProgressRow
+                    progress={pullProgress.get(advancedPullTag)!}
+                    onCancel={handleCancelPull}
+                  />
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <div className="flex-1 space-y-1.5">
+                    <Label htmlFor="advanced-tag">Model tag</Label>
+                    <Input
+                      id="advanced-tag"
+                      placeholder="e.g. llama3.1:8b-instruct-q4_K_M"
+                      value={advancedTag}
+                      onChange={(e) => setAdvancedTag(e.target.value)}
+                      disabled={actionsDisabled || installMutation.isPending}
+                    />
+                  </div>
+                  <Button
+                    onClick={handleAdvancedPull}
+                    disabled={actionsDisabled || !advancedTag.trim() || installMutation.isPending}
+                  >
+                    Pull
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </CollapsibleContent>
+        </Collapsible>
+      </Card>
 
       <ConfirmDialog
         open={removeTarget !== null}
