@@ -1,5 +1,5 @@
 import { db } from '../../config/database.js';
-import { inventoryItems, ingredientAliases } from '../../db/schema/index.js';
+import { inventoryItems, ingredientAliases, type InventoryItem } from '../../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
 import type { ParsedIngredient, IngredientMatch } from '../../db/schema/recipes.js';
 import { getUnitCategory } from '../../lib/unit-conversions.js';
@@ -442,19 +442,40 @@ export async function matchIngredients(
 /**
  * Match a single ingredient name against inventory items
  * Returns top suggestions
+ *
+ * `items` is an optional pre-fetched catalog. Callers that need to score many
+ * names against the same household in one request (e.g. a receipt scan with
+ * dozens of lines) should fetch the catalog once and pass it here — without
+ * it, every call re-queries the household's entire inventory.
+ *
+ * CONTRACT: when `items` is supplied, tenancy scoping becomes the caller's
+ * responsibility — this function trusts the list instead of re-querying by
+ * `householdId`. This service is shared with the recipes module, so every
+ * new caller that passes `items` MUST have fetched it scoped to the same
+ * `householdId` passed here. Violating that lets one household's items match
+ * against another household's ingredient text. Checked at runtime below
+ * rather than merely documented, since a caller getting this wrong would
+ * otherwise fail silently.
  */
 export async function matchSingleIngredient(
   name: string,
   householdId: string,
-  unit?: string
+  unit?: string,
+  items?: InventoryItem[]
 ): Promise<MatchSuggestion[]> {
-  const items = await db.query.inventoryItems.findMany({
+  if (items && !items.every((item) => item.householdId === householdId)) {
+    throw new Error(
+      'matchSingleIngredient: pre-fetched items must all belong to householdId — the caller is responsible for scoping them.'
+    );
+  }
+
+  const catalog = items ?? await db.query.inventoryItems.findMany({
     where: eq(inventoryItems.householdId, householdId),
   });
 
   const suggestions: MatchSuggestion[] = [];
 
-  for (const item of items) {
+  for (const item of catalog) {
     const { score: similarity, reason: matchReason } = calculateSimilarityWithReason(name, item.name);
 
     if (similarity >= 0.5) {

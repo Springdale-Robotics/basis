@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Plus,
@@ -20,6 +21,8 @@ import {
   Clock,
   ClipboardCheck,
   MoreVertical,
+  Receipt,
+  History,
 } from 'lucide-react';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
 import { ConfidenceBadge, type ConfidenceBand } from '@/components/inventory/ConfidenceBadge';
@@ -38,6 +41,9 @@ import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { AreaForm } from '@/components/inventory/AreaForm';
 import { ItemForm } from '@/components/inventory/ItemForm';
 import { BulkAddDialog } from '@/components/inventory/BulkAddDialog';
+import { ReceiptUploadDialog } from '@/components/inventory/ReceiptUploadDialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { receiptsApi } from '@/api/receipts';
 import { ManageStockDialog } from '@/components/inventory/ManageStockDialog';
 import { LeftoverCard } from '@/components/inventory/LeftoverCard';
 import { LeftoverForm } from '@/components/inventory/LeftoverForm';
@@ -129,6 +135,7 @@ function isItemIncomplete(item: InventoryItem): boolean {
 }
 
 export function InventoryPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { isAdvanced } = useInventoryTier();
   const { categories } = useCategories();
@@ -152,6 +159,7 @@ export function InventoryPage() {
   const [bulkEditArea, setBulkEditArea] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | undefined>();
   const [bulkAddDialogOpen, setBulkAddDialogOpen] = useState(false);
+  const [receiptDialogOpen, setReceiptDialogOpen] = useState(false);
   const [manageStockItem, setManageStockItem] = useState<InventoryItem | null>(null);
   const [leftoverFormOpen, setLeftoverFormOpen] = useState(false);
   const [editingLeftover, setEditingLeftover] = useState<Leftover | null>(null);
@@ -205,6 +213,24 @@ export function InventoryPage() {
     queryKey: ['inventory', 'low-stock'],
     queryFn: inventoryApi.getLowStockItems,
   });
+
+  // Disables "Scan Receipt" when Tesseract/Ollama aren't reachable, rather
+  // than letting every scan fail late (upload -> wait -> failed). Cheap and
+  // deliberately not live: a generous staleTime, no refetch-on-focus.
+  const { data: receiptStatus } = useQuery({
+    queryKey: ['receipts', 'status'],
+    queryFn: receiptsApi.getStatus,
+    staleTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+  const receiptScanUnavailableReason =
+    receiptStatus && !receiptStatus.available
+      ? !receiptStatus.ocrAvailable && !receiptStatus.structurerAvailable
+        ? 'Receipt scanning is unavailable: OCR and the local AI model are both unreachable.'
+        : !receiptStatus.ocrAvailable
+          ? 'Receipt scanning is unavailable: OCR is unreachable.'
+          : 'Receipt scanning is unavailable: the local AI model is unreachable.'
+      : null;
 
   const { data: confidenceData } = useQuery({
     queryKey: ['inventory', 'confidence'],
@@ -1246,6 +1272,42 @@ export function InventoryPage() {
               <Plus className="mr-2 h-4 w-4" />
               Bulk Add
             </Button>
+            {receiptScanUnavailableReason ? (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    {/* A disabled Button has pointer-events-none, so the
+                        trigger needs its own hoverable/focusable wrapper. */}
+                    <span tabIndex={0}>
+                      <Button variant="outline" size="sm" disabled className="pointer-events-none">
+                        <Receipt className="mr-2 h-4 w-4" />
+                        Scan Receipt
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{receiptScanUnavailableReason}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setReceiptDialogOpen(true)}
+              >
+                <Receipt className="mr-2 h-4 w-4" />
+                Scan Receipt
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate('/inventory/receipts')}
+            >
+              <History className="mr-2 h-4 w-4" />
+              Receipt History
+            </Button>
           </div>
         )}
       </div>
@@ -1726,6 +1788,8 @@ export function InventoryPage() {
         onSubmit={(items) => batchCreateMutation.mutate(items)}
         isSubmitting={batchCreateMutation.isPending}
       />
+
+      <ReceiptUploadDialog open={receiptDialogOpen} onOpenChange={setReceiptDialogOpen} />
 
       <ManageStockDialog
         open={!!manageStockItem}

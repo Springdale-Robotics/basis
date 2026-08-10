@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Queue, Worker, Job } from 'bullmq';
 import { redis } from '../config/redis.js';
 import { logger } from '../lib/logger.js';
@@ -90,6 +91,15 @@ export const imageParseQueue = new Queue('image-parse', {
   },
 });
 
+export const receiptQueue = new Queue('receipts', {
+  connection: redis,
+  defaultJobOptions: {
+    removeOnComplete: 50,
+    removeOnFail: 100,
+    attempts: 2,
+  },
+});
+
 export const bugReportQueue = new Queue('bug-reports', {
   connection: redis,
   defaultJobOptions: {
@@ -116,7 +126,7 @@ export interface NotificationJobData {
 }
 
 export interface CleanupJobData {
-  type: 'expired_sessions' | 'old_notifications' | 'old_audit_logs' | 'orphaned_files' | 'old_leftovers';
+  type: 'expired_sessions' | 'old_notifications' | 'old_audit_logs' | 'orphaned_files' | 'old_leftovers' | 'old_receipt_scans';
   householdId?: string;
 }
 
@@ -151,6 +161,11 @@ export interface ImageParseJobData {
 
 export interface BugReportJobData {
   reportId: string;
+}
+
+export interface ReceiptJobData {
+  scanId: string;
+  householdId: string;
 }
 
 // Initialize workers
@@ -301,7 +316,25 @@ export async function initializeWorkers(): Promise<void> {
     logger.error({ jobId: job?.id, reportId: job?.data.reportId, error }, 'Bug report delivery failed');
   });
 
-  workers = [notificationWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, mediaWorker, imageParseWorker, bugReportWorker];
+  // Receipt scan worker
+  const receiptWorker = new Worker(
+    'receipts',
+    async (job: Job<ReceiptJobData>) => {
+      const { processReceiptJob } = await import('./receipts.worker.js');
+      return processReceiptJob(job);
+    },
+    { connection: redis, concurrency: 1 }
+  );
+
+  receiptWorker.on('completed', (job) => {
+    logger.info({ jobId: job.id, scanId: job.data.scanId }, 'Receipt scan job completed');
+  });
+
+  receiptWorker.on('failed', (job, error) => {
+    logger.error({ jobId: job?.id, scanId: job?.data.scanId, error }, 'Receipt scan job failed');
+  });
+
+  workers = [notificationWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, mediaWorker, imageParseWorker, bugReportWorker, receiptWorker];
   logger.info('Background workers initialized');
 }
 
@@ -344,6 +377,16 @@ export async function scheduleRecurringJobs(): Promise<void> {
     {
       repeat: { pattern: '0 5 * * 0' }, // Every Sunday at 5 AM
       jobId: 'cleanup:old_leftovers',
+    }
+  );
+
+  // Prune receipt scan images and abandoned reviews weekly
+  await cleanupQueue.add(
+    'old_receipt_scans',
+    { type: 'old_receipt_scans' },
+    {
+      repeat: { pattern: '0 5 * * 0' }, // Every Sunday at 5 AM
+      jobId: 'cleanup:old_receipt_scans',
     }
   );
 
@@ -417,6 +460,7 @@ export async function shutdownWorkers(): Promise<void> {
   await mediaQueue.close();
   await imageParseQueue.close();
   await bugReportQueue.close();
+  await receiptQueue.close();
 
   logger.info('All workers shut down');
 }
@@ -465,6 +509,30 @@ export async function queueBugReportDelivery(reportId: string): Promise<void> {
   await bugReportQueue.add('deliver', { reportId }, {
     // jobId scoped so a re-submit of the same row replaces the previous attempt
     jobId: `bug-report-${reportId}`,
+  });
+}
+
+// Helper to queue a receipt scan parse. Pinned to a per-scan id so two rapid
+// enqueues of a freshly-created scan collapse into one job.
+export async function queueReceiptParse(data: ReceiptJobData): Promise<void> {
+  await receiptQueue.add('parse', data, {
+    // NB: bullmq >=5.66 rejects ':' in custom job ids (see queueInventoryCheck).
+    jobId: `receipt-${data.scanId}`,
+  });
+}
+
+// Helper to re-queue a receipt scan parse (the /reprocess route). Deliberately
+// NOT `queueReceiptParse`: `receiptQueue` keeps recently finished jobs around
+// (removeOnComplete: 50, removeOnFail: 100), so the original `receipt-<id>`
+// job's hash typically still exists — BullMQ's addStandardJob dedups on job
+// id existence and returns early *without enqueuing* when it finds a match
+// (see node_modules/bullmq/dist/cjs/scripts/addStandardJob-9.js,
+// handleDuplicatedJob). Reusing that id here would make reprocess a silent
+// no-op: the scan flips to 'processing' in the DB but nothing ever runs it.
+// A fresh, unique id per reprocess attempt guarantees the job actually lands.
+export async function queueReceiptReprocess(data: ReceiptJobData): Promise<void> {
+  await receiptQueue.add('parse', data, {
+    jobId: `receipt-retry-${data.scanId}-${randomUUID()}`,
   });
 }
 

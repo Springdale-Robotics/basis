@@ -30,6 +30,7 @@ import { calendarPublicRoutes } from './modules/calendars/public.routes.js';
 import { calendarAccessRoutes } from './modules/calendars/access.routes.js';
 import { recipesRoutes } from './modules/recipes/recipes.routes.js';
 import { inventoryRoutes } from './modules/inventory/inventory.routes.js';
+import receiptsRoutes from './modules/receipts/receipts.routes.js';
 import { tasksRoutes } from './modules/tasks/tasks.routes.js';
 import { filesRoutes } from './modules/files/files.routes.js';
 import { listsRoutes } from './modules/lists/lists.routes.js';
@@ -243,6 +244,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     await apiScope.register(calendarAccessRoutes, { prefix: '/api/v1/calendars' });
     await apiScope.register(recipesRoutes, { prefix: '/api/v1/recipes' });
     await apiScope.register(inventoryRoutes, { prefix: '/api/v1/inventory' });
+    await apiScope.register(receiptsRoutes, { prefix: '/api/v1/receipts' });
     await apiScope.register(tasksRoutes, { prefix: '/api/v1/tasks' });
     await apiScope.register(filesRoutes, { prefix: '/api/v1/files' });
     await apiScope.register(listsRoutes, { prefix: '/api/v1/lists' });

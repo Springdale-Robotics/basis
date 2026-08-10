@@ -71,6 +71,20 @@
       "when": 1783400000000,
       "tag": "0009_preserve_authored_content",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786000000000,
+      "tag": "0010_receipt_scanning",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786000100000,
+      "tag": "0011_receipt_link_description",
+      "breakpoints": true
     }
   ]
 }

@@ -35,6 +35,8 @@ const CookModePage = lazyPage(() => import('./pages/recipes/CookModePage'), 'Coo
 const MealPlanPage = lazyPage(() => import('./pages/recipes/MealPlanPage'), 'MealPlanPage');
 const InventoryPage = lazyPage(() => import('./pages/inventory/InventoryPage'), 'InventoryPage');
 const ShoppingListPage = lazyPage(() => import('./pages/inventory/ShoppingListPage'), 'ShoppingListPage');
+const ReceiptScanPage = lazyPage(() => import('./pages/inventory/ReceiptScanPage'), 'ReceiptScanPage');
+const ReceiptsPage = lazyPage(() => import('./pages/inventory/ReceiptsPage'), 'ReceiptsPage');
 const TasksPage = lazyPage(() => import('./pages/tasks/TasksPage'), 'TasksPage');
 const RewardsPage = lazyPage(() => import('./pages/tasks/RewardsPage'), 'RewardsPage');
 const ListsPage = lazyPage(() => import('./pages/lists/ListsPage'), 'ListsPage');
@@ -91,6 +93,8 @@ export function App() {
 
                   {/* Inventory */}
                   <Route path="inventory" element={<InventoryPage />} />
+                  <Route path="inventory/receipts" element={<ReceiptsPage />} />
+                  <Route path="inventory/receipts/:id" element={<ReceiptScanPage />} />
                   <Route path="shopping-list" element={<ShoppingListPage />} />
 
                   {/* Tasks */}
