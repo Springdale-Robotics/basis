@@ -1,19 +1,8 @@
 import type { Server } from 'socket.io';
 import * as pty from 'node-pty';
-import { db } from '../../config/database.js';
-import { sessions, users } from '../../db/schema/index.js';
-import { eq, and, gt } from 'drizzle-orm';
 import { logger } from '../../lib/logger.js';
+import { requireAdminSocket } from '../../websocket/require-admin-socket.js';
 import { buildArgv, runPostCheck } from './installer-commands.js';
-
-function parseCookie(header: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const pair of header.split(';')) {
-    const [k, ...v] = pair.trim().split('=');
-    if (k) out[k] = decodeURIComponent(v.join('='));
-  }
-  return out;
-}
 
 /**
  * socket.io namespace for "guided install" terminals.
@@ -42,33 +31,7 @@ function parseCookie(header: string): Record<string, string> {
 export function registerInstallNamespace(io: Server): void {
   const ns = io.of('/install');
 
-  ns.use(async (socket, next) => {
-    try {
-      const cookies = parseCookie(socket.handshake.headers.cookie ?? '');
-      const sessionId = cookies['session'];
-      if (!sessionId) return next(new Error('Authentication required'));
-
-      const now = new Date();
-      const result = await db
-        .select({ session: sessions, user: users })
-        .from(sessions)
-        .innerJoin(users, eq(sessions.userId, users.id))
-        .where(and(eq(sessions.id, sessionId), gt(sessions.expiresAt, now)))
-        .limit(1);
-
-      if (result.length === 0) return next(new Error('Session expired'));
-      const { user } = result[0];
-      if (user.role !== 'admin') return next(new Error('Admin role required'));
-
-      // Stash on the socket for later logging.
-      (socket as any).userId = user.id;
-      (socket as any).householdId = user.householdId;
-      next();
-    } catch (err) {
-      logger.error({ err }, '/install namespace auth failed');
-      next(new Error('Authentication failed'));
-    }
-  });
+  requireAdminSocket(ns, '/install');
 
   ns.on('connection', (socket) => {
     const log = logger.child({
