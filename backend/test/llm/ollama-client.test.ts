@@ -47,6 +47,14 @@ describe('listInstalledTags', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
     expect(await listInstalledTags()).toEqual([]);
   });
+
+  it('returns an empty list when the body is not valid JSON', async () => {
+    // The third never-throw path: HTTP 200 but res.json() rejects. The settings
+    // page calls this on load, so a throw here breaks the page rather than
+    // showing the install action.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>nope</html>', { status: 200 })));
+    expect(await listInstalledTags()).toEqual([]);
+  });
 });
 
 describe('pullModel', () => {
