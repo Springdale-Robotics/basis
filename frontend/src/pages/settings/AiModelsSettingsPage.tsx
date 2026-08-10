@@ -1,12 +1,21 @@
-import { useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Cpu, Download, MemoryStick, MonitorX } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { GuidedInstallDialog } from '@/components/settings/GuidedInstallDialog';
-import { llmApi, type HardwareProfile } from '@/api/llm';
+import { ModelRoleSection } from '@/components/settings/ModelRoleSection';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { llmApi, type HardwareProfile, type LlmStatus, type ModelRole } from '@/api/llm';
+import { toast } from '@/hooks/useToast';
+import { getErrorMessage } from '@/lib/api-error';
+
+/** How long to keep polling `status` after an install click before giving up
+ *  on auto-selecting and telling the user it's still going in the background.
+ *  Task 12 replaces this poll with real progress over the /llm socket. */
+const INSTALL_POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** MB → a rounded "N GB" string, dropping a trailing ".0". */
 function formatGb(mb: number): string {
@@ -128,24 +137,169 @@ function OllamaBlockerCard({ onSuccess }: { onSuccess: () => void }) {
   );
 }
 
+/**
+ * Two models that each fit alone may not fit together — this is the entire
+ * reason the backend computes footprint jointly rather than per-model. When
+ * they don't fit, Ollama swaps between them on demand rather than failing,
+ * but that swap costs ~10s on first use after idle, so it's worth spelling
+ * out with the real numbers rather than a generic warning.
+ */
+function describeFootprint(footprint: LlmStatus['footprint'], hw: HardwareProfile): string | null {
+  if (!footprint.exceedsVram || !hw.gpu) return null;
+  const needed = formatGb(footprint.totalVramMb);
+  const have = formatGb(hw.gpu.vramTotalMb);
+  return (
+    `Your two selections need ${needed} of VRAM together; your card has ${have}. ` +
+    `They'll work — Ollama swaps between them — but expect about 10 seconds extra ` +
+    `on the first use after idle.`
+  );
+}
+
+function FootprintNotice({ footprint, hw }: { footprint: LlmStatus['footprint']; hw: HardwareProfile }) {
+  const message = describeFootprint(footprint, hw);
+  if (!message) return null;
+
+  return (
+    <Alert>
+      <AlertTriangle className="h-4 w-4 text-warning" />
+      <AlertTitle>Your selected models won't both fit in VRAM at once</AlertTitle>
+      <AlertDescription>{message}</AlertDescription>
+    </Alert>
+  );
+}
+
 export function AiModelsSettingsPage() {
   const queryClient = useQueryClient();
+
+  const [installingTag, setInstallingTag] = useState<string | null>(null);
+  const [installingRole, setInstallingRole] = useState<ModelRole | null>(null);
+  const installStartedAtRef = useRef<number | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<{ tag: string; role: ModelRole } | null>(null);
 
   const { data: hardware, isLoading: hardwareLoading } = useQuery({
     queryKey: ['llm', 'hardware'],
     queryFn: llmApi.getHardware,
   });
 
+  const { data: catalog, isLoading: catalogLoading } = useQuery({
+    queryKey: ['llm', 'catalog'],
+    queryFn: llmApi.getCatalog,
+  });
+
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['llm', 'status'],
     queryFn: llmApi.getStatus,
+    // Poll while an install is in flight so we notice the model land and can
+    // auto-select it — the only "progress" this task builds; Task 12 swaps
+    // this for the real thing over the /llm socket.
+    refetchInterval: installingTag ? 2000 : false,
   });
 
   const invalidateStatus = () => {
     queryClient.invalidateQueries({ queryKey: ['llm', 'status'] });
   };
 
-  if (hardwareLoading || statusLoading || !hardware || !status) {
+  const selectMutation = useMutation({
+    mutationFn: ({ role, tag }: { role: ModelRole; tag: string }) =>
+      llmApi.setModels(role === 'text' ? { textModel: tag } : { visionModel: tag }),
+    onSuccess: (_data, { tag }) => {
+      invalidateStatus();
+      toast({ title: 'Model selected', description: tag });
+    },
+    onError: (err) => {
+      toast({
+        title: 'Could not select model',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const installMutation = useMutation({
+    mutationFn: (tag: string) => llmApi.pullModel(tag),
+    onError: (err, tag) => {
+      setInstallingTag(null);
+      setInstallingRole(null);
+      installStartedAtRef.current = null;
+      toast({
+        title: `Could not start installing ${tag}`,
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (tag: string) => llmApi.deleteModel(tag),
+    onSuccess: (_data, tag) => {
+      invalidateStatus();
+      setRemoveTarget(null);
+      toast({ title: 'Model removed', description: tag });
+    },
+    onError: (err) => {
+      setRemoveTarget(null);
+      toast({
+        title: 'Could not remove model',
+        description: getErrorMessage(err),
+        variant: 'destructive',
+      });
+    },
+  });
+
+  // Detect an in-flight install landing (polled via `status` above) and chain
+  // the select automatically — "one click, two operations". If it's still not
+  // installed after a long while, stop polling and say so rather than
+  // spinning forever; the pull itself keeps going on the server regardless.
+  useEffect(() => {
+    if (!installingTag || !installingRole || !status) return;
+
+    if (status.installed.includes(installingTag)) {
+      const tag = installingTag;
+      const role = installingRole;
+      setInstallingTag(null);
+      setInstallingRole(null);
+      installStartedAtRef.current = null;
+      selectMutation.mutate({ role, tag });
+      return;
+    }
+
+    const startedAt = installStartedAtRef.current;
+    if (startedAt && Date.now() - startedAt > INSTALL_POLL_TIMEOUT_MS) {
+      const tag = installingTag;
+      setInstallingTag(null);
+      setInstallingRole(null);
+      installStartedAtRef.current = null;
+      toast({
+        title: 'Still downloading',
+        description: `${tag} hasn't finished downloading yet — larger models can take a while. It's still going in the background; check back shortly.`,
+      });
+    }
+    // selectMutation is stable across renders (from useMutation); omitting it
+    // avoids re-running this effect on every mutation state change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, installingTag, installingRole]);
+
+  const handleInstall = (role: ModelRole, tag: string) => {
+    installStartedAtRef.current = Date.now();
+    setInstallingRole(role);
+    setInstallingTag(tag);
+    installMutation.mutate(tag);
+  };
+
+  const handleSelect = (role: ModelRole, tag: string) => {
+    selectMutation.mutate({ role, tag });
+  };
+
+  const handleRemoveRequest = (role: ModelRole, tag: string) => {
+    setRemoveTarget({ tag, role });
+  };
+
+  const busyTag =
+    installingTag ??
+    (selectMutation.isPending ? selectMutation.variables?.tag ?? null : null) ??
+    (removeMutation.isPending ? (removeMutation.variables as string | undefined) ?? null : null);
+
+  if (hardwareLoading || statusLoading || catalogLoading || !hardware || !status || !catalog) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-32" />
@@ -154,6 +308,10 @@ export function AiModelsSettingsPage() {
     );
   }
 
+  const textModels = catalog.models.filter((m) => m.role === 'text');
+  const visionModels = catalog.models.filter((m) => m.role === 'vision');
+  const actionsDisabled = !status.reachable;
+
   return (
     <div className="space-y-6">
       <HardwareSummaryCard hw={hardware} />
@@ -161,6 +319,53 @@ export function AiModelsSettingsPage() {
       <DriverBlockerCard hw={hardware} />
 
       {!status.reachable && <OllamaBlockerCard onSuccess={invalidateStatus} />}
+
+      <ModelRoleSection
+        role="text"
+        title="Receipt & text understanding"
+        description="Parses receipt text into line items — prices, quantities, store names."
+        models={textModels}
+        status={status}
+        disabled={actionsDisabled}
+        busyTag={busyTag}
+        onSelect={(tag) => handleSelect('text', tag)}
+        onInstall={(tag) => handleInstall('text', tag)}
+        onRemove={(tag) => handleRemoveRequest('text', tag)}
+      />
+
+      <ModelRoleSection
+        role="vision"
+        title="Image understanding"
+        description="Reads photos — recipes, handwritten lists, receipts you snap instead of scan."
+        models={visionModels}
+        status={status}
+        disabled={actionsDisabled}
+        busyTag={busyTag}
+        onSelect={(tag) => handleSelect('vision', tag)}
+        onInstall={(tag) => handleInstall('vision', tag)}
+        onRemove={(tag) => handleRemoveRequest('vision', tag)}
+      />
+
+      <FootprintNotice footprint={status.footprint} hw={hardware} />
+
+      <ConfirmDialog
+        open={removeTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setRemoveTarget(null);
+        }}
+        title="Remove this model?"
+        description={
+          removeTarget
+            ? `${removeTarget.tag} will be deleted from disk. You can reinstall it later, but that means downloading it again.`
+            : undefined
+        }
+        confirmText="Remove"
+        variant="destructive"
+        isPending={removeMutation.isPending}
+        onConfirm={() => {
+          if (removeTarget) removeMutation.mutate(removeTarget.tag);
+        }}
+      />
     </div>
   );
 }
