@@ -53,14 +53,25 @@ export async function llmRoutes(app: FastifyInstance): Promise<void> {
     const input = updateSettingsSchema.parse(request.body);
     const installed = await listInstalledTags();
 
-    for (const [role, tag] of [
-      ['text', input.textModel],
-      ['vision', input.visionModel],
-    ] as const) {
-      if (!tag) continue;
+    const requested = (
+      [
+        ['text', input.textModel],
+        ['vision', input.visionModel],
+      ] as const
+    ).filter((pair): pair is readonly ['text' | 'vision', string] => Boolean(pair[1]));
+
+    // Validate every requested tag BEFORE writing any of them. Validating and
+    // writing in the same loop pass would persist a valid text model and then
+    // reject on an invalid vision model in the same request — the caller sees
+    // a 400 while half their change silently took effect. The frontend submits
+    // both fields together, so this is the normal path, not an edge case.
+    for (const [, tag] of requested) {
       if (!installed.includes(tag)) {
         throw Errors.validation(`${tag} is not installed. Install it before selecting it.`);
       }
+    }
+
+    for (const [role, tag] of requested) {
       await setModel(role, tag);
     }
 
