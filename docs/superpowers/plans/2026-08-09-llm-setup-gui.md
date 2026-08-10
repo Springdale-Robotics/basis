@@ -1639,6 +1639,21 @@ body: JSON.stringify({
 
 Apply the same change in `backend/src/modules/image-parse/ai-providers/ollama-vision.ts`: replace its `this.model` initialisation from `config.OLLAMA_VLM_MODEL` with a `await getVisionModel()` at call time. Keep `getModel()` returning the last resolved value for the status reporting that already exists.
 
+> **`OllamaVisionProvider` must also be wired into the factory.** Review found it is
+> imported by nothing — `getVisionProvider()` in
+> `backend/src/modules/image-parse/ai-providers/index.ts` only ever returns
+> `HandwritingOcrProvider` or `VlmLlmProvider`, so the vision model slot would
+> control a class nobody instantiates. Add it to the selection logic as a real
+> backend: extend `IMAGE_PARSE_PROVIDER` to accept `'ollama-vision'`, and under
+> `'auto'` fall back to it when the vlm-llm service is unavailable. That ordering
+> matters on the production box, where vlm-llm is not deployed and its default
+> port is occupied by `basis-ingredient-parser` (see issue #70) — Ollama is the
+> only vision backend that will actually work there.
+>
+> Mirror the existing entries: an availability check before returning it (reuse
+> the llm module's `isReachable`), and a matching branch in
+> `getAllProvidersStatus` so the settings page's provider reporting stays honest.
+
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd backend && npx vitest run test/llm/consumer-wiring.test.ts test/receipts/receipt-structurer.test.ts`
