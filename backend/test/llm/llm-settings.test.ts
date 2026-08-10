@@ -43,4 +43,18 @@ describe('llm settings accessor', () => {
       .where(eq(systemSettings.key, VISION_MODEL_KEY));
     expect(rows).toHaveLength(1);
   });
+
+  it('falls back to the env default when the stored value is not a string', async () => {
+    // Called on every receipt scan — a corrupted row must degrade to the
+    // default rather than putting a non-string into the Ollama request.
+    await db.insert(systemSettings).values({ key: TEXT_MODEL_KEY, value: { oops: true } });
+    expect(await getTextModel()).toBe(config.OLLAMA_LLM_MODEL);
+  });
+
+  // A JSON `null` value was also considered, but `value` is notNull() and
+  // drizzle-orm sends a JS `null` as SQL NULL rather than a `'null'::jsonb`
+  // literal — the column constraint rejects the insert outright (23502,
+  // "null value in column value violates not-null constraint"). That's the
+  // constraint doing its job, so there is no row for the accessor to see;
+  // see the fix-report addendum for the reproduction.
 });
