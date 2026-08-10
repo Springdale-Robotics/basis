@@ -2,6 +2,7 @@
 
 import { config } from '../../../config/index.js';
 import { logger } from '../../../lib/logger.js';
+import { isReachable } from '../../llm/ollama-client.js';
 
 export interface VisionResult {
   rawText: string;
@@ -47,7 +48,12 @@ export interface AllProvidersStatus {
  * Provider selection logic:
  * - 'handwriting-ocr': Use HandwritingOCR API only
  * - 'vlm-llm': Use VLM+LLM two-stage service only
- * - 'auto' (default): Try HandwritingOCR first (if API key configured), fall back to VLM-LLM
+ * - 'ollama-vision': Use Ollama directly only
+ * - 'auto' (default): HandwritingOCR (if API key configured) -> VLM-LLM (if the
+ *   two-stage service is up) -> Ollama vision (if Ollama itself is reachable).
+ *   Ollama is the backstop: on a self-hosted install it is the piece most
+ *   likely to actually be present, even when the separate vlm-llm service
+ *   is not deployed.
  *
  * Returns null if no provider is available.
  */
@@ -98,6 +104,24 @@ export async function getVisionProvider(): Promise<VisionProvider | null> {
       }
     } catch (error) {
       logger.debug({ error }, 'VLM-LLM provider not available');
+    }
+  }
+
+  // Ollama vision provider (explicit or auto backstop). Gated on host
+  // reachability rather than the provider's own isAvailable() — that check
+  // also requires the specific selected model to already be pulled, which is
+  // too strict a bar for "is this usable as a backstop at all."
+  if (providerConfig === 'ollama-vision' || providerConfig === 'auto') {
+    try {
+      const { OllamaVisionProvider } = await import('./ollama-vision.js');
+
+      if (await isReachable()) {
+        const ollamaProvider = new OllamaVisionProvider();
+        logger.info({ provider: 'ollama-vision' }, 'Using Ollama vision provider');
+        return ollamaProvider;
+      }
+    } catch (error) {
+      logger.debug({ error }, 'Ollama vision provider not available');
     }
   }
 
@@ -228,6 +252,37 @@ export async function getAllProvidersStatus(): Promise<AllProvidersStatus> {
     };
     if (!primaryStatus) primaryStatus = vlmError;
     else fallbackStatus = vlmError;
+  }
+
+  // Check Ollama vision provider
+  try {
+    const { OllamaVisionProvider } = await import('./ollama-vision.js');
+    const ollamaProvider = new OllamaVisionProvider();
+    const available = await ollamaProvider.isAvailable();
+
+    const ollamaStatus: VisionProviderStatus = {
+      available,
+      name: 'ollama',
+      model: available ? ollamaProvider.getModel() : undefined,
+      expectedProcessingMs: 150000, // Default CPU estimate
+      error: available ? undefined : 'Ollama not reachable, or the selected model is not pulled',
+    };
+
+    if (!primaryStatus) {
+      primaryStatus = ollamaStatus;
+      if (available) activeProvider = 'ollama';
+    } else {
+      fallbackStatus = ollamaStatus;
+      if (available && !activeProvider) activeProvider = 'ollama';
+    }
+  } catch {
+    const ollamaError: VisionProviderStatus = {
+      available: false,
+      name: 'ollama',
+      error: 'Ollama vision provider module not loaded',
+    };
+    if (!primaryStatus) primaryStatus = ollamaError;
+    else fallbackStatus = ollamaError;
   }
 
   return {
