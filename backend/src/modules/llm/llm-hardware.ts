@@ -70,12 +70,21 @@ async function probe(cmd: string, args: string[]): Promise<string | null> {
   }
 }
 
-async function detectDriverState(hasNvidiaSmi: boolean, cardPresent: boolean): Promise<DriverState> {
+/**
+ * @param nvidiaSmiParsed nvidia-smi both ran and produced output we could
+ *   parse — not merely that the binary exists. dpkg unpacks it the moment the
+ *   driver package installs, while the kernel module only loads after a
+ *   reboot, so mere presence would report a non-functional driver as active.
+ */
+async function detectDriverState(
+  nvidiaSmiParsed: boolean,
+  cardPresent: boolean
+): Promise<DriverState> {
   // A working nvidia-smi is proof of a card on its own. Checking cardPresent
   // first would report 'not-applicable' on any machine where lspci is absent
   // (minimal images often ship nvidia-smi without pciutils) — a profile that
   // contradicts its own populated `gpu` field.
-  if (hasNvidiaSmi) return 'ok';
+  if (nvidiaSmiParsed) return 'ok';
   if (!cardPresent) return 'not-applicable';
   const modules = await readFile('/proc/modules', 'utf8').catch(() => '');
   return /^nouveau /m.test(modules) ? 'nouveau' : 'missing';

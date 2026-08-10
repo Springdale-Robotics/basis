@@ -239,6 +239,18 @@ describe('DELETE /api/v1/llm/models/:tag', () => {
     expect(res.status).toBe(200);
     expect(deleteModel).toHaveBeenCalledWith('qwen2.5:7b');
   });
+
+  it('answers 400, not 500, on a malformed percent-escape', async () => {
+    // `%252zz` is the input that actually reaches the handler: Fastify's
+    // router decodes route params itself, so a bare `%zz` is rejected before
+    // the route runs, but `%252zz` arrives as the literal `%2zz` and the
+    // handler's own decodeURIComponent throws URIError on it. Unhandled that
+    // is a 500 on what is plainly a bad request.
+    vi.mocked(deleteModel).mockClear();
+    const res = await admin.fetch('/api/v1/llm/models/%252zz', { method: 'DELETE' });
+    expect(res.status).toBe(400);
+    expect(deleteModel).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/v1/llm/models/pull', () => {

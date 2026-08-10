@@ -84,25 +84,40 @@ export async function pullModel(
     });
   };
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    // A chunk boundary can land mid-line, so keep the remainder buffered.
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    for (const line of lines) handleLine(line);
+      // A chunk boundary can land mid-line, so keep the remainder buffered.
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) handleLine(line);
+    }
+
+    if (buffer.trim()) handleLine(buffer);
+  } finally {
+    // Ollama reports failures in-band, so handleLine throws from inside the
+    // loop with the body still unconsumed — that holds the connection open
+    // for the life of the process, one leaked socket per failed pull.
+    // Cancelling a stream that already ended is a no-op, so this is safe on
+    // the success path too.
+    await reader.cancel().catch(() => {});
   }
-
-  if (buffer.trim()) handleLine(buffer);
 }
+
+/** Unlinking a large model's blobs takes longer than a status probe, but it
+ *  still has to be bounded — this was the one call in the module without a
+ *  timeout, so a wedged Ollama hung the delete route forever. */
+const DELETE_TIMEOUT_MS = 30_000;
 
 export async function deleteModel(tag: string): Promise<void> {
   const res = await fetch(`${config.OLLAMA_HOST}/api/delete`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: tag }),
+    signal: AbortSignal.timeout(DELETE_TIMEOUT_MS),
   });
   if (!res.ok) {
     throw new Error(`Ollama refused the delete (${res.status}): ${await res.text()}`);

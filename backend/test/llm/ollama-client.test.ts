@@ -103,6 +103,30 @@ describe('pullModel', () => {
     await expect(pullModel('nope:1b', () => {})).rejects.toThrow();
   });
 
+  it('releases the response body when the pull fails in-band', async () => {
+    // Ollama reports failures in-band, so the throw comes from inside the read
+    // loop with the body still unconsumed. Without cancelling the reader that
+    // connection stays open for the life of the process — one leaked socket
+    // per failed pull, and failed pulls are the common case on a full disk.
+    let cancelled = false;
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(JSON.stringify({ error: 'no space left on device' }) + '\n')
+        );
+        // Deliberately never closed: a real failed pull leaves the body open.
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(stream, { status: 200 })));
+
+    await expect(pullModel('x:1b', () => {})).rejects.toThrow(/no space left/);
+    expect(cancelled).toBe(true);
+  });
+
   it('handles a final line with no trailing newline', async () => {
     // Ollama's last frame often arrives unterminated; without the post-loop
     // flush the success status would be silently dropped.
@@ -138,5 +162,17 @@ describe('deleteModel', () => {
   it('throws with the server text on a non-OK status', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('model not found', { status: 404 })));
     await expect(deleteModel('nope:1b')).rejects.toThrow(/model not found/);
+  });
+
+  it('bounds the request with a timeout', async () => {
+    // This was the only call in the module without one; a wedged Ollama hung
+    // the delete route forever, and the request holding it open is an admin
+    // sitting on a spinner with no way to tell what happened.
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await deleteModel('qwen2.5:7b');
+
+    expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   });
 });
