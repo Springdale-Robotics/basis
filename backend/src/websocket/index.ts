@@ -5,6 +5,7 @@ import { logger } from '../lib/logger.js';
 import { config } from '../config/index.js';
 import { resolveSession } from '../middleware/auth.middleware.js';
 import { registerInstallNamespace } from '../modules/install/install.ws.js';
+import { registerLlmNamespace } from '../modules/llm/llm.ws.js';
 
 /** Extract a single cookie value from a Cookie header. */
 function parseCookie(header: string | undefined, name: string): string | undefined {
@@ -225,6 +226,10 @@ export function initializeWebSocket(server: HttpServer): Server {
   // Register the guided-install namespace (/install) for PTY-based installer
   // terminals. Admin-only auth lives inside the namespace setup.
   registerInstallNamespace(io);
+
+  // Register the LLM model-pull progress namespace (/llm). Admin-only auth
+  // lives inside the namespace setup, same pattern as /install.
+  registerLlmNamespace(io);
 
   // Relay events emitted from the separate worker process.
   subscribeToEmitBridge();
