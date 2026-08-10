@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Cpu, Download, MemoryStick, MonitorX } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -168,12 +168,17 @@ function FootprintNotice({ footprint, hw }: { footprint: LlmStatus['footprint'];
   );
 }
 
+/** One entry per tag currently being pulled, so two roles can install
+ *  concurrently without clobbering each other's tracking. */
+interface InstallEntry {
+  role: ModelRole;
+  startedAt: number;
+}
+
 export function AiModelsSettingsPage() {
   const queryClient = useQueryClient();
 
-  const [installingTag, setInstallingTag] = useState<string | null>(null);
-  const [installingRole, setInstallingRole] = useState<ModelRole | null>(null);
-  const installStartedAtRef = useRef<number | null>(null);
+  const [installing, setInstalling] = useState<Map<string, InstallEntry>>(new Map());
   const [removeTarget, setRemoveTarget] = useState<{ tag: string; role: ModelRole } | null>(null);
 
   const { data: hardware, isLoading: hardwareLoading } = useQuery({
@@ -189,10 +194,10 @@ export function AiModelsSettingsPage() {
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['llm', 'status'],
     queryFn: llmApi.getStatus,
-    // Poll while an install is in flight so we notice the model land and can
-    // auto-select it — the only "progress" this task builds; Task 12 swaps
-    // this for the real thing over the /llm socket.
-    refetchInterval: installingTag ? 2000 : false,
+    // Poll while any install is in flight so we notice each model land and
+    // can auto-select it — the only "progress" this task builds; Task 12
+    // swaps this for the real thing over the /llm socket.
+    refetchInterval: installing.size > 0 ? 2000 : false,
   });
 
   const invalidateStatus = () => {
@@ -218,9 +223,12 @@ export function AiModelsSettingsPage() {
   const installMutation = useMutation({
     mutationFn: (tag: string) => llmApi.pullModel(tag),
     onError: (err, tag) => {
-      setInstallingTag(null);
-      setInstallingRole(null);
-      installStartedAtRef.current = null;
+      setInstalling((prev) => {
+        if (!prev.has(tag)) return prev;
+        const next = new Map(prev);
+        next.delete(tag);
+        return next;
+      });
       toast({
         title: `Could not start installing ${tag}`,
         description: getErrorMessage(err),
@@ -246,43 +254,50 @@ export function AiModelsSettingsPage() {
     },
   });
 
-  // Detect an in-flight install landing (polled via `status` above) and chain
-  // the select automatically — "one click, two operations". If it's still not
-  // installed after a long while, stop polling and say so rather than
-  // spinning forever; the pull itself keeps going on the server regardless.
+  // Detect each in-flight install landing (polled via `status` above) and
+  // chain its select automatically — "one click, two operations", tracked
+  // per-tag so installing a text model and a vision model at once each
+  // resolve independently rather than one clobbering the other's tracking.
+  // If a given tag is still not installed after a long while, stop polling
+  // it and say so rather than spinning forever; the pull itself keeps going
+  // on the server regardless — we just lose the ability to tell.
   useEffect(() => {
-    if (!installingTag || !installingRole || !status) return;
+    if (installing.size === 0 || !status) return;
 
-    if (status.installed.includes(installingTag)) {
-      const tag = installingTag;
-      const role = installingRole;
-      setInstallingTag(null);
-      setInstallingRole(null);
-      installStartedAtRef.current = null;
-      selectMutation.mutate({ role, tag });
-      return;
+    const now = Date.now();
+    let changed = false;
+    const next = new Map(installing);
+
+    for (const [tag, entry] of installing) {
+      if (status.installed.includes(tag)) {
+        next.delete(tag);
+        changed = true;
+        selectMutation.mutate({ role: entry.role, tag });
+        continue;
+      }
+
+      if (now - entry.startedAt > INSTALL_POLL_TIMEOUT_MS) {
+        next.delete(tag);
+        changed = true;
+        toast({
+          title: 'Still installing',
+          description: `${tag} may still be downloading, or it may have failed. Try again if it doesn't appear shortly.`,
+        });
+      }
     }
 
-    const startedAt = installStartedAtRef.current;
-    if (startedAt && Date.now() - startedAt > INSTALL_POLL_TIMEOUT_MS) {
-      const tag = installingTag;
-      setInstallingTag(null);
-      setInstallingRole(null);
-      installStartedAtRef.current = null;
-      toast({
-        title: 'Still downloading',
-        description: `${tag} hasn't finished downloading yet — larger models can take a while. It's still going in the background; check back shortly.`,
-      });
-    }
+    if (changed) setInstalling(next);
     // selectMutation is stable across renders (from useMutation); omitting it
     // avoids re-running this effect on every mutation state change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, installingTag, installingRole]);
+  }, [status, installing]);
 
   const handleInstall = (role: ModelRole, tag: string) => {
-    installStartedAtRef.current = Date.now();
-    setInstallingRole(role);
-    setInstallingTag(tag);
+    setInstalling((prev) => {
+      const next = new Map(prev);
+      next.set(tag, { role, startedAt: Date.now() });
+      return next;
+    });
     installMutation.mutate(tag);
   };
 
@@ -294,10 +309,16 @@ export function AiModelsSettingsPage() {
     setRemoveTarget({ tag, role });
   };
 
-  const busyTag =
-    installingTag ??
-    (selectMutation.isPending ? selectMutation.variables?.tag ?? null : null) ??
-    (removeMutation.isPending ? (removeMutation.variables as string | undefined) ?? null : null);
+  const busyTags = useMemo(() => {
+    const tags = new Set(installing.keys());
+    if (selectMutation.isPending && selectMutation.variables) {
+      tags.add(selectMutation.variables.tag);
+    }
+    if (removeMutation.isPending && removeMutation.variables) {
+      tags.add(removeMutation.variables);
+    }
+    return tags;
+  }, [installing, selectMutation.isPending, selectMutation.variables, removeMutation.isPending, removeMutation.variables]);
 
   if (hardwareLoading || statusLoading || catalogLoading || !hardware || !status || !catalog) {
     return (
@@ -327,7 +348,7 @@ export function AiModelsSettingsPage() {
         models={textModels}
         status={status}
         disabled={actionsDisabled}
-        busyTag={busyTag}
+        busyTags={busyTags}
         onSelect={(tag) => handleSelect('text', tag)}
         onInstall={(tag) => handleInstall('text', tag)}
         onRemove={(tag) => handleRemoveRequest('text', tag)}
@@ -340,7 +361,7 @@ export function AiModelsSettingsPage() {
         models={visionModels}
         status={status}
         disabled={actionsDisabled}
-        busyTag={busyTag}
+        busyTags={busyTags}
         onSelect={(tag) => handleSelect('vision', tag)}
         onInstall={(tag) => handleInstall('vision', tag)}
         onRemove={(tag) => handleRemoveRequest('vision', tag)}
