@@ -11,9 +11,17 @@ vi.mock('../../src/modules/llm/ollama-client.js', () => ({
   deleteModel: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Wraps the real statfs so most tests hit the actual filesystem (plenty of
+// space) while the disk-space test below can force a tiny-free-space return.
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+  return { ...actual, statfs: vi.fn(actual.statfs) };
+});
+
 // Imported after the mock so per-test overrides (mockResolvedValueOnce) can
 // reach the same mock instances the routes call.
 const { isReachable, listInstalledTags } = await import('../../src/modules/llm/ollama-client.js');
+const { statfs } = await import('fs/promises');
 
 let ctx: RouteTestContext;
 let admin: TestUser;
@@ -144,5 +152,56 @@ describe('PUT /api/v1/llm/settings', () => {
     const after = await (await admin.fetch('/api/v1/llm/status')).json();
     expect(after.data.selected.text).toBe('previous-tag');
     expect(after.data.selected.vision).toBe(before.data.selected.vision);
+  });
+});
+
+describe('POST /api/v1/llm/models/pull', () => {
+  it('refuses a non-admin', async () => {
+    const res = await member.fetch('/api/v1/llm/models/pull', {
+      method: 'POST',
+      body: JSON.stringify({ tag: 'qwen2.5:3b' }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('starts a pull and returns a pullId when there is room on disk', async () => {
+    const res = await admin.fetch('/api/v1/llm/models/pull', {
+      method: 'POST',
+      body: JSON.stringify({ tag: 'qwen2.5:3b' }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(typeof body.data.pullId).toBe('string');
+    expect(body.data.pullId.length).toBeGreaterThan(0);
+  });
+
+  it('rejects a pull it can already tell will not fit, without ever calling pullModel', async () => {
+    // Free space reported as effectively zero — every catalog entry needs more.
+    vi.mocked(statfs).mockResolvedValueOnce({ bavail: 1, bsize: 1 } as Awaited<
+      ReturnType<typeof statfs>
+    >);
+
+    const res = await admin.fetch('/api/v1/llm/models/pull', {
+      method: 'POST',
+      body: JSON.stringify({ tag: 'qwen2.5vl:7b' }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error.message).toMatch(/not enough disk space/i);
+    expect(body.error.message).toMatch(/Qwen 2\.5 VL 7B/);
+  });
+
+  it('does not block a pull for a tag outside the curated catalog', async () => {
+    // The advanced free-text field lets an admin pull any tag; size is
+    // unknowable for those, so the pre-check must not refuse them.
+    vi.mocked(statfs).mockResolvedValueOnce({ bavail: 1, bsize: 1 } as Awaited<
+      ReturnType<typeof statfs>
+    >);
+
+    const res = await admin.fetch('/api/v1/llm/models/pull', {
+      method: 'POST',
+      body: JSON.stringify({ tag: 'some-custom-tag:latest' }),
+    });
+    expect(res.status).toBe(200);
   });
 });

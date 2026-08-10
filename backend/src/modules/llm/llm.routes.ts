@@ -1,16 +1,42 @@
+import { statfs } from 'fs/promises';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { authMiddleware, requireAdmin } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
+import { config } from '../../config/index.js';
 import { detectHardware } from './llm-hardware.js';
-import { catalogWithFit, combinedFootprint } from './llm-catalog.js';
+import { catalogWithFit, combinedFootprint, CATALOG } from './llm-catalog.js';
 import { isReachable, listInstalledTags, deleteModel } from './ollama-client.js';
 import { getTextModel, getVisionModel, setModel } from './llm-settings.js';
+import { startPull } from './llm.ws.js';
 
 const updateSettingsSchema = z.object({
   textModel: z.string().min(1).max(200).optional(),
   visionModel: z.string().min(1).max(200).optional(),
 });
+
+const pullSchema = z.object({ tag: z.string().min(1).max(200) });
+
+/** Refuse a pull we can already tell will not fit, rather than dying at 90%. */
+async function assertDiskSpaceFor(tag: string): Promise<void> {
+  const entry = CATALOG.find((m) => m.tag === tag);
+  if (!entry) return; // unknown tag from the advanced field — size unknowable
+
+  let freeBytes: number;
+  try {
+    const stats = await statfs(config.STORAGE_PATH);
+    freeBytes = stats.bavail * stats.bsize;
+  } catch {
+    return; // a statfs failure must not block a pull that might well succeed
+  }
+
+  if (freeBytes < entry.downloadBytes * 1.1) {
+    throw Errors.validation(
+      `Not enough disk space for ${entry.label}: needs about ` +
+        `${Math.ceil(entry.downloadBytes / 1e9)}GB, ${Math.floor(freeBytes / 1e9)}GB free.`
+    );
+  }
+}
 
 export async function llmRoutes(app: FastifyInstance): Promise<void> {
   app.get('/hardware', { preHandler: [authMiddleware, requireAdmin()] }, async () => ({
@@ -90,6 +116,9 @@ export async function llmRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
-  // POST /models/pull is added in Task 6, together with llm.ws.ts's startPull
-  // and the disk pre-check that guards it.
+  app.post('/models/pull', { preHandler: [authMiddleware, requireAdmin()] }, async (request) => {
+    const { tag } = pullSchema.parse(request.body);
+    await assertDiskSpaceFor(tag);
+    return { success: true, data: { pullId: startPull(tag) } };
+  });
 }

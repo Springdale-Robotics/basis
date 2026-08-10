@@ -1,0 +1,140 @@
+import { randomUUID } from 'crypto';
+import type { Server } from 'socket.io';
+import { db } from '../../config/database.js';
+import { sessions, users } from '../../db/schema/index.js';
+import { eq, and, gt } from 'drizzle-orm';
+import { logger } from '../../lib/logger.js';
+import { pullModel } from './ollama-client.js';
+
+export interface PullState {
+  id: string;
+  tag: string;
+  state: 'running' | 'done' | 'failed' | 'cancelled';
+  status: string;
+  completed: number;
+  total: number;
+  error?: string;
+}
+
+/**
+ * In-memory, deliberately. A pull is box-local and singleton-ish, and Ollama
+ * caches blobs on disk — so a lost pull costs only the progress display, and
+ * re-issuing resumes from what was already fetched. A persistent queue would
+ * buy nothing.
+ */
+const pulls = new Map<string, PullState>();
+const controllers = new Map<string, AbortController>();
+
+let io: Server | null = null;
+
+function emit(state: PullState): void {
+  io?.of('/llm').emit('pull:progress', state);
+}
+
+export function startPull(tag: string): string {
+  const id = randomUUID();
+  const controller = new AbortController();
+  const state: PullState = {
+    id, tag, state: 'running', status: 'starting', completed: 0, total: 0,
+  };
+
+  pulls.set(id, state);
+  controllers.set(id, controller);
+
+  void pullModel(
+    tag,
+    (progress) => {
+      Object.assign(state, progress);
+      emit(state);
+    },
+    controller.signal
+  )
+    .then(() => {
+      state.state = 'done';
+      state.status = 'done';
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      state.state = controller.signal.aborted ? 'cancelled' : 'failed';
+      // Keep Ollama's own wording — the user needs to tell disk-full from
+      // network-refused.
+      if (state.state === 'failed') state.error = message;
+      logger.warn({ tag, error: message }, 'Ollama pull ended abnormally');
+    })
+    .finally(() => {
+      controllers.delete(id);
+      emit(state);
+    });
+
+  return id;
+}
+
+export function getPull(pullId: string): PullState | undefined {
+  return pulls.get(pullId);
+}
+
+export function cancelPull(pullId: string): boolean {
+  const controller = controllers.get(pullId);
+  if (!controller) return false;
+  controller.abort();
+  return true;
+}
+
+function parseCookie(header: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const pair of header.split(';')) {
+    const [k, ...v] = pair.trim().split('=');
+    if (k) out[k] = decodeURIComponent(v.join('='));
+  }
+  return out;
+}
+
+/**
+ * socket.io namespace for LLM model-pull progress.
+ *
+ * Trust model (copied verbatim from install.ws.ts): authenticated via session
+ * cookie, admin role required. This namespace exposes what is installed on
+ * the host, so it must be gated exactly as /install is.
+ */
+export function registerLlmNamespace(server: Server): void {
+  io = server;
+  const ns = server.of('/llm');
+
+  ns.use(async (socket, next) => {
+    try {
+      const cookies = parseCookie(socket.handshake.headers.cookie ?? '');
+      const sessionId = cookies['session'];
+      if (!sessionId) return next(new Error('Authentication required'));
+
+      const now = new Date();
+      const result = await db
+        .select({ session: sessions, user: users })
+        .from(sessions)
+        .innerJoin(users, eq(sessions.userId, users.id))
+        .where(and(eq(sessions.id, sessionId), gt(sessions.expiresAt, now)))
+        .limit(1);
+
+      if (result.length === 0) return next(new Error('Session expired'));
+      const { user } = result[0];
+      if (user.role !== 'admin') return next(new Error('Admin role required'));
+
+      // Stash on the socket for later logging.
+      (socket as any).userId = user.id;
+      (socket as any).householdId = user.householdId;
+      next();
+    } catch (err) {
+      logger.error({ err }, '/llm namespace auth failed');
+      next(new Error('Authentication failed'));
+    }
+  });
+
+  ns.on('connection', (socket) => {
+    // Replay live pulls so a client that reconnects mid-download catches up.
+    for (const state of pulls.values()) {
+      if (state.state === 'running') socket.emit('pull:progress', state);
+    }
+    socket.on('pull:cancel', (payload: { pullId: string }) => {
+      cancelPull(payload?.pullId);
+    });
+  });
+}
