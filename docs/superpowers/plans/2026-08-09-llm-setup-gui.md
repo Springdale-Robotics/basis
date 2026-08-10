@@ -621,16 +621,15 @@ describe('computeFit', () => {
   });
 
   it('uses available RAM, not total, for the CPU budget', () => {
-    // 6500MB fits in 7289MB total but not in 6122MB available — the difference
-    // between a working box and one that OOMs the app it is serving.
-    expect(computeFit(model({ vramMb: 99999 }), hw({ gpu: null, driverState: 'missing' })))
+    // The value must sit between the two budgets or the test cannot fail:
+    //   correct  = ramAvailableMb - RAM_RESERVE_MB = 6122 - 1500 = 4622
+    //   if buggy = ramTotalMb     - RAM_RESERVE_MB = 7289 - 1500 = 5789
+    // 5000 is too-large under the correct budget and cpu-only under the buggy
+    // one. Anything above 5789 (99999, or even 6500) passes either way and
+    // proves nothing — which is the difference between a working box and one
+    // that OOMs the app it is serving going untested.
+    expect(computeFit(model({ vramMb: 5000 }), hw({ gpu: null, driverState: 'missing' })))
       .toBe('too-large');
-    expect(
-      computeFit(
-        model({ vramMb: 99999, downloadBytes: 1 }),
-        hw({ gpu: null, driverState: 'missing', ramAvailableMb: 200 })
-      )
-    ).toBe('too-large');
   });
 });
 
