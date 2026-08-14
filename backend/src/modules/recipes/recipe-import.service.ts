@@ -411,9 +411,12 @@ export async function createImportSession(
   sourceType: 'url' | 'image' | 'pdf' | 'text',
   sourceData: string
 ): Promise<string> {
-  // Set expiration to 24 hours from now
+  // Reviewing a batch of imported recipes is an evening's work that often
+  // finishes the next day. At 24 hours a user who started after dinner and
+  // came back the following evening lost the lot, so give the review a week.
+  // Sweeping is the cleanup worker's job, not the expiry's.
   const expiresAt = new Date();
-  expiresAt.setHours(expiresAt.getHours() + 24);
+  expiresAt.setDate(expiresAt.getDate() + 7);
 
   const [session] = await db
     .insert(recipeImportSessions)
