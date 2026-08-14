@@ -578,6 +578,44 @@ export async function processImportSession(
     parsedRecipe = recipeFileResult.parsedRecipe;
     confidence = 1.0; // High confidence for structured .recipe files
     finalParseMethod = 'json-ld'; // Treat as structured data
+
+    // …but only if it really is structured. The bulk URL flow reuses this
+    // envelope to hand us /import/parse-url output, whose ingredients are raw
+    // strings by design ("2 pounds ground beef") — the URL parser leaves them
+    // for CRF, which the .recipe branch used to skip entirely. The result was
+    // whole ingredient lines becoming inventory item names, every quantity
+    // lost, and the session reporting 1.0 confidence while it happened.
+    //
+    // `every` rather than `some`: one unquantified line ("salt to taste") is
+    // normal in a real export, so only step in when nothing is structured.
+    const looksUnparsed =
+      parsedRecipe.ingredients.length > 0 &&
+      parsedRecipe.ingredients.every((i) => i.quantity == null && !i.unit);
+
+    if (looksUnparsed) {
+      const outcome = await parseIngredientLinesViaCRF(
+        parsedRecipe.ingredients.map((i) => i.name),
+        parsedRecipe.ingredients
+      );
+      // Catalog data is keyed by ingredient name, which CRF just rewrote.
+      if (recipeFileResult.catalogItems) {
+        const original = parsedRecipe.ingredients;
+        recipeFileResult.catalogItems = Object.fromEntries(
+          outcome.ingredients
+            .map((ing, i) => [ing.name, recipeFileResult.catalogItems![original[i]?.name]] as const)
+            .filter(([, catalogItem]) => catalogItem !== undefined)
+        );
+      }
+      parsedRecipe.ingredients = outcome.ingredients;
+      if (outcome.degraded) {
+        warnings.push(INGREDIENT_PARSER_UNAVAILABLE_WARNING);
+        confidence = FALLBACK_CONFIDENCE_THRESHOLD;
+        finalParseMethod = 'text';
+      } else {
+        finalParseMethod = 'crf';
+        confidence = CRF_CONFIDENCE_FLOOR;
+      }
+    }
   } else {
     // Step 1: structural parse (sections, metadata, raw ingredient lines).
     const textParseResult = parseRecipeTextWithConfidence(rawText);
