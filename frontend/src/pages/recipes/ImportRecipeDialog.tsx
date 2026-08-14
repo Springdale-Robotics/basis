@@ -587,6 +587,14 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
   const currentWarnings = parseWarnings.length > 0 ? parseWarnings : (session?.parseWarnings ?? []);
   const currentParseMethod = parseMethod ?? session?.parseMethod;
 
+  // What's actually about to be saved, whichever tier the household is on.
+  const confirmIngredientCount =
+    overrides.ingredients?.length ??
+    session?.parsedRecipe?.ingredients?.length ??
+    previewRecipe?.ingredients?.length ??
+    0;
+  const linkedCount = ingredientMatches.filter(m => m.matchedItemId).length;
+
   if (batchMode) {
     return (
       <>
@@ -1309,7 +1317,20 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                   {session?.parsedRecipe?.title ?? overrides.title}
                 </p>
                 <div className="text-xs text-muted-foreground mt-3 space-y-1">
-                  <p>{ingredientMatches.length} ingredients total</p>
+                  {/* Count the recipe, not the link list. ingredientMatches is
+                      only populated by the linking step, which Basic tier
+                      skips — so the last screen before saving told the default
+                      user their import had found nothing. */}
+                  <p>{confirmIngredientCount} ingredient{confirmIngredientCount === 1 ? '' : 's'} total</p>
+                  {isAdvanced && linkedCount > 0 && (
+                    <p>{linkedCount} linked to inventory items</p>
+                  )}
+                  {!isAdvanced && (
+                    <p>
+                      Ingredients save as text. Turn on inventory tracking in Settings → Household
+                      to link them to items you keep in stock.
+                    </p>
+                  )}
                 </div>
               </div>
 
