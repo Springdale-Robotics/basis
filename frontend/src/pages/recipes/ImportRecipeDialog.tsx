@@ -806,6 +806,21 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                             Clear
                           </Button>
                         </div>
+                        {/* Photo reading is done by a vision model, and models
+                            reword. Testing a clean printed card produced a
+                            dropped step, a reworded one, and an ingredient
+                            that didn't exist. The text is editable precisely
+                            so that can be fixed — but nothing said it needed
+                            checking, and no one proof-reads seven paragraphs
+                            they've been told are "extracted". */}
+                        <Alert>
+                          <AlertTriangle className="h-4 w-4" />
+                          <AlertDescription className="text-xs">
+                            This was read from your photo by AI, which can reword or skip steps.
+                            Compare it against the original before continuing — especially
+                            quantities and the order of the steps.
+                          </AlertDescription>
+                        </Alert>
                         <Textarea
                           value={imageRawText}
                           onChange={(e) => setImageRawText(e.target.value)}
@@ -814,7 +829,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                           placeholder="No text was extracted from the image."
                         />
                         <p className="text-xs text-muted-foreground">
-                          Fix any OCR errors above, then click Parse & Review. The text will be parsed into a structured recipe.
+                          Fix anything that's wrong above, then click Parse & Review.
                         </p>
                       </div>
                     ) : (

@@ -1405,7 +1405,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       const rawText = session.sourceData;
       if (!rawText) throw Errors.validation('No source text available for re-parsing');
 
-      const { parseRecipeWithLLM, llmResultToImportFormat } = await import('../../services/llm-recipe-parser.js');
+      const { parseRecipeWithLLM, llmResultToImportFormat, LLM_PARSE_WARNING } = await import('../../services/llm-recipe-parser.js');
       const llmResult = await parseRecipeWithLLM(rawText);
       if (!llmResult) throw Errors.validation('LLM parsing failed — no provider available or text could not be parsed');
 
@@ -1422,8 +1422,8 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           parsedRecipe,
           ingredientMatches,
           parseMethod: 'llm',
-          parseConfidence: '0.85',
-          parseWarnings: [],
+          parseConfidence: '0.75',
+          parseWarnings: [LLM_PARSE_WARNING],
         })
         .where(eq(recipeImportSessions.id, request.params.sessionId));
 
@@ -1433,7 +1433,8 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           parsedRecipe,
           ingredientMatches,
           parseMethod: 'llm',
-          confidence: 0.85,
+          confidence: 0.75,
+          warnings: [LLM_PARSE_WARNING],
         },
       };
     }

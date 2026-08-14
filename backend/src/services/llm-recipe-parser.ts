@@ -51,6 +51,50 @@ Rules:
 - Omit fields that can't be determined rather than guessing`;
 
 /**
+ * Warning attached to every LLM-parsed recipe.
+ *
+ * The LLM fallback is the least reliable parser and used to report the second
+ * highest confidence in the system, having first cleared the warning list. A
+ * model that quietly rewords an instruction or invents a quantity produced a
+ * result the UI presented as clean.
+ */
+export const LLM_PARSE_WARNING =
+  'Read by AI because the recipe text was hard to parse. Check the quantities and steps against the original before saving.';
+
+/**
+ * Reject LLM output that isn't shaped like a recipe.
+ *
+ * Previously this only checked that three keys were present, so a response
+ * with an empty ingredient name, a quantity of "two", or no steps at all went
+ * straight through and replaced a parse that may well have been better.
+ */
+export function validateLLMRecipe(parsed: LLMParsedRecipe | null | undefined): parsed is LLMParsedRecipe {
+  if (!parsed || typeof parsed.title !== 'string' || !parsed.title.trim()) return false;
+  if (!Array.isArray(parsed.ingredientGroups) || !Array.isArray(parsed.instructions)) return false;
+
+  const instructions = parsed.instructions.filter((step) => typeof step === 'string' && step.trim());
+  if (instructions.length === 0) return false;
+
+  const ingredients = parsed.ingredientGroups.flatMap((group) =>
+    Array.isArray(group?.ingredients) ? group.ingredients : []
+  );
+  if (ingredients.length === 0) return false;
+
+  for (const ingredient of ingredients) {
+    if (!ingredient || typeof ingredient.name !== 'string' || !ingredient.name.trim()) return false;
+    // A name long enough to be a whole recipe line means the model echoed the
+    // input instead of parsing it.
+    if (ingredient.name.length > 80) return false;
+    if (ingredient.quantity != null && (typeof ingredient.quantity !== 'number' || !Number.isFinite(ingredient.quantity) || ingredient.quantity < 0)) {
+      return false;
+    }
+    if (ingredient.unit != null && typeof ingredient.unit !== 'string') return false;
+  }
+
+  return true;
+}
+
+/**
  * Parse recipe text using an LLM (Claude or Ollama).
  * Returns a structured recipe or null if no LLM is available or parsing fails.
  */
@@ -79,10 +123,7 @@ export async function parseRecipeWithLLM(text: string): Promise<LLMParsedRecipe 
 
     const parsed = JSON.parse(jsonStr) as LLMParsedRecipe;
 
-    // Basic validation
-    if (!parsed.title || !parsed.ingredientGroups || !parsed.instructions) {
-      return null;
-    }
+    if (!validateLLMRecipe(parsed)) return null;
 
     // Flatten ingredient groups into a flat ingredients array for compatibility
     // (the import system expects both formats)

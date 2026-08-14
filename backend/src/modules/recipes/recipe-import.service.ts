@@ -501,10 +501,46 @@ const FALLBACK_CONFIDENCE_THRESHOLD = 0.6;
 // reliable than regex for ingredient line structure.
 const CRF_CONFIDENCE_FLOOR = 0.75;
 
+/**
+ * Turn a successful CRF parse into a confidence the user can act on.
+ *
+ * The flat 0.75 this replaces sat just under the UI's 0.8 "Looks complete"
+ * threshold, so a text import where CRF returned every field correctly at 0.99
+ * per line still displayed "Review carefully" — while the one path that
+ * produced unusable ingredients displayed 100%. The badge cried wolf on good
+ * imports and reassured on the broken one.
+ *
+ * A recipe with no instructions is not complete however well its ingredients
+ * parsed, and an ingredient name long enough to be a whole recipe line is the
+ * signature of text that never went through a parser at all.
+ */
+export function confidenceFromCrfParse(
+  recipe: ParsedRecipe,
+  crfConfidence: number
+): number {
+  const hasInstructions = recipe.instructions.length > 0;
+  const hasTitle = !!recipe.title && recipe.title !== 'Untitled Recipe';
+
+  const looksUnparsed = recipe.ingredients.some((i) => i.name.length > 40);
+  if (looksUnparsed) return 0.5;
+
+  if (!hasInstructions) return 0.6;
+
+  const base = CRF_CONFIDENCE_FLOOR + 0.2 * Math.max(0, Math.min(1, crfConfidence));
+  return Math.min(0.95, hasTitle ? base : base - 0.1);
+}
+
 export interface IngredientParseOutcome {
   ingredients: ParsedIngredient[];
   /** True when CRF couldn't parse — ingredients are unparsed raw text. */
   degraded: boolean;
+  /**
+   * Mean per-line confidence reported by CRF (0 when degraded). The parser has
+   * always returned this and we used to discard it, then tell the user a flat
+   * 0.75 for every text import — which reads as "Review carefully" even when
+   * every field came back perfect.
+   */
+  confidence: number;
 }
 
 /** Warning string surfaced when ingredient parsing degrades. */
@@ -528,12 +564,15 @@ export async function parseIngredientLinesViaCRF(
   rawLines: string[],
   fallbackIngredients?: ParsedIngredient[],
 ): Promise<IngredientParseOutcome> {
-  if (rawLines.length === 0) return { ingredients: [], degraded: false };
+  if (rawLines.length === 0) return { ingredients: [], degraded: false, confidence: 0 };
   try {
     const { parseIngredientsWithCRF } = await import('../../services/crf-ingredient-parser.js');
     const crfResults = await parseIngredientsWithCRF(rawLines);
     if (crfResults.length > 0) {
+      const meanConfidence =
+        crfResults.reduce((sum, r) => sum + (r.confidence ?? 0), 0) / crfResults.length;
       return {
+        confidence: meanConfidence,
         ingredients: crfResults.map((r, i) => ({
           name: r.name,
           quantity: r.quantity ?? undefined,
@@ -551,11 +590,13 @@ export async function parseIngredientLinesViaCRF(
     console.warn('[Recipe Import] CRF unavailable — returning raw lines:', err);
   }
   return {
+    confidence: 0,
     ingredients: rawLines.map((line, i) => ({
       name: line,
       quantity: undefined,
       unit: undefined,
       notes: fallbackIngredients?.[i]?.notes ?? undefined,
+      groupName: fallbackIngredients?.[i]?.groupName,
     })),
     degraded: true,
   };
@@ -639,7 +680,7 @@ export async function processImportSession(
         finalParseMethod = 'text';
       } else {
         finalParseMethod = 'crf';
-        confidence = CRF_CONFIDENCE_FLOOR;
+        confidence = confidenceFromCrfParse(parsedRecipe, outcome.confidence);
       }
     }
   } else {
@@ -665,21 +706,25 @@ export async function processImportSession(
         // Don't claim CRF parse method when CRF failed.
       } else {
         finalParseMethod = 'crf';
-        confidence = Math.max(confidence, CRF_CONFIDENCE_FLOOR);
+        confidence = Math.max(confidence, confidenceFromCrfParse(parsedRecipe, outcome.confidence));
       }
     }
 
     // LLM fallback: if parsing still produced low confidence, try AI
     if (confidence < FALLBACK_CONFIDENCE_THRESHOLD) {
       try {
-        const { parseRecipeWithLLM, llmResultToImportFormat } = await import('../../services/llm-recipe-parser.js');
+        const { parseRecipeWithLLM, llmResultToImportFormat, LLM_PARSE_WARNING } = await import('../../services/llm-recipe-parser.js');
         const llmResult = await parseRecipeWithLLM(rawText);
         if (llmResult) {
           const converted = llmResultToImportFormat(llmResult);
           parsedRecipe = converted as ParsedRecipe;
-          confidence = 0.85;
+          // Deliberately below the UI's "Looks complete" threshold: this is
+          // the least reliable parser in the system and it used to report the
+          // second highest confidence, after clearing the warnings that would
+          // have told the user to look closely.
+          confidence = 0.75;
           finalParseMethod = 'llm';
-          warnings = [];
+          warnings = [...warnings, LLM_PARSE_WARNING];
         }
       } catch (err) {
         console.warn('[Recipe Import] LLM fallback failed, using regex result:', err);
@@ -762,13 +807,14 @@ export async function processUrlImportSession(
   // path; uses the visible page text the URL parser already extracted.
   if (result.confidence < FALLBACK_CONFIDENCE_THRESHOLD && result.pageText) {
     try {
-      const { parseRecipeWithLLM, llmResultToImportFormat } = await import('../../services/llm-recipe-parser.js');
+      const { parseRecipeWithLLM, llmResultToImportFormat, LLM_PARSE_WARNING } = await import('../../services/llm-recipe-parser.js');
       const llmResult = await parseRecipeWithLLM(result.pageText);
       if (llmResult) {
         const converted = llmResultToImportFormat(llmResult);
         result.parsedRecipe = converted as ParsedRecipe;
-        (result as any).confidence = 0.85;
+        (result as any).confidence = 0.75;
         (result as any).parseMethod = 'llm';
+        result.warnings = [...(result.warnings || []), LLM_PARSE_WARNING];
       }
     } catch (err) {
       console.warn('[Recipe Import] URL-path LLM fallback failed, keeping URL parser result:', err);
