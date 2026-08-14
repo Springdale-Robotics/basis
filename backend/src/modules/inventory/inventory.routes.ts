@@ -1975,7 +1975,19 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         .where(eq(ingredientAliases.householdId, request.user!.householdId))
         .orderBy(ingredientAliases.aliasName);
 
-      return { success: true, data: { aliases: rows } };
+      return {
+        success: true,
+        data: {
+          aliases: rows.map((row) => ({
+            ...row,
+            // The stored key is a normalization artefact and can carry
+            // punctuation left behind by descriptor stripping (", chicken
+            // breast"). It's frozen — other modules read the table with the
+            // same normalizer — so it's tidied for display only.
+            displayName: row.aliasName.replace(/^[\s,;:-]+|[\s,;:-]+$/g, '') || row.aliasName,
+          })),
+        },
+      };
     }
   );
 

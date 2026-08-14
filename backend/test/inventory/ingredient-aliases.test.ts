@@ -48,6 +48,16 @@ describe('GET /inventory/ingredient-aliases', () => {
     expect(evoo).toMatchObject({ aliasName: 'evoo', itemId, itemName: 'Olive Oil' });
   });
 
+  it('tidies the stored key for display', async () => {
+    // Descriptor stripping leaves punctuation behind in the persisted key
+    // (", chicken breast"). The key is frozen — other modules read the table
+    // with the same normalizer — so it's cleaned for display only.
+    await seedAlias(', chicken breast');
+    const body = await json(await user.fetch('/api/v1/inventory/ingredient-aliases'));
+    const row = body.data.aliases.find((a: { aliasName: string }) => a.aliasName === ', chicken breast');
+    expect(row.displayName).toBe('chicken breast');
+  });
+
   it('does not leak another household\'s learned names', async () => {
     const otherHousehold = await ctx.createHousehold('Someone Else');
     const [otherItem] = await db

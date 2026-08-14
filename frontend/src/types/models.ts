@@ -298,6 +298,8 @@ export interface StorageArea {
 export interface IngredientAlias {
   id: string;
   aliasName: string;
+  /** aliasName tidied for display; the stored key can carry normalization punctuation. */
+  displayName: string;
   aliasType: string;
   createdAt: string;
   itemId: string;
