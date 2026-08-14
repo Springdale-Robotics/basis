@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiPatch, apiDelete } from './client';
-import type { StorageArea, InventoryItem, StockEntry, ShoppingListItem, Leftover, LeftoverSource } from '@/types/models';
+import type { StorageArea, InventoryItem, StockEntry, ShoppingListItem, Leftover, LeftoverSource, IngredientAlias } from '@/types/models';
 
 export interface CreateAreaRequest {
   name: string;
@@ -119,6 +119,17 @@ export const inventoryApi = {
   // Storage Areas
   getAreas: () =>
     apiGet<{ areas: StorageArea[] }>('/inventory/areas'),
+
+  /**
+   * Ingredient names this household has taught the system, by linking a recipe
+   * ingredient to an item with a different name. They apply automatically to
+   * every later import and receipt scan, so they need to be visible.
+   */
+  getIngredientAliases: () =>
+    apiGet<{ aliases: IngredientAlias[] }>('/inventory/ingredient-aliases'),
+
+  deleteIngredientAlias: (id: string) =>
+    apiDelete<{ message: string }>(`/inventory/ingredient-aliases/${id}`),
 
   createArea: (data: CreateAreaRequest) =>
     apiPost<{ area: StorageArea }>('/inventory/areas', data),

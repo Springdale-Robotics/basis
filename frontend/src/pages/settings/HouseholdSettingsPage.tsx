@@ -25,6 +25,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useInventoryTier, type InventoryTier } from '@/hooks/useInventoryTier';
 import { useCategories } from '@/hooks/useCategories';
 import { defaultCategories, categoryIcons } from '@/lib/inventory-constants';
+import { LearnedIngredientNames } from '@/components/inventory/LearnedIngredientNames';
 import { cn } from '@/lib/utils';
 
 const householdSchema = z.object({
@@ -358,6 +359,8 @@ export function HouseholdSettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      <LearnedIngredientNames />
 
       <Card>
         <CardHeader>

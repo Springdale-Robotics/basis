@@ -290,6 +290,20 @@ export interface StorageArea {
   updatedAt: string;
 }
 
+/**
+ * A name this household has taught the system to treat as an inventory item —
+ * recorded when someone links a recipe ingredient to an item called something
+ * else, and applied to every later import and receipt scan.
+ */
+export interface IngredientAlias {
+  id: string;
+  aliasName: string;
+  aliasType: string;
+  createdAt: string;
+  itemId: string;
+  itemName: string;
+}
+
 export interface InventoryItem {
   id: string;
   householdId: string;
