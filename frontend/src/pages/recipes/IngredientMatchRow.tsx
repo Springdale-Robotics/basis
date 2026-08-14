@@ -169,6 +169,11 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
   const confidence = match.confidence ?? (suggestions[0]?.confidence ?? 0);
   const matchReason = match.matchReason ?? suggestions[0]?.matchReason;
 
+  // Best existing item for this ingredient, if there is a plausible one. Shown
+  // in the create form so the user doesn't add a second "Olive Oil" without
+  // ever being told the first one exists.
+  const closestExisting = suggestions.find((s) => s.confidence >= 0.6);
+
   return (
     <div className={cn(
       'flex items-center justify-between p-3 rounded-lg border',
@@ -386,6 +391,31 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
                       <X className="h-4 w-4" />
                     </Button>
                   </div>
+
+                  {/* The catalog is the foundation everything else is built on,
+                      and near-duplicates are far easier to avoid than to merge
+                      later. The suggestions are already loaded, so say so. */}
+                  {closestExisting && (
+                    <Alert>
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription className="space-y-2">
+                        <p>
+                          You already have <span className="font-medium">{closestExisting.name}</span>.
+                          Link to it instead of creating a second item?
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            handleSelect(closestExisting.itemId, closestExisting.name);
+                            resetCreateForm();
+                          }}
+                        >
+                          Link to {closestExisting.name}
+                        </Button>
+                      </AlertDescription>
+                    </Alert>
+                  )}
 
                   <div className="space-y-3">
                     <div className="space-y-1.5">

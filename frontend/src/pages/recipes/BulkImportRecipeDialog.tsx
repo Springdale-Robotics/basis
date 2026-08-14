@@ -278,16 +278,23 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
   // Create all unmatched
   const handleCreateAllUnmatched = useCallback(async () => {
     const unmatched = allIngredientMatches.filter(m => !m.matchedItemId);
-    for (const match of unmatched) {
-      try {
-        const result = await handleCreateNewItem(match.parsedName, match.parsedUnit);
-        handleMatchUpdate(match.parsedName, result.itemId, result.itemName);
-      } catch {
-        // Continue
-      }
+    if (unmatched.length === 0) return;
+
+    // Whole batch in one request: the server canonicalises the names, reuses
+    // items the household already has, and gives ingredients that reduce to
+    // the same item a single entry. Doing it row by row here produced a
+    // duplicate every time two recipes worded a staple differently.
+    const { results } = await recipesApi.createItemsForIngredients(
+      unmatched.map(m => ({ name: m.parsedName, unit: m.parsedUnit }))
+    );
+    for (const result of results) {
+      handleMatchUpdate(result.originalName, result.itemId, result.itemName);
     }
-    rematchMutation.mutate();
-  }, [allIngredientMatches, handleCreateNewItem, handleMatchUpdate, rematchMutation]);
+
+    queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
+    queryClient.invalidateQueries({ queryKey: ['ingredient-suggestions'] });
+  }, [allIngredientMatches, handleMatchUpdate, queryClient]);
 
   // ========== START PROCESSING ==========
 

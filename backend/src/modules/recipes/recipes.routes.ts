@@ -14,9 +14,10 @@ import {
   files,
 } from '../../db/schema/index.js';
 import { promises as fs } from 'fs';
+import { randomBytes } from 'crypto';
 import { eq, and, sql, gt, gte, lte, asc, isNotNull } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
-import { requireRecipesAccess, requireMealPlanAccess } from '../../middleware/permission.middleware.js';
+import { requireRecipesAccess, requireMealPlanAccess, requireInventoryAccess } from '../../middleware/permission.middleware.js';
 import { createRateLimiter } from '../../middleware/rate-limit.middleware.js';
 
 // Per-user throttle for the URL/image import endpoints. These make the server
@@ -39,7 +40,7 @@ import {
 } from './recipe-import.service.js';
 import { parseRecipeFromUrl } from './url-parser.service.js';
 import { processRecipeImage, fetchImageFromUrl } from './recipe-image.service.js';
-import { convertWithDensity, normalizeUnit, type QuantityUnitSizes } from '../../lib/unit-conversions.js';
+import { convertWithDensity, normalizeUnit, getUnitCategory, type QuantityUnitSizes } from '../../lib/unit-conversions.js';
 import { matchSingleIngredient, matchIngredients } from './ingredient-matching.service.js';
 import {
   emitCookingDeduction,
@@ -368,6 +369,126 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       });
 
       return { success: true, data: { suggestions } };
+    }
+  );
+
+  // Turn ingredient names into catalog items.
+  //
+  // The import dialogs used to do this themselves: one quick-create call per
+  // unmatched row, passing the recipe's own wording and unit straight through.
+  // That filled catalogs with entries like "boneless, skinless chicken
+  // breasts" stocked in "cloves", and re-created items the household already
+  // had, because each row was resolved against a catalog snapshot taken before
+  // the previous row created anything.
+  //
+  // Doing it in one server-side pass fixes all three: names are canonicalised,
+  // existing items are reused, and ingredients that reduce to the same item
+  // share it.
+  app.post(
+    '/ingredients/create-items',
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
+    async (request) => {
+      const schema = z.object({
+        ingredients: z.array(z.object({
+          name: z.string().min(1).max(255),
+          unit: z.string().max(50).optional(),
+        })).min(1).max(100),
+      });
+      const { ingredients } = schema.parse(request.body);
+      const householdId = request.user!.householdId;
+
+      const [{ simplifyIngredientNames, detectCategory }, { normalizeIngredientIdentity, calculateSimilarityWithReason, SUGGESTION_THRESHOLD }] =
+        await Promise.all([
+          import('../../services/ingredient-name-utils.js'),
+          import('./ingredient-matching.service.js'),
+        ]);
+
+      const warnings: string[] = [];
+      // Canonical naming needs CRF. If it's down we still create the items —
+      // refusing the whole action would be worse — but we say the names may
+      // need tidying rather than pretending they're clean.
+      let canonicalNames: string[];
+      try {
+        canonicalNames = await simplifyIngredientNames(ingredients.map((i) => i.name));
+      } catch {
+        canonicalNames = ingredients.map((i) => i.name);
+        warnings.push(
+          'Ingredient parser unavailable — new items were named exactly as the recipe wrote them, so some may need renaming.'
+        );
+      }
+
+      const existing = await db.query.inventoryItems.findMany({
+        where: eq(inventoryItems.householdId, householdId),
+      });
+      // Index by identity so "Ground Beef" and "ground beef" are one item.
+      const byIdentity = new Map(existing.map((item) => [normalizeIngredientIdentity(item.name), item]));
+
+      const results: Array<{
+        originalName: string;
+        itemId: string;
+        itemName: string;
+        action: 'created' | 'linked';
+        similarTo?: { itemId: string; name: string };
+      }> = [];
+
+      for (const [index, ingredient] of ingredients.entries()) {
+        const canonicalName = canonicalNames[index]?.trim() || ingredient.name;
+        const identity = normalizeIngredientIdentity(canonicalName);
+
+        const alreadyThere = byIdentity.get(identity);
+        if (alreadyThere) {
+          results.push({
+            originalName: ingredient.name,
+            itemId: alreadyThere.id,
+            itemName: alreadyThere.name,
+            action: 'linked',
+          });
+          continue;
+        }
+
+        // Near-matches are reported, never substituted: a household may well
+        // stock both "Olive Oil" and "Light Olive Oil", and that call is
+        // theirs to make.
+        let similarTo: { itemId: string; name: string } | undefined;
+        let bestScore = SUGGESTION_THRESHOLD;
+        for (const candidate of byIdentity.values()) {
+          const { score } = calculateSimilarityWithReason(canonicalName, candidate.name);
+          if (score > bestScore) {
+            bestScore = score;
+            similarTo = { itemId: candidate.id, name: candidate.name };
+          }
+        }
+
+        // A recipe measurement is not a stocking unit — nobody keeps butter by
+        // the tablespoon, and a wrong defaultUnit quietly corrupts every later
+        // conversion. Container and count units ("loaf", "can") are plausible
+        // ways to hold something, so those we keep.
+        const unitCategory = ingredient.unit ? getUnitCategory(normalizeUnit(ingredient.unit)) : null;
+        const defaultUnit = unitCategory === 'quantity' ? ingredient.unit : undefined;
+
+        const [created] = await db
+          .insert(inventoryItems)
+          .values({
+            householdId,
+            name: canonicalName,
+            internalId: `HM-${randomBytes(3).toString('hex').toUpperCase()}`,
+            defaultUnit,
+            category: detectCategory(ingredient.name) || detectCategory(canonicalName),
+          })
+          .returning();
+
+        byIdentity.set(identity, created);
+        emitInventoryEvent(householdId, { itemId: created.id, action: 'created' });
+        results.push({
+          originalName: ingredient.name,
+          itemId: created.id,
+          itemName: created.name,
+          action: 'created',
+          similarTo,
+        });
+      }
+
+      return { success: true, data: { results, warnings } };
     }
   );
 
