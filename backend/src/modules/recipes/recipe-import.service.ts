@@ -223,7 +223,12 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
       // the downstream parser to handle.
       const cleaned = line.replace(/^[-•*]\s*/, '').trim();
       if (cleaned.length === 0) continue;
-      const raw: ParsedIngredient = { name: cleaned, quantity: undefined, unit: undefined };
+      const raw: ParsedIngredient = {
+        name: cleaned,
+        quantity: undefined,
+        unit: undefined,
+        groupName: currentGroup?.name,
+      };
       ingredients.push(raw);
       if (currentGroup) {
         currentGroup.ingredients.push(raw);
@@ -531,6 +536,10 @@ export async function parseIngredientLinesViaCRF(
           quantity: r.quantity ?? undefined,
           unit: r.unit ?? undefined,
           notes: r.notes ?? fallbackIngredients?.[i]?.notes ?? undefined,
+          // CRF only sees the line text, so anything structural the caller
+          // already worked out — which heading the line sat under — has to be
+          // carried across or it's lost with the old objects.
+          groupName: fallbackIngredients?.[i]?.groupName,
         })),
         degraded: false,
       };
@@ -628,7 +637,11 @@ export async function processImportSession(
     // knows quantities/units weren't extracted.
     if (parsedRecipe.ingredients && parsedRecipe.ingredients.length > 0) {
       const rawIngredientLines = parsedRecipe.ingredients.map((i) => i.name);
-      const outcome = await parseIngredientLinesViaCRF(rawIngredientLines);
+      const outcome = await parseIngredientLinesViaCRF(
+        rawIngredientLines,
+        // Carries the group headings the structural pass worked out.
+        parsedRecipe.ingredients
+      );
       parsedRecipe.ingredients = outcome.ingredients;
       if (outcome.degraded) {
         warnings.push(INGREDIENT_PARSER_UNAVAILABLE_WARNING);
@@ -909,6 +922,16 @@ export async function confirmImportSession(
   // Merge overrides
   const finalRecipe = { ...parsedRecipe, ...overrides };
 
+  // A recipe with no ingredients and no steps is not a recipe. Parsing junk
+  // still produces a session in pending_review (title "aaaa", both lists
+  // empty), and confirming it used to create an empty entry the user then had
+  // to find and delete.
+  if (finalRecipe.ingredients.length === 0 && finalRecipe.instructions.length === 0) {
+    throw Errors.validation(
+      "This doesn't look like a recipe — no ingredients or instructions were found. Try editing the text or importing a different source."
+    );
+  }
+
   // Convert instructions to the expected format
   const instructionObjects: RecipeInstruction[] = finalRecipe.instructions.map((text, index) => ({
     step: index + 1,
@@ -928,26 +951,28 @@ export async function confirmImportSession(
       cookTimeMinutes: finalRecipe.cookTimeMinutes,
       servings: finalRecipe.servings,
       imageUrl: finalRecipe.imageUrl,
+      // Every parser fills these in and confirm used to drop them all, so a
+      // web-imported recipe had no record of where it came from — nothing to
+      // re-check, re-import or attribute.
+      sourceUrl: finalRecipe.sourceUrl,
     })
     .returning();
 
-  // Build ingredient-to-group lookup from parsed groups
-  const ingredientGroupMap: Record<string, string> = {};
-  if (finalRecipe.ingredientGroups) {
-    for (const group of finalRecipe.ingredientGroups) {
-      if (group.name) {
-        for (const groupIng of group.ingredients) {
-          ingredientGroupMap[groupIng.name] = group.name;
-        }
-      }
-    }
-  }
-
-  // Create ingredients with inventory links
+  // Create ingredients with inventory links.
+  //
+  // Matches are produced one-per-ingredient in order, so position is the
+  // reliable association. Name was the join key before, which meant renaming
+  // an ingredient on the review screen silently dropped its inventory link,
+  // and two identical lines collapsed onto one match. Name lookup stays as
+  // the fallback for when the user has added or removed rows and the arrays
+  // no longer line up.
+  const matchesAlignByPosition = ingredientMatches.length === finalRecipe.ingredients.length;
   if (finalRecipe.ingredients.length > 0) {
     await db.insert(recipeIngredients).values(
-      finalRecipe.ingredients.map((ing, _index) => {
-        const match = ingredientMatches.find(m => m.parsedName === ing.name);
+      finalRecipe.ingredients.map((ing, index) => {
+        const match = matchesAlignByPosition
+          ? ingredientMatches[index]
+          : ingredientMatches.find(m => m.parsedName === ing.name);
         // Use user-modified unit if available, otherwise fall back to parsed unit
         const unit = match?.modifiedUnit ?? ing.unit;
         return {
@@ -957,7 +982,7 @@ export async function confirmImportSession(
           unit,
           notes: ing.notes,
           inventoryItemId: match?.matchedItemId,
-          groupName: ingredientGroupMap[ing.name] || null,
+          groupName: ing.groupName ?? null,
         };
       })
     );

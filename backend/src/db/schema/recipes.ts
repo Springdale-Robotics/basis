@@ -176,6 +176,13 @@ export interface ParsedIngredient {
   quantity?: number;
   unit?: string;
   notes?: string;
+  /**
+   * Heading this ingredient sat under ("For the sauce"). Carried on the
+   * ingredient rather than looked up from `ingredientGroups`, because the
+   * ingredient list gets rebuilt when CRF parses it and a name-keyed lookup
+   * silently missed every time.
+   */
+  groupName?: string;
 }
 
 export interface IngredientMatch {
