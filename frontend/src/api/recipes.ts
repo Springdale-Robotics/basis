@@ -326,8 +326,22 @@ export const recipesApi = {
   getImportSession: (sessionId: string) =>
     apiGet<{ session: ImportSession }>(`/recipes/import/${sessionId}`),
 
-  updateImportMatches: (sessionId: string, updates: Array<{ parsedName: string; matchedItemId?: string; matchedItemName?: string; modifiedUnit?: string }>) =>
-    apiPost<{ message: string }>(`/recipes/import/${sessionId}/match`, { updates }),
+  updateImportMatches: (
+    sessionId: string,
+    updates: Array<{
+      parsedName: string;
+      matchedItemId?: string;
+      matchedItemName?: string;
+      modifiedUnit?: string;
+      /**
+       * Set when the user actively chose this item. The review screen posts
+       * every row on save, so without this the backend can't tell a deliberate
+       * pick from a suggestion the user scrolled past — and only deliberate
+       * picks should teach the household an alias.
+       */
+      confirmed?: boolean;
+    }>
+  ) => apiPost<{ message: string }>(`/recipes/import/${sessionId}/match`, { updates }),
 
   confirmImport: (sessionId: string, overrides?: { title?: string; description?: string; prepTimeMinutes?: number; cookTimeMinutes?: number; servings?: number; imageUrl?: string; ingredients?: Array<{ name: string; quantity?: number; unit?: string; notes?: string }>; instructions?: string[] }) =>
     apiPost<{ recipeId: string }>(`/recipes/import/${sessionId}/confirm`, overrides),

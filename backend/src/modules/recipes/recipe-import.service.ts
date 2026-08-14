@@ -1,6 +1,6 @@
 import { db } from '../../config/database.js';
 import { recipes, recipeIngredients, recipeImportSessions, ingredientAliases, inventoryItems } from '../../db/schema/index.js';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import type { ParsedRecipe, ParsedIngredient, IngredientMatch, RecipeInstruction, IngredientGroup } from '../../db/schema/recipes.js';
 import { matchIngredients } from './ingredient-matching.service.js';
 import { normalizeIngredientName } from './ingredient-matching.service.js';
@@ -779,24 +779,66 @@ export async function getImportSession(sessionId: string, householdId: string) {
 /**
  * Update ingredient matches for a session
  */
+export interface IngredientMatchUpdate {
+  parsedName: string;
+  matchedItemId?: string;
+  matchedItemName?: string;
+  modifiedUnit?: string;
+  /**
+   * True when the user actively chose this item (picked it from the list,
+   * created an item for it, or accepted a suggestion). False/absent means the
+   * row is just being echoed back — the review screen posts every row on save,
+   * touched or not.
+   *
+   * Only confirmed matches teach the household an alias. Without this the
+   * backend stamped every echoed row 'manual', so a fuzzy guess the user
+   * scrolled past became a permanent, invisible rule.
+   */
+  confirmed?: boolean;
+}
+
 export async function updateIngredientMatches(
   sessionId: string,
   householdId: string,
-  updates: Array<{ parsedName: string; matchedItemId?: string; matchedItemName?: string; modifiedUnit?: string }>
+  updates: IngredientMatchUpdate[]
 ): Promise<void> {
   const session = await getImportSession(sessionId, householdId);
+
+  // Any item the caller names must be one of theirs. Nothing else validates
+  // this id before it lands in recipe_ingredients.inventory_item_id, and the
+  // RLS policy on that table keys off the recipe's household, not the item's.
+  const referencedItemIds = [...new Set(updates.map(u => u.matchedItemId).filter((id): id is string => !!id))];
+  if (referencedItemIds.length > 0) {
+    const owned = await db
+      .select({ id: inventoryItems.id })
+      .from(inventoryItems)
+      .where(and(
+        eq(inventoryItems.householdId, householdId),
+        inArray(inventoryItems.id, referencedItemIds)
+      ));
+    if (owned.length !== referencedItemIds.length) {
+      throw Errors.validation('One or more inventory items do not belong to this household');
+    }
+  }
 
   const currentMatches = session.ingredientMatches as IngredientMatch[];
   const updatedMatches = currentMatches.map(match => {
     const update = updates.find(u => u.parsedName === match.parsedName);
     if (update) {
+      const keepsExistingChoice =
+        match.matchStatus === 'manual' && match.matchedItemId === update.matchedItemId;
       return {
         ...match,
         matchedItemId: update.matchedItemId,
         matchedItemName: update.matchedItemName,
-        matchStatus: update.matchedItemId ? 'manual' as const : 'unmatched' as const,
-        // Store user-modified unit
-        modifiedUnit: update.modifiedUnit,
+        matchStatus: !update.matchedItemId
+          ? ('unmatched' as const)
+          : update.confirmed || keepsExistingChoice
+            ? ('manual' as const)
+            : ('matched' as const),
+        // Store user-modified unit, keeping any previously saved one when the
+        // caller doesn't send it.
+        modifiedUnit: update.modifiedUnit ?? match.modifiedUnit,
       };
     }
     return match;

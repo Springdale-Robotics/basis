@@ -254,8 +254,13 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
 
   // Update matches mutation
   const updateMatchesMutation = useMutation({
-    mutationFn: (updates: Array<{ parsedName: string; matchedItemId?: string; matchedItemName?: string }>) =>
-      recipesApi.updateImportMatches(sessionId!, updates),
+    mutationFn: (updates: Array<{
+      parsedName: string;
+      matchedItemId?: string;
+      matchedItemName?: string;
+      modifiedUnit?: string;
+      confirmed?: boolean;
+    }>) => recipesApi.updateImportMatches(sessionId!, updates),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['import-session', sessionId] });
     },
@@ -328,6 +333,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
           matchedItemId: m.matchedItemId,
           matchedItemName: m.matchedItemName,
           modifiedUnit: m.modifiedUnit,
+          confirmed: m.matchStatus === 'manual',
         })));
       }
 
@@ -587,6 +593,10 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
       matchedItemId: m.matchedItemId,
       matchedItemName: m.matchedItemName,
       modifiedUnit: m.modifiedUnit,
+      // Every row gets posted, but only the ones the user acted on are marked
+      // as their choice. handleMatchUpdate sets 'manual' when they pick, link
+      // or create; rows left as the matcher found them stay 'matched'.
+      confirmed: m.matchStatus === 'manual',
     }));
     updateMatchesMutation.mutate(updates);
     setStep('confirm');

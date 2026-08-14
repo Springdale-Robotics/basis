@@ -18,7 +18,13 @@ async function findAliasCandidates(
   ingredientName: string,
   householdId: string,
 ): Promise<Array<{ itemId: string; itemName: string; aliasType: string }>> {
-  const normalizedName = ingredientName.toLowerCase().trim();
+  // Must use the same normalizer the alias was WRITTEN with (see
+  // confirmImportSession) — and the same one the receipts module reads with.
+  // This used to be a bare toLowerCase().trim(), so any alias whose name
+  // normalization altered at all ("capers" stored as "caper") could never be
+  // found again: the user taught the household something and it silently
+  // failed to stick, every time.
+  const normalizedName = normalizeIngredientName(ingredientName);
 
   // Find items where the searched name is one of their aliases
   const aliasMatches = await db
@@ -150,6 +156,13 @@ export const SINGLE_MATCH_THRESHOLD = 0.5;
  * never applied on the user's behalf.
  */
 const STATE_MISMATCH_CAP = 0.8;
+
+/**
+ * Confidence for a household's own learned alias. Between synonym (0.95) and
+ * the auto-link threshold: a rule this household taught us should apply, but
+ * it stays below the built-in equivalences it might contradict.
+ */
+const ALIAS_CONFIDENCE = 0.92;
 
 export interface MatchSuggestion {
   itemId: string;
@@ -570,12 +583,22 @@ export async function matchIngredients(
     // Check DB aliases for additional matches
     const aliasCandidates = await findAliasCandidates(parsed.name, householdId);
     for (const candidate of aliasCandidates) {
-      // Don't duplicate items already found via name matching
-      if (suggestions.some(s => s.itemId === candidate.itemId)) continue;
+      const existing = suggestions.find(s => s.itemId === candidate.itemId);
+      if (existing) {
+        // The item already surfaced by name similarity, but an alias is
+        // something this household explicitly taught us — it outranks a fuzzy
+        // guess. Skipping it here meant a learned link could be outvoted by
+        // the very weak score it was created to correct.
+        if (existing.confidence < ALIAS_CONFIDENCE) {
+          existing.confidence = ALIAS_CONFIDENCE;
+          existing.matchReason = 'synonym';
+        }
+        continue;
+      }
       suggestions.push({
         itemId: candidate.itemId,
         name: candidate.itemName,
-        confidence: 0.92, // Between exact (1.0) and synonym (0.95) — alias is a known equivalence
+        confidence: ALIAS_CONFIDENCE,
         matchReason: 'synonym',
       });
     }
