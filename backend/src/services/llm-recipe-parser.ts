@@ -116,6 +116,7 @@ export function llmResultToImportFormat(llmResult: LLMParsedRecipe): {
       quantity: ing.quantity ?? undefined,
       unit: ing.unit ?? undefined,
       notes: ing.notes ?? undefined,
+      groupName: group.name ?? undefined,
     }));
     allIngredients.push(...groupIngs);
     groups.push({
