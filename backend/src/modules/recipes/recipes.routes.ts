@@ -1233,6 +1233,13 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           parsedName: z.string(),
           matchedItemId: z.string().uuid().optional(),
           matchedItemName: z.string().optional(),
+          // The client has always sent this; the schema silently stripped it,
+          // so every unit the user corrected during review was discarded.
+          modifiedUnit: z.string().max(50).optional(),
+          // Marks a row the user actually acted on, as opposed to one the
+          // review screen echoed back untouched. Only confirmed rows teach
+          // the household an alias.
+          confirmed: z.boolean().optional(),
         })),
       });
 
