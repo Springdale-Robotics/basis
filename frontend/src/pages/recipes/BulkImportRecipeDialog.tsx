@@ -22,7 +22,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { cn } from '@/lib/utils';
 import { recipesApi, type ImportSession, type IngredientMatch, type ParsedRecipe } from '@/api/recipes';
 import { inventoryApi } from '@/api/inventory';
-import { deduplicateIngredientMatches, normalizeIngredientName } from '@/lib/recipe-utils';
+import { deduplicateIngredientMatches, dedupeKeyFor } from '@/lib/recipe-utils';
 import { useBatchImageProcessing, type BatchItem } from '@/hooks/useBatchImageProcessing';
 import { FileSourcePicker } from '@/components/shared/FileSourcePicker';
 import { toast } from '@/hooks/useToast';
@@ -261,7 +261,11 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
 
   // Handle ingredient match update — apply to all sessions that use this ingredient
   const handleMatchUpdate = useCallback((parsedName: string, matchedItemId?: string, matchedItemName?: string, unit?: string) => {
-    const key = normalizeIngredientName(parsedName);
+    // Find the group by the same key it was grouped under, whichever match in
+    // it happens to carry that name.
+    const key = [...deduplicatedIngredients.entries()]
+      .find(([, g]) => g.matches.some(m => m.parsedName === parsedName))?.[0];
+    if (!key) return;
     const group = deduplicatedIngredients.get(key);
     if (!group) return;
 
@@ -271,7 +275,7 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
         const sessionMatches = next.get(sessionId);
         if (sessionMatches) {
           next.set(sessionId, sessionMatches.map(m =>
-            normalizeIngredientName(m.parsedName) === key
+            dedupeKeyFor(m) === key
               ? { ...m, matchedItemId, matchedItemName, matchStatus: matchedItemId ? 'manual' as const : 'unmatched' as const, modifiedUnit: unit }
               : m
           ));
@@ -837,7 +841,7 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
 
               <div className="space-y-2 max-h-[40vh] overflow-y-auto">
                 {allIngredientMatches.map((match, i) => {
-                  const group = deduplicatedIngredients.get(normalizeIngredientName(match.parsedName));
+                  const group = deduplicatedIngredients.get(dedupeKeyFor(match));
                   return (
                     <div key={i}>
                       <IngredientMatchRow

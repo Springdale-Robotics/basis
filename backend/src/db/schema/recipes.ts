@@ -191,6 +191,14 @@ export interface ParsedIngredient {
 
 export interface IngredientMatch {
   parsedName: string;
+  /**
+   * Identity-normalized parsedName, computed server-side so clients can group
+   * the same ingredient across recipes without reimplementing normalization.
+   * The frontend had its own copy that claimed to mirror this one and didn't
+   * (no plural stemming), so bulk review listed "onion" and "onions" as two
+   * separate things to link.
+   */
+  dedupeKey?: string;
   parsedQuantity?: number;
   parsedUnit?: string;
   matchStatus: 'matched' | 'unmatched' | 'manual';
