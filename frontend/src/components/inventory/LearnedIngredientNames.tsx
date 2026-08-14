@@ -74,7 +74,7 @@ export function LearnedIngredientNames() {
             {aliases.map((alias) => (
               <li key={alias.id} className="flex items-center gap-3 py-2">
                 <div className="flex min-w-0 flex-1 items-center gap-2 text-sm">
-                  <span className="truncate font-medium">{alias.aliasName}</span>
+                  <span className="truncate font-medium">{alias.displayName}</span>
                   <ArrowRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
                   <span className="truncate text-muted-foreground">{alias.itemName}</span>
                 </div>
@@ -98,7 +98,7 @@ export function LearnedIngredientNames() {
         title="Forget this name?"
         description={
           deleteTarget
-            ? `"${deleteTarget.aliasName}" will stop linking to ${deleteTarget.itemName} automatically. Recipes already imported keep their links.`
+            ? `"${deleteTarget.displayName}" will stop linking to ${deleteTarget.itemName} automatically. Recipes already imported keep their links.`
             : ''
         }
         confirmText="Forget"
