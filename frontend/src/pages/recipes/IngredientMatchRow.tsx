@@ -106,16 +106,21 @@ export function IngredientMatchRow({ match, onUpdate, onCreateNew }: IngredientM
     staleTime: 60000,
   });
 
-  // Fetch match suggestions for this ingredient
+  // The session already carries suggestions for every ingredient, computed in
+  // the same pass that produced the matches. Fetching them again per row meant
+  // one request per ingredient — a bulk review of 200 deduped ingredients was
+  // 200 requests, each re-scanning the household's whole catalog. Only ask the
+  // server when this row has nothing, and only once the user opens the picker.
   const { data: suggestionsData } = useQuery({
     queryKey: ['ingredient-suggestions', match.parsedName, match.parsedUnit],
     queryFn: () => recipesApi.matchIngredient(match.parsedName, match.parsedUnit),
     staleTime: 60000,
+    enabled: open && !match.suggestions?.length,
   });
 
   const items = itemsData?.items || [];
   const areas = areasData?.areas || [];
-  const suggestions = suggestionsData?.suggestions || match.suggestions || [];
+  const suggestions = match.suggestions?.length ? match.suggestions : (suggestionsData?.suggestions || []);
 
   const handleSelect = (itemId: string, itemName: string) => {
     // With density-based conversions, just link directly

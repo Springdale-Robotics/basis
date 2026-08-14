@@ -80,8 +80,14 @@ export function formatOcrForEditing(rawText: string | null, parsedContent: Parse
 }
 
 /**
- * Simple ingredient name normalization for deduplication on the frontend.
- * Mirrors the backend's normalizeIngredientName() logic.
+ * Fallback grouping key for ingredient matches that predate the server sending
+ * `dedupeKey` (sessions created before that change, which live for a week).
+ *
+ * This claimed to mirror the backend and didn't — no plural stemming, and it
+ * strips everything after a comma — so bulk review listed "onion" and "onions"
+ * as two separate things to link, and updating one didn't reach the other.
+ * Prefer `match.dedupeKey`; a second implementation of a matching rule only
+ * ever drifts again.
  */
 export function normalizeIngredientName(name: string): string {
   return name
@@ -96,7 +102,14 @@ export function normalizeIngredientName(name: string): string {
 
 interface MatchWithConfidence {
   parsedName: string;
+  /** Server-computed grouping key; absent on sessions created before it existed. */
+  dedupeKey?: string;
   confidence?: number;
+}
+
+/** Group two ingredient mentions together iff they mean the same thing. */
+export function dedupeKeyFor(match: MatchWithConfidence): string {
+  return match.dedupeKey || normalizeIngredientName(match.parsedName);
 }
 
 export interface DedupedMatchGroup<M extends MatchWithConfidence> {
@@ -123,7 +136,7 @@ export function deduplicateIngredientMatches<M extends MatchWithConfidence>(
   const grouped = new Map<string, DedupedMatchGroup<M>>();
   for (const [sessionId, matches] of perSessionMatches) {
     for (const match of matches) {
-      const key = normalizeIngredientName(match.parsedName);
+      const key = dedupeKeyFor(match);
       const existing = grouped.get(key);
       if (existing) {
         existing.recipeCount++;

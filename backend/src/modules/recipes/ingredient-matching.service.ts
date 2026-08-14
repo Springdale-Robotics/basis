@@ -610,6 +610,7 @@ export async function matchIngredients(
     // Build match result
     const match: IngredientMatch = {
       parsedName: parsed.name,
+      dedupeKey: normalizeIngredientIdentity(parsed.name),
       parsedQuantity: parsed.quantity,
       parsedUnit: parsed.unit,
       matchStatus: topSuggestions.length > 0 && topSuggestions[0].confidence >= AUTO_MATCH_THRESHOLD
