@@ -1259,17 +1259,24 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       // ingredients before sending back to the client. If CRF is down, we
       // surface a warning rather than silently regex-parsing.
       let parseMethod: 'text' | 'crf' = 'text';
+      let confidence = result.confidence;
       const warnings = [...result.warnings];
       if (result.recipe.ingredients && result.recipe.ingredients.length > 0) {
-        const { parseIngredientLinesViaCRF, INGREDIENT_PARSER_UNAVAILABLE_WARNING } =
+        const { parseIngredientLinesViaCRF, INGREDIENT_PARSER_UNAVAILABLE_WARNING, confidenceFromCrfParse } =
           await import('./recipe-import.service.js');
         const rawLines = result.recipe.ingredients.map((i) => i.name);
-        const outcome = await parseIngredientLinesViaCRF(rawLines);
+        // Pass the originals so group headings survive the rebuild.
+        const outcome = await parseIngredientLinesViaCRF(rawLines, result.recipe.ingredients);
         result.recipe.ingredients = outcome.ingredients;
         if (outcome.degraded) {
           warnings.push(INGREDIENT_PARSER_UNAVAILABLE_WARNING);
         } else {
           parseMethod = 'crf';
+          // This is the number behind the badge on the review screen — the one
+          // the user reads while deciding whether to trust the parse. Reporting
+          // the structural score here while the session reported the CRF-derived
+          // one meant the fix never reached the screen it was for.
+          confidence = Math.max(confidence, confidenceFromCrfParse(result.recipe, outcome.confidence));
         }
       }
 
@@ -1278,7 +1285,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         data: {
           parsedRecipe: result.recipe,
           parseMethod,
-          confidence: result.confidence,
+          confidence,
           warnings,
         },
       };
