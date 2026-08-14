@@ -33,6 +33,10 @@ function getMatchReasonLabel(reason: MatchReason | undefined): string | null {
     case 'synonym': return 'Synonym';
     case 'contains': return 'Similar';
     case 'fuzzy': return 'Fuzzy match';
+    // Same ingredient, different form — dried vs canned chickpeas. Offered
+    // near the top of the list but never linked automatically, because which
+    // one the household actually stocks is theirs to say.
+    case 'related': return 'Different form';
     default: return null;
   }
 }
@@ -44,6 +48,7 @@ function getMatchReasonVariant(reason: MatchReason | undefined): 'default' | 'se
     case 'synonym': return 'default';
     case 'contains': return 'secondary';
     case 'fuzzy': return 'outline';
+    case 'related': return 'secondary';
     default: return 'outline';
   }
 }

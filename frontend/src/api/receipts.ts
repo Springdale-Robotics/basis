@@ -8,7 +8,7 @@ export interface ReceiptLineSuggestion {
   itemId: string;
   name: string;
   confidence: number;
-  matchReason: 'exact' | 'synonym' | 'contains' | 'fuzzy';
+  matchReason: 'exact' | 'synonym' | 'contains' | 'fuzzy' | 'related';
 }
 
 export interface ReceiptScanLine {

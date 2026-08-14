@@ -187,7 +187,7 @@ export interface IngredientMatch {
   matchedItemName?: string;
   modifiedUnit?: string;  // User-modified unit during import
   confidence?: number;
-  matchReason?: 'exact' | 'synonym' | 'contains' | 'fuzzy';
+  matchReason?: 'exact' | 'synonym' | 'contains' | 'fuzzy' | 'related';
   needsQuantityWeight?: {
     fromUnit: string;
     toUnit: string;
@@ -196,7 +196,7 @@ export interface IngredientMatch {
     itemId: string;
     name: string;
     confidence: number;
-    matchReason?: 'exact' | 'synonym' | 'contains' | 'fuzzy';
+    matchReason?: 'exact' | 'synonym' | 'contains' | 'fuzzy' | 'related';
     needsQuantityWeight?: {
       fromUnit: string;
       toUnit: string;

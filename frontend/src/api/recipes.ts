@@ -67,7 +67,7 @@ export interface ParsedIngredient {
   notes?: string;
 }
 
-export type MatchReason = 'exact' | 'synonym' | 'contains' | 'fuzzy';
+export type MatchReason = 'exact' | 'synonym' | 'contains' | 'fuzzy' | 'related';
 
 export interface IngredientMatch {
   parsedName: string;
