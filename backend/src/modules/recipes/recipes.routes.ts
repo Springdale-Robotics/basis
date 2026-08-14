@@ -37,6 +37,7 @@ import {
   cancelImportSession,
   parseRecipeTextWithConfidence,
   rematchIngredients,
+  markImportSessionFailed,
 } from './recipe-import.service.js';
 import { parseRecipeFromUrl } from './url-parser.service.js';
 import { processRecipeImage, fetchImageFromUrl } from './recipe-image.service.js';
@@ -1304,26 +1305,40 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         sourceData
       );
 
-      // Process based on source type
-      if (sourceType === 'url') {
-        await processUrlImportSession(sessionId, sourceData, request.user!.householdId);
-      } else if (sourceType === 'pdf') {
-        // Extract text from PDF, then parse as text
-        try {
-          const { extractTextFromPDF } = await import('../../services/pdf-extraction.js');
-          const pdfBuffer = Buffer.from(sourceData, 'base64');
-          const extractedText = await extractTextFromPDF(pdfBuffer);
-          await processImportSession(sessionId, extractedText, request.user!.householdId, 'pdf');
-        } catch (err) {
-          // If PDF extraction fails, try raw text if provided
-          if (rawText) {
-            await processImportSession(sessionId, rawText, request.user!.householdId, 'text');
-          } else {
-            throw Errors.validation('Failed to extract text from PDF');
+      // Parsing failures are ordinary — a page that isn't a recipe, a scanned
+      // PDF with no text layer. Record the reason on the session and report it
+      // as a validation error, rather than throwing and leaving the row stuck
+      // in 'parsing' behind a generic "Internal server error".
+      try {
+        if (sourceType === 'url') {
+          await processUrlImportSession(sessionId, sourceData, request.user!.householdId);
+        } else if (sourceType === 'pdf') {
+          // Extract text from PDF, then parse as text
+          try {
+            const { extractTextFromPDF } = await import('../../services/pdf-extraction.js');
+            const pdfBuffer = Buffer.from(sourceData, 'base64');
+            const extractedText = await extractTextFromPDF(pdfBuffer);
+            await processImportSession(sessionId, extractedText, request.user!.householdId, 'pdf');
+          } catch (err) {
+            // If PDF extraction fails, try raw text if provided
+            if (rawText) {
+              await processImportSession(sessionId, rawText, request.user!.householdId, 'text');
+            } else {
+              throw Errors.validation(
+                "Couldn't read any text from that PDF. If it's a scan, try the Scan Image tab instead."
+              );
+            }
           }
+        } else if (rawText || sourceType === 'text') {
+          await processImportSession(sessionId, rawText || sourceData, request.user!.householdId, 'text');
+        } else {
+          throw Errors.validation('No recipe content was provided for this source type.');
         }
-      } else if (rawText || sourceType === 'text') {
-        await processImportSession(sessionId, rawText || sourceData, request.user!.householdId, 'text');
+      } catch (error) {
+        await markImportSessionFailed(sessionId, error);
+        throw Errors.validation(
+          error instanceof Error ? error.message : 'Could not read this recipe'
+        );
       }
 
       return { success: true, data: { sessionId } };
@@ -1492,35 +1507,60 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
     { preHandler: [authMiddleware, requireMember()] },
     async (request) => {
       const schema = z.object({
+        // Each entry can mean an outbound fetch plus a CRF call, all handled
+        // inside this one request. Uncapped, a long paste of URLs held the
+        // connection open until it timed out.
         entries: z.array(z.object({
           sourceType: z.enum(['url', 'text']),
           sourceData: z.string(),
           rawText: z.string().optional(),
-        })),
+        })).min(1).max(25),
       });
 
       const { entries } = schema.parse(request.body);
 
-      const sessionIds: string[] = [];
+      // One bad URL in a paste of forty used to throw out of the loop, losing
+      // both the entries after it and any record of which ones had worked.
+      const results: Array<{
+        sessionId: string | null;
+        status: 'pending_review' | 'failed';
+        error?: string;
+      }> = [];
 
       for (const entry of entries) {
-        const sessionId = await createImportSession(
-          request.user!.householdId,
-          request.user!.id,
-          entry.sourceType,
-          entry.sourceData
-        );
+        let sessionId: string | null = null;
+        try {
+          sessionId = await createImportSession(
+            request.user!.householdId,
+            request.user!.id,
+            entry.sourceType,
+            entry.sourceData
+          );
 
-        if (entry.sourceType === 'url') {
-          await processUrlImportSession(sessionId, entry.sourceData, request.user!.householdId);
-        } else {
-          await processImportSession(sessionId, entry.rawText || entry.sourceData, request.user!.householdId, 'text');
+          if (entry.sourceType === 'url') {
+            await processUrlImportSession(sessionId, entry.sourceData, request.user!.householdId);
+          } else {
+            await processImportSession(sessionId, entry.rawText || entry.sourceData, request.user!.householdId, 'text');
+          }
+          results.push({ sessionId, status: 'pending_review' });
+        } catch (error) {
+          if (sessionId) await markImportSessionFailed(sessionId, error);
+          results.push({
+            sessionId,
+            status: 'failed',
+            error: error instanceof Error ? error.message : 'Could not read this recipe',
+          });
         }
-
-        sessionIds.push(sessionId);
       }
 
-      return { success: true, data: { sessionIds } };
+      return {
+        success: true,
+        data: {
+          results,
+          // Kept for callers that only care about the ones that worked.
+          sessionIds: results.filter(r => r.status === 'pending_review').map(r => r.sessionId!),
+        },
+      };
     }
   );
 
@@ -1536,12 +1576,19 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       const { sessionIds } = schema.parse(request.body);
 
       const results: Record<string, unknown> = {};
+      const failed: Array<{ sessionId: string; error: string }> = [];
       for (const sessionId of sessionIds) {
-        const matches = await rematchIngredients(sessionId, request.user!.householdId);
-        results[sessionId] = matches;
+        try {
+          results[sessionId] = await rematchIngredients(sessionId, request.user!.householdId);
+        } catch (error) {
+          failed.push({
+            sessionId,
+            error: error instanceof Error ? error.message : 'Could not re-match this recipe',
+          });
+        }
       }
 
-      return { success: true, data: { results } };
+      return { success: true, data: { results, failed } };
     }
   );
 
@@ -1572,21 +1619,42 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
 
       const { sessions } = schema.parse(request.body);
 
-      const recipeIds: string[] = [];
+      // Saving forty recipes should not be all-or-nothing, and it certainly
+      // should not be some-and-nothing: this used to throw on the first
+      // unusable session having already committed the ones before it, so the
+      // user got a flat error with no way to tell what had been saved.
+      const results: Array<{
+        sessionId: string;
+        status: 'confirmed' | 'failed';
+        recipeId?: string;
+        error?: string;
+      }> = [];
+
       for (const { sessionId, overrides } of sessions) {
-        const recipeId = await confirmImportSession(
-          sessionId,
-          request.user!.householdId,
-          request.user!.id,
-          overrides
-        );
-        recipeIds.push(recipeId);
+        try {
+          const recipeId = await confirmImportSession(
+            sessionId,
+            request.user!.householdId,
+            request.user!.id,
+            overrides
+          );
+          results.push({ sessionId, status: 'confirmed', recipeId });
+        } catch (error) {
+          results.push({
+            sessionId,
+            status: 'failed',
+            error: error instanceof Error ? error.message : 'Could not save this recipe',
+          });
+        }
       }
 
+      const recipeIds = results
+        .filter(r => r.status === 'confirmed')
+        .map(r => r.recipeId!);
       for (const recipeId of recipeIds) {
         emitRecipeEvent(request.user!.householdId, { recipeId, action: 'created' });
       }
-      return { success: true, data: { recipeIds } };
+      return { success: true, data: { results, recipeIds } };
     }
   );
 

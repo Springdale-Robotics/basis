@@ -559,6 +559,20 @@ export async function parseIngredientLinesViaCRF(
 }
 
 /**
+ * Record that a session couldn't be parsed, keeping the reason where the UI
+ * can show it. Previously a parse failure threw out of the route: the request
+ * 500'd with "Internal server error", the useful message from the parser was
+ * swallowed, and the row sat in 'parsing' forever.
+ */
+export async function markImportSessionFailed(sessionId: string, error: unknown): Promise<void> {
+  const message = error instanceof Error ? error.message : 'Could not read this recipe';
+  await db
+    .update(recipeImportSessions)
+    .set({ status: 'failed', parseWarnings: [message] })
+    .where(eq(recipeImportSessions.id, sessionId));
+}
+
+/**
  * Process raw text content for an import session
  */
 export async function processImportSession(
@@ -938,96 +952,111 @@ export async function confirmImportSession(
     text,
   }));
 
-  // Create the recipe
-  const [recipe] = await db
-    .insert(recipes)
-    .values({
-      householdId,
-      createdBy: userId,
-      title: finalRecipe.title,
-      description: finalRecipe.description,
-      instructions: instructionObjects,
-      prepTimeMinutes: finalRecipe.prepTimeMinutes,
-      cookTimeMinutes: finalRecipe.cookTimeMinutes,
-      servings: finalRecipe.servings,
-      imageUrl: finalRecipe.imageUrl,
-      // Every parser fills these in and confirm used to drop them all, so a
-      // web-imported recipe had no record of where it came from — nothing to
-      // re-check, re-import or attribute.
-      sourceUrl: finalRecipe.sourceUrl,
-    })
-    .returning();
-
-  // Create ingredients with inventory links.
-  //
-  // Matches are produced one-per-ingredient in order, so position is the
-  // reliable association. Name was the join key before, which meant renaming
-  // an ingredient on the review screen silently dropped its inventory link,
-  // and two identical lines collapsed onto one match. Name lookup stays as
-  // the fallback for when the user has added or removed rows and the arrays
-  // no longer line up.
-  const matchesAlignByPosition = ingredientMatches.length === finalRecipe.ingredients.length;
-  if (finalRecipe.ingredients.length > 0) {
-    await db.insert(recipeIngredients).values(
-      finalRecipe.ingredients.map((ing, index) => {
-        const match = matchesAlignByPosition
-          ? ingredientMatches[index]
-          : ingredientMatches.find(m => m.parsedName === ing.name);
-        // Use user-modified unit if available, otherwise fall back to parsed unit
-        const unit = match?.modifiedUnit ?? ing.unit;
-        return {
-          recipeId: recipe.id,
-          name: ing.name,
-          quantity: ing.quantity?.toString(),
-          unit,
-          notes: ing.notes,
-          inventoryItemId: match?.matchedItemId,
-          groupName: ing.groupName ?? null,
-        };
+  // Everything from here is one unit of work. Split across separate
+  // statements, a failure part-way left a recipe with no ingredients, or a
+  // confirmed recipe whose session still said pending_review.
+  const recipe = await db.transaction(async (tx) => {
+    const [created] = await tx
+      .insert(recipes)
+      .values({
+        householdId,
+        createdBy: userId,
+        title: finalRecipe.title,
+        description: finalRecipe.description,
+        instructions: instructionObjects,
+        prepTimeMinutes: finalRecipe.prepTimeMinutes,
+        cookTimeMinutes: finalRecipe.cookTimeMinutes,
+        servings: finalRecipe.servings,
+        imageUrl: finalRecipe.imageUrl,
+        // Every parser fills this in and confirm used to drop it, so a
+        // web-imported recipe had no record of where it came from — nothing
+        // to re-check, re-import or attribute.
+        sourceUrl: finalRecipe.sourceUrl,
       })
-    );
-  }
+      .returning();
 
-  // Auto-create ingredient aliases for manual matches where names differ.
-  // (Previously gated on matchReason === 'manual', which is never true — a
-  // manual match is recorded as matchStatus === 'manual', so this block was
-  // dead. Corrected to the intended condition.)
-  for (const match of ingredientMatches) {
-    if (match.matchStatus === 'manual' && match.matchedItemId) {
-      const parsedNorm = normalizeIngredientName(match.parsedName);
-      // Get the matched item name
-      const item = await db.query.inventoryItems.findFirst({
-        where: eq(inventoryItems.id, match.matchedItemId),
-      });
-      if (item) {
-        const itemNorm = normalizeIngredientName(item.name);
-        // Only create alias if names are actually different
-        if (parsedNorm !== itemNorm) {
-          // Check if alias already exists
-          const existing = await db.query.ingredientAliases.findFirst({
-            where: and(
-              eq(ingredientAliases.householdId, householdId),
-              eq(ingredientAliases.aliasName, parsedNorm),
-            ),
-          });
-          if (!existing) {
-            await db.insert(ingredientAliases).values({
+    // Create ingredients with inventory links.
+    //
+    // Matches are produced one-per-ingredient in order, so position is the
+    // reliable association. Name was the join key before, which meant
+    // renaming an ingredient on the review screen silently dropped its
+    // inventory link, and two identical lines collapsed onto one match. Name
+    // lookup stays as the fallback for when the user has added or removed
+    // rows and the arrays no longer line up.
+    const matchesAlignByPosition = ingredientMatches.length === finalRecipe.ingredients.length;
+    if (finalRecipe.ingredients.length > 0) {
+      await tx.insert(recipeIngredients).values(
+        finalRecipe.ingredients.map((ing, index) => {
+          const match = matchesAlignByPosition
+            ? ingredientMatches[index]
+            : ingredientMatches.find(m => m.parsedName === ing.name);
+          // Use user-modified unit if available, otherwise fall back to parsed unit
+          const unit = match?.modifiedUnit ?? ing.unit;
+          return {
+            recipeId: created.id,
+            name: ing.name,
+            quantity: ing.quantity?.toString(),
+            unit,
+            notes: ing.notes,
+            inventoryItemId: match?.matchedItemId,
+            groupName: ing.groupName ?? null,
+          };
+        })
+      );
+    }
+
+    // Learn an alias for each item the user explicitly chose whose name
+    // differs from the ingredient's. Suggestions the user merely didn't
+    // object to are recorded as 'matched' and teach nothing — see
+    // updateIngredientMatches.
+    const confirmedMatches = ingredientMatches.filter(
+      (m): m is IngredientMatch & { matchedItemId: string } =>
+        m.matchStatus === 'manual' && !!m.matchedItemId
+    );
+    if (confirmedMatches.length > 0) {
+      // One query for the item names and one for the existing aliases,
+      // rather than a pair per match.
+      const itemIds = [...new Set(confirmedMatches.map(m => m.matchedItemId))];
+      const items = await tx
+        .select({ id: inventoryItems.id, name: inventoryItems.name })
+        .from(inventoryItems)
+        .where(inArray(inventoryItems.id, itemIds));
+      const itemNameById = new Map(items.map(i => [i.id, i.name]));
+
+      const newAliases = new Map<string, string>();
+      for (const match of confirmedMatches) {
+        const itemName = itemNameById.get(match.matchedItemId);
+        if (!itemName) continue;
+        const aliasName = normalizeIngredientName(match.parsedName);
+        // Nothing to learn when the names already normalize the same way.
+        if (!aliasName || aliasName === normalizeIngredientName(itemName)) continue;
+        newAliases.set(aliasName, match.matchedItemId);
+      }
+
+      if (newAliases.size > 0) {
+        await tx
+          .insert(ingredientAliases)
+          .values(
+            [...newAliases].map(([aliasName, canonicalItemId]) => ({
               householdId,
-              canonicalItemId: match.matchedItemId,
-              aliasName: parsedNorm,
-              aliasType: 'exact',
-            });
-          }
-        }
+              canonicalItemId,
+              aliasName,
+              aliasType: 'exact' as const,
+            }))
+          )
+          // Two ingredients can normalize to one alias name, and the household
+          // may already have taught us this one. Either way, keep what's there.
+          .onConflictDoNothing();
       }
     }
-  }
 
-  // Update session status
-  await db
-    .update(recipeImportSessions)
-    .set({ status: 'confirmed' })
-    .where(eq(recipeImportSessions.id, sessionId));
+    await tx
+      .update(recipeImportSessions)
+      .set({ status: 'confirmed' })
+      .where(eq(recipeImportSessions.id, sessionId));
+
+    return created;
+  });
 
   return recipe.id;
 }

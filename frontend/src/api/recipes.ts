@@ -173,7 +173,7 @@ export interface ImportSession {
   sourceData: string;
   parsedRecipe: ParsedRecipe | null;
   ingredientMatches: IngredientMatch[];
-  status: 'parsing' | 'pending_review' | 'confirmed' | 'cancelled';
+  status: 'parsing' | 'pending_review' | 'confirmed' | 'cancelled' | 'failed';
   parseMethod?: ParseMethod;
   parseConfidence?: string;
   parseWarnings?: string[];
@@ -356,14 +356,28 @@ export const recipesApi = {
     apiPost<{ parsedRecipe: ParsedRecipe; ingredientMatches: IngredientMatch[]; parseMethod: string; confidence: number }>(`/recipes/import/${sessionId}/reparse-llm`, {}),
 
   // Batch import
+  /**
+   * Batch endpoints report per-entry outcomes and never abort the run: one
+   * unreadable URL in a paste of forty used to lose every entry after it,
+   * along with any record of which ones had worked.
+   */
   startBatchImport: (entries: Array<{ sourceType: 'url' | 'text'; sourceData: string; rawText?: string }>) =>
-    apiPost<{ sessionIds: string[] }>('/recipes/import/start-batch', { entries }),
+    apiPost<{
+      results: Array<{ sessionId: string | null; status: 'pending_review' | 'failed'; error?: string }>;
+      sessionIds: string[];
+    }>('/recipes/import/start-batch', { entries }),
 
   confirmBatchImport: (sessions: Array<{ sessionId: string; overrides?: Record<string, unknown> }>) =>
-    apiPost<{ recipeIds: string[] }>('/recipes/import/confirm-batch', { sessions }),
+    apiPost<{
+      results: Array<{ sessionId: string; status: 'confirmed' | 'failed'; recipeId?: string; error?: string }>;
+      recipeIds: string[];
+    }>('/recipes/import/confirm-batch', { sessions }),
 
   rematchBatchIngredients: (sessionIds: string[]) =>
-    apiPost<{ results: Record<string, IngredientMatch[]> }>('/recipes/import/rematch-batch', { sessionIds }),
+    apiPost<{
+      results: Record<string, IngredientMatch[]>;
+      failed: Array<{ sessionId: string; error: string }>;
+    }>('/recipes/import/rematch-batch', { sessionIds }),
 
   parseIngredientLines: (lines: string[]) =>
     apiPost<{ ingredients: Array<{ name: string; quantity?: number; unit?: string; notes?: string }>; parser: string }>('/recipes/ingredients/parse', { lines }),
