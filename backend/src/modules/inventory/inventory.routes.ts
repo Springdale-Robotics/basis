@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db } from '../../config/database.js';
-import { inventoryAreas, inventoryItems, inventoryStock, shoppingList, leftovers, recipeIngredients, recipes } from '../../db/schema/index.js';
+import { inventoryAreas, inventoryItems, inventoryStock, shoppingList, leftovers, recipeIngredients, recipes, ingredientAliases } from '../../db/schema/index.js';
 import { eq, and, lt, lte, sql, isNotNull, isNull } from 'drizzle-orm';
 import { authMiddleware } from '../../middleware/auth.middleware.js';
 import { requireInventoryAccess, requireShoppingListAccess } from '../../middleware/permission.middleware.js';
@@ -1946,6 +1946,56 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         emitShoppingListUpdate(request.user!.householdId);
       }
       return { success: true, data: { message: 'Item marked out of stock' } };
+    }
+  );
+
+  // ===== LEARNED INGREDIENT NAMES =====
+  //
+  // Recipe import records an alias when the user links an ingredient to an
+  // item whose name differs, and receipt scanning reads the same table. These
+  // rules then apply silently to every future import, so the household needs a
+  // way to see and undo them — a wrong one (say "butter" -> "Unsalted Butter"
+  // when they stock both) otherwise keeps mislinking with no way to find out.
+
+  app.get(
+    '/ingredient-aliases',
+    { preHandler: [authMiddleware, requireInventoryAccess('view')] },
+    async (request) => {
+      const rows = await db
+        .select({
+          id: ingredientAliases.id,
+          aliasName: ingredientAliases.aliasName,
+          aliasType: ingredientAliases.aliasType,
+          createdAt: ingredientAliases.createdAt,
+          itemId: inventoryItems.id,
+          itemName: inventoryItems.name,
+        })
+        .from(ingredientAliases)
+        .innerJoin(inventoryItems, eq(inventoryItems.id, ingredientAliases.canonicalItemId))
+        .where(eq(ingredientAliases.householdId, request.user!.householdId))
+        .orderBy(ingredientAliases.aliasName);
+
+      return { success: true, data: { aliases: rows } };
+    }
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    '/ingredient-aliases/:id',
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
+    async (request) => {
+      const [deleted] = await db
+        .delete(ingredientAliases)
+        .where(
+          and(
+            eq(ingredientAliases.id, request.params.id),
+            eq(ingredientAliases.householdId, request.user!.householdId)
+          )
+        )
+        .returning({ id: ingredientAliases.id });
+
+      if (!deleted) throw Errors.notFound('Learned ingredient name');
+
+      return { success: true, data: { message: 'Learned name removed' } };
     }
   );
 }
