@@ -28,14 +28,11 @@ import { IngredientMatchRow } from './IngredientMatchRow';
 import { BulkIngredientActions } from './BulkIngredientActions';
 import { BulkImportRecipeDialog } from './BulkImportRecipeDialog';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
-import { useCategories } from '@/hooks/useCategories';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
-import { getItemIcon } from '@/lib/inventory-constants';
 import { FileSourcePicker } from '@/components/shared/FileSourcePicker';
 import { useDirtyCloseGuard } from '@/hooks/useDirtyCloseGuard';
 
-type ImportStep = 'source' | 'review' | 'ingredients' | 'quick-catalog' | 'confirm';
+type ImportStep = 'source' | 'review' | 'ingredients' | 'confirm';
 
 interface ImportRecipeDialogProps {
   open: boolean;
@@ -84,7 +81,6 @@ function getParseStatus(method: ParseMethod | undefined, confidence: number | un
 
 export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, onBatchTransition }: ImportRecipeDialogProps) {
   const { isAdvanced } = useInventoryTier();
-  const { categories } = useCategories();
   const [step, setStep] = useState<ImportStep>('source');
   // When the user picks multiple files we render the batch flow inline
   // inside this same dialog instead of opening a separate one. The optional
@@ -101,18 +97,6 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     setBatchMode(true);
   };
 
-  // Fetch existing inventory items for "link to existing" option
-  const { data: existingItemsData } = useQuery({
-    queryKey: ['inventory', 'items'],
-    queryFn: () => inventoryApi.getItems({}),
-    enabled: open,
-  });
-  const existingItems = existingItemsData?.items || [];
-  const existingItemOptions: ComboboxOption[] = existingItems.map(item => ({
-    value: item.id,
-    label: item.name,
-    icon: <span>{getItemIcon(item)}</span>,
-  }));
   const [sourceType, setSourceType] = useState<'url' | 'pdf' | 'text' | 'file' | 'image'>(defaultTab || 'text');
 
   // Sync tab when dialog opens
@@ -145,22 +129,6 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     ingredients?: Array<{ name: string; quantity?: number; unit?: string; notes?: string }>;
     instructions?: string[];
   }>({});
-
-  // Quick catalog state (Basic mode)
-  interface CatalogSuggestion {
-    originalName: string;
-    suggestedName: string;
-    editedName: string;
-    category?: string;
-    similarExisting?: string;
-    /** 'create' = make new item, 'link' = link to existing item */
-    action: 'create' | 'link';
-    /** If action='link', the existing item ID to link to */
-    linkedItemId?: string;
-    linkedItemName?: string;
-  }
-  const [catalogSuggestions, setCatalogSuggestions] = useState<CatalogSuggestion[]>([]);
-  const [isCreatingItems, setIsCreatingItems] = useState(false);
 
   // Preview state for URL/text parsing
   const [previewRecipe, setPreviewRecipe] = useState<ParsedRecipe | null>(null);
@@ -266,68 +234,11 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     },
   });
 
-  // Rematch mutation
-  const rematchMutation = useMutation({
-    mutationFn: () => recipesApi.rematchIngredients(sessionId!),
-    onSuccess: (data) => {
-      setIngredientMatches(data.matches);
-      queryClient.invalidateQueries({ queryKey: ['import-session', sessionId] });
-    },
-  });
-
   // Confirm import mutation
   const confirmMutation = useMutation({
     mutationFn: async () => {
-      // Step 1: Create new items from catalog suggestions
-      const toCreate = catalogSuggestions.filter(s => s.action === 'create' && s.editedName.trim());
-      if (toCreate.length > 0) {
-        const items = toCreate.map(s => ({
-          name: s.editedName.trim(),
-          category: s.category,
-          defaultUnit: 'pieces',
-        }));
-        const result = await inventoryApi.batchCreateItems({ items });
-
-        if (result?.items) {
-          const nameToId: Record<string, string> = {};
-          for (const item of result.items) {
-            nameToId[item.name.toLowerCase()] = item.id;
-          }
-
-          // Update ingredient matches with created item IDs
-          for (const suggestion of toCreate) {
-            const itemId = nameToId[suggestion.editedName.trim().toLowerCase()];
-            if (itemId) {
-              const matchIdx = ingredientMatches.findIndex(m => m.parsedName === suggestion.originalName);
-              if (matchIdx >= 0) {
-                ingredientMatches[matchIdx] = {
-                  ...ingredientMatches[matchIdx],
-                  matchedItemId: itemId,
-                  matchedItemName: suggestion.editedName.trim(),
-                  matchStatus: 'manual',
-                };
-              }
-            }
-          }
-        }
-      }
-
-      // Step 2: Apply "link to existing" matches
-      const toLink = catalogSuggestions.filter(s => s.action === 'link' && s.linkedItemId);
-      for (const suggestion of toLink) {
-        const matchIdx = ingredientMatches.findIndex(m => m.parsedName === suggestion.originalName);
-        if (matchIdx >= 0) {
-          ingredientMatches[matchIdx] = {
-            ...ingredientMatches[matchIdx],
-            matchedItemId: suggestion.linkedItemId!,
-            matchedItemName: suggestion.linkedItemName || '',
-            matchStatus: 'manual',
-          };
-        }
-      }
-
-      // Step 3: Save all matches to session
-      if (sessionId && (toCreate.length > 0 || toLink.length > 0)) {
+      // Persist whatever linking the user did, then create the recipe.
+      if (sessionId && ingredientMatches.length > 0) {
         await recipesApi.updateImportMatches(sessionId, ingredientMatches.map(m => ({
           parsedName: m.parsedName,
           matchedItemId: m.matchedItemId,
@@ -349,11 +260,16 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     },
   });
 
-  // Quick create item mutation
+  // Quick create item mutation (per-row "Create & Link" form)
   const createItemMutation = useMutation({
     mutationFn: inventoryApi.quickCreateItem,
     onSuccess: () => {
+      // Sibling rows cache their suggestions by ingredient name, so without
+      // this an item created for one row stays invisible to the others and
+      // the user creates it again a few rows later.
       queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['ingredient-suggestions'] });
     },
   });
 
@@ -365,7 +281,6 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     setSessionId(null);
     setIngredientMatches([]);
     setImportedCatalogItems({});
-    setCatalogSuggestions([]);
     setOverrides({});
     setPreviewRecipe(null);
     setParseMethod(undefined);
@@ -622,19 +537,25 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
 
   const handleCreateAllUnmatched = useCallback(async () => {
     const unmatched = ingredientMatches.filter(m => !m.matchedItemId);
-    for (const match of unmatched) {
-      try {
-        const result = await handleCreateNewItem(match.parsedName, match.parsedUnit);
-        handleMatchUpdate(match.parsedName, result.itemId, result.itemName);
-      } catch {
-        // Continue with next item on error
-      }
+    if (unmatched.length === 0) return;
+
+    // One request for the whole set. Creating them one at a time meant each
+    // row was resolved against a catalog snapshot taken before the previous
+    // row created anything, so "olive oil" and "extra virgin olive oil" in the
+    // same recipe became two items.
+    const { results, warnings } = await recipesApi.createItemsForIngredients(
+      unmatched.map(m => ({ name: m.parsedName, unit: m.parsedUnit }))
+    );
+
+    for (const result of results) {
+      handleMatchUpdate(result.originalName, result.itemId, result.itemName);
     }
-    // Rematch to pick up new items
-    if (sessionId) {
-      rematchMutation.mutate();
-    }
-  }, [ingredientMatches, handleCreateNewItem, handleMatchUpdate, sessionId, rematchMutation]);
+    if (warnings.length > 0) setParseWarnings(prev => [...prev, ...warnings]);
+
+    queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
+    queryClient.invalidateQueries({ queryKey: ['ingredient-suggestions'] });
+  }, [ingredientMatches, handleMatchUpdate, queryClient]);
 
   const handleSkipAllUnmatched = useCallback(() => {
     // Nothing to do - unmatched items will be imported without inventory links
@@ -1308,8 +1229,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                       <Button onClick={() => {
                         // Tier 1 (basic): no catalog linking — ingredients
                         // save as text. Skip straight to the confirm step.
-                        setCatalogSuggestions([]);
-                        setStep('confirm');
+                                            setStep('confirm');
                       }}>
                         {nextStepLabel ? `Continue to ${nextStepLabel}` : 'Continue'}
                         <ChevronRight className="ml-2 h-4 w-4" />
@@ -1380,155 +1300,6 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
             </div>
           )}
 
-          {step === 'quick-catalog' && (() => {
-            const matched = ingredientMatches.filter(m => m.matchedItemId);
-            const unmatched = catalogSuggestions;
-            const allResolved = unmatched.every(s =>
-              (s.action === 'create' && s.editedName.trim()) ||
-              (s.action === 'link' && s.linkedItemId)
-            );
-            const newItemCount = unmatched.filter(s => s.action === 'create').length;
-
-            return (
-            <div className="space-y-4 py-4">
-              <div>
-                <h3 className="font-medium">Link Ingredients to Catalog</h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Each ingredient needs a catalog item.
-                  {matched.length > 0 && ` ${matched.length} auto-matched.`}
-                  {unmatched.length > 0 && ` ${unmatched.length} need linking.`}
-                </p>
-              </div>
-
-              {/* Already matched */}
-              {matched.length > 0 && (
-                <div className="space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Auto-matched</p>
-                  {matched.map(m => (
-                    <div key={m.parsedName} className="flex items-center gap-2 px-3 py-1.5 rounded bg-muted/30 text-sm">
-                      <Check className="h-3.5 w-3.5 text-success shrink-0" />
-                      <span className="text-muted-foreground truncate">{m.parsedName}</span>
-                      <span className="text-muted-foreground shrink-0">→</span>
-                      <span className="font-medium truncate">{m.matchedItemName}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Unmatched — create new or link to existing */}
-              {unmatched.length > 0 && (
-                <div className="space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Needs linking</p>
-                  <div className="space-y-2">
-                    {unmatched.map((suggestion, idx) => (
-                      <div key={suggestion.originalName} className="p-3 rounded-lg border space-y-2">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-medium">{suggestion.originalName}</p>
-                          <div className="flex gap-1">
-                            <button
-                              type="button"
-                              className={cn(
-                                'text-xs px-2 py-0.5 rounded transition-colors',
-                                suggestion.action === 'create'
-                                  ? 'bg-primary text-primary-foreground'
-                                  : 'bg-muted text-muted-foreground hover:text-foreground'
-                              )}
-                              onClick={() => setCatalogSuggestions(prev => prev.map((s, i) =>
-                                i === idx ? { ...s, action: 'create', linkedItemId: undefined, linkedItemName: undefined } : s
-                              ))}
-                            >
-                              Create new
-                            </button>
-                            <button
-                              type="button"
-                              className={cn(
-                                'text-xs px-2 py-0.5 rounded transition-colors',
-                                suggestion.action === 'link'
-                                  ? 'bg-primary text-primary-foreground'
-                                  : 'bg-muted text-muted-foreground hover:text-foreground'
-                              )}
-                              onClick={() => setCatalogSuggestions(prev => prev.map((s, i) =>
-                                i === idx ? { ...s, action: 'link' } : s
-                              ))}
-                            >
-                              Link existing
-                            </button>
-                          </div>
-                        </div>
-
-                        {suggestion.action === 'create' ? (
-                          <div className="space-y-1.5">
-                            <input
-                              className="text-sm bg-transparent border-b border-border focus:border-primary focus:outline-none px-0 py-0.5 w-full"
-                              placeholder="Item name"
-                              value={suggestion.editedName}
-                              onChange={(e) => setCatalogSuggestions(prev => prev.map((s, i) =>
-                                i === idx ? { ...s, editedName: e.target.value } : s
-                              ))}
-                            />
-                            <div className="flex items-center gap-2">
-                              <select
-                                className="text-xs rounded border bg-muted/50 px-1.5 py-0.5 text-muted-foreground hover:text-foreground cursor-pointer"
-                                value={suggestion.category || ''}
-                                onChange={(e) => setCatalogSuggestions(prev => prev.map((s, i) =>
-                                  i === idx ? { ...s, category: e.target.value || undefined } : s
-                                ))}
-                              >
-                                <option value="">No category</option>
-                                {categories.map(cat => (
-                                  <option key={cat} value={cat}>{cat}</option>
-                                ))}
-                              </select>
-                              {suggestion.similarExisting && (
-                                <Badge variant="outline" className="text-xs text-warning-foreground border-warning/50">
-                                  Similar to: {suggestion.similarExisting}
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
-                        ) : (
-                          <Combobox
-                            options={existingItemOptions}
-                            value={suggestion.linkedItemId || ''}
-                            onValueChange={(value) => {
-                              const item = existingItems.find(i => i.id === value);
-                              setCatalogSuggestions(prev => prev.map((s, i) =>
-                                i === idx ? {
-                                  ...s,
-                                  linkedItemId: value || undefined,
-                                  linkedItemName: item?.name,
-                                } : s
-                              ));
-                            }}
-                            placeholder="Search items..."
-                            searchPlaceholder="Type to search..."
-                            emptyText="No matching items"
-                          />
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setStep('review')}>
-                  Back
-                </Button>
-                <Button
-                  onClick={() => setStep('confirm')}
-                  disabled={!allResolved}
-                >
-                  {newItemCount > 0
-                    ? `Continue — ${newItemCount} new item${newItemCount !== 1 ? 's' : ''} to create`
-                    : 'Continue to Save'}
-                  <ChevronRight className="ml-2 h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-            );
-          })()}
-
           {step === 'confirm' && (
             <div className="space-y-4 py-4">
               <div className="text-center py-6">
@@ -1539,12 +1310,6 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                 </p>
                 <div className="text-xs text-muted-foreground mt-3 space-y-1">
                   <p>{ingredientMatches.length} ingredients total</p>
-                  {catalogSuggestions.filter(s => s.action === 'create').length > 0 && (
-                    <p>{catalogSuggestions.filter(s => s.action === 'create').length} new catalog items will be created</p>
-                  )}
-                  {catalogSuggestions.filter(s => s.action === 'link').length > 0 && (
-                    <p>{catalogSuggestions.filter(s => s.action === 'link').length} linked to existing items</p>
-                  )}
                 </div>
               </div>
 

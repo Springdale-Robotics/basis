@@ -376,6 +376,24 @@ export const recipesApi = {
     apiGet<{ availability: Record<string, { total: number; have: number }> }>('/recipes/availability'),
 
   // Item name suggestions for unmatched ingredients
+  /**
+   * Turn ingredient names into catalog items in one server-side pass: names
+   * are canonicalised, existing items reused, and ingredients that reduce to
+   * the same item share it. Doing this per-row on the client re-created items
+   * the household already had.
+   */
+  createItemsForIngredients: (ingredients: Array<{ name: string; unit?: string }>) =>
+    apiPost<{
+      results: Array<{
+        originalName: string;
+        itemId: string;
+        itemName: string;
+        action: 'created' | 'linked';
+        similarTo?: { itemId: string; name: string };
+      }>;
+      warnings: string[];
+    }>('/recipes/ingredients/create-items', { ingredients }),
+
   suggestItems: (ingredientNames: string[]) =>
     apiPost<{ suggestions: Array<{
       originalName: string;
