@@ -129,6 +129,10 @@ export const importStatusEnum = pgEnum('import_status', [
   'pending_review',
   'confirmed',
   'cancelled',
+  // Parsing threw — a URL that wouldn't fetch, a PDF with no text. Without
+  // this the row sat in 'parsing' forever: invisible, unretryable, and never
+  // swept. The reason is kept in parseWarnings.
+  'failed',
 ]);
 
 export const recipeImportSessions = pgTable('recipe_import_sessions', {

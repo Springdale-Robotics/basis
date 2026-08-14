@@ -25,6 +25,7 @@ import { inventoryApi } from '@/api/inventory';
 import { deduplicateIngredientMatches, normalizeIngredientName } from '@/lib/recipe-utils';
 import { useBatchImageProcessing, type BatchItem } from '@/hooks/useBatchImageProcessing';
 import { FileSourcePicker } from '@/components/shared/FileSourcePicker';
+import { toast } from '@/hooks/useToast';
 import { BulkIngredientActions } from './BulkIngredientActions';
 import { IngredientMatchRow } from './IngredientMatchRow';
 
@@ -160,14 +161,18 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
       return recipesApi.startBatchImport(entries);
     },
     onSuccess: async (data) => {
-      // Map session IDs back to items
+      // Results come back one per entry, in order, including the ones that
+      // failed — so a recipe that couldn't be read is shown as failed against
+      // its own row rather than silently shifting every session id after it
+      // onto the wrong recipe.
       const readyIds = readyItems.map(i => i.id);
       setItems(prev => prev.map(item => {
         const idx = readyIds.indexOf(item.id);
-        if (idx >= 0 && data.sessionIds[idx]) {
-          return { ...item, importSessionId: data.sessionIds[idx] };
-        }
-        return item;
+        const result = idx >= 0 ? data.results[idx] : undefined;
+        if (!result) return item;
+        return result.status === 'failed'
+          ? { ...item, status: 'failed' as const, error: result.error }
+          : { ...item, importSessionId: result.sessionId! };
       }));
 
       // Fetch all sessions
@@ -197,9 +202,27 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
         }));
       return recipesApi.confirmBatchImport(sessions);
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['recipes'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
+
+      // Partial success is a real outcome for a batch of forty, and closing
+      // on it silently would leave the user believing everything saved.
+      const failures = data.results.filter(r => r.status === 'failed');
+      if (failures.length > 0) {
+        toast({
+          title: `Saved ${data.recipeIds.length} of ${data.results.length} recipes`,
+          description: `${failures.length} couldn't be saved: ${failures[0].error}`,
+          variant: 'destructive',
+        });
+        setItems(prev => prev.map(item => {
+          const failure = failures.find(f => f.sessionId === item.importSessionId);
+          return failure ? { ...item, status: 'failed' as const, error: failure.error } : item;
+        }));
+        onSuccess?.();
+        return;
+      }
+
       onSuccess?.();
       handleClose();
     },
