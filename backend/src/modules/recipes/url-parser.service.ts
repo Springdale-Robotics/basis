@@ -1,6 +1,6 @@
 import * as cheerio from 'cheerio';
 import type { ParsedRecipe, ParsedIngredient } from '../../db/schema/recipes.js';
-import { assertPublicUrl } from '../../lib/ssrf.js';
+import { safeFetch } from '../../lib/ssrf.js';
 // Raw-string emission. URL extractors return ingredients as
 // `{name: rawString}` only — the downstream session re-parses each via CRF
 // (see processUrlImportSession). Keeping URL parsing regex-free here means
@@ -27,24 +27,20 @@ export interface UrlParseResult {
 export async function parseRecipeFromUrl(url: string): Promise<UrlParseResult> {
   const warnings: string[] = [];
 
-  // Reject internal/loopback targets before fetching (SSRF guard).
-  await assertPublicUrl(url);
-
-  // Fetch the URL
+  // safeFetch validates every redirect hop (not just this URL), bounds how
+  // long we'll wait, and caps the body. Left to a bare fetch this held the
+  // request open indefinitely against a server that never replied.
   let html: string;
   try {
-    const response = await fetch(url, {
+    const { body } = await safeFetch(url, {
+      timeoutMs: 15_000,
+      maxBytes: 5 * 1024 * 1024,
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; Basis/1.0)',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
     });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch URL: ${response.status} ${response.statusText}`);
-    }
-
-    html = await response.text();
+    html = body.toString('utf8');
   } catch (error) {
     throw new Error(`Failed to fetch URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }

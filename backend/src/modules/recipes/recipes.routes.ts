@@ -1288,7 +1288,10 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
   // Start import session
   app.post(
     '/import/start',
-    { preHandler: [authMiddleware, requireMember()] },
+    // Does everything /import/parse-url does and more — an outbound fetch,
+    // CRF, possibly an LLM call. It was the preview route that carried the
+    // limiter while the endpoint doing the real work had none.
+    { preHandler: [authMiddleware, requireMember(), importRateLimiter] },
     async (request) => {
       const schema = z.object({
         sourceType: z.enum(['url', 'image', 'pdf', 'text']),
@@ -1504,7 +1507,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
   // Start batch import — parse multiple recipes at once
   app.post(
     '/import/start-batch',
-    { preHandler: [authMiddleware, requireMember()] },
+    { preHandler: [authMiddleware, requireMember(), importRateLimiter] },
     async (request) => {
       const schema = z.object({
         // Each entry can mean an outbound fetch plus a CRF call, all handled
@@ -1661,7 +1664,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
   // Parse ingredient lines with CRF
   app.post(
     '/ingredients/parse',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireMember()] },
     async (request) => {
       const schema = z.object({
         lines: z.array(z.string()),
@@ -1689,7 +1692,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
   // Match a single ingredient name
   app.post(
     '/ingredients/match',
-    { preHandler: [authMiddleware] },
+    { preHandler: [authMiddleware, requireMember()] },
     async (request) => {
       const schema = z.object({
         name: z.string().min(1),

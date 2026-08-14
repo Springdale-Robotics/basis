@@ -1,6 +1,6 @@
 import { Job } from 'bullmq';
 import { db } from '../config/database.js';
-import { sessions, notifications, auditLog, leftovers, receiptScans } from '../db/schema/index.js';
+import { sessions, notifications, auditLog, leftovers, receiptScans, recipeImportSessions } from '../db/schema/index.js';
 import { lt, and, isNotNull, inArray, eq } from 'drizzle-orm';
 import { redis } from '../config/redis.js';
 import { logger } from '../lib/logger.js';
@@ -33,6 +33,9 @@ export async function processCleanupJob(job: Job<CleanupJobData>): Promise<void>
         break;
       case 'old_receipt_scans':
         await cleanupOldReceiptScans();
+        break;
+      case 'old_import_sessions':
+        await cleanupOldImportSessions();
         break;
     }
 
@@ -236,4 +239,46 @@ export async function cleanupHouseholdCache(householdId: string): Promise<void> 
   }
 
   logger.info({ householdId, keysRemoved: allKeys.length }, 'Household cache cleaned up');
+}
+
+/**
+ * Sweep recipe import sessions that are done with.
+ *
+ * Every session carries its own source in `source_data` — for a PDF import,
+ * the whole file as base64 — and nothing ever deleted them, so a household
+ * that imported forty recipes kept forty copies of the source indefinitely.
+ * Receipt scans already had this; recipe imports were simply missed.
+ *
+ * Confirmed and cancelled sessions are finished business and go after a short
+ * grace period. Sessions that expired without being confirmed (including
+ * failed ones) go once they are well past their expiry, so a user who comes
+ * back to a stale tab still gets "this import expired" rather than "not
+ * found".
+ */
+async function cleanupOldImportSessions(): Promise<void> {
+  const settledCutoff = new Date();
+  settledCutoff.setDate(settledCutoff.getDate() - 1);
+
+  const abandonedCutoff = new Date();
+  abandonedCutoff.setDate(abandonedCutoff.getDate() - 7);
+
+  const settled = await db
+    .delete(recipeImportSessions)
+    .where(
+      and(
+        inArray(recipeImportSessions.status, ['confirmed', 'cancelled']),
+        lt(recipeImportSessions.createdAt, settledCutoff)
+      )
+    )
+    .returning({ id: recipeImportSessions.id });
+
+  const abandoned = await db
+    .delete(recipeImportSessions)
+    .where(lt(recipeImportSessions.expiresAt, abandonedCutoff))
+    .returning({ id: recipeImportSessions.id });
+
+  logger.info(
+    { settled: settled.length, abandoned: abandoned.length },
+    'Cleaned up old recipe import sessions'
+  );
 }
