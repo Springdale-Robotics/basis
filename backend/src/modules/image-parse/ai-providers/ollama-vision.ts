@@ -8,6 +8,8 @@ interface OllamaGenerateResponse {
   model: string;
   response: string;
   done: boolean;
+  /** 'stop' for a real answer; 'load' when the request only warmed the model. */
+  done_reason?: string;
   context?: number[];
   total_duration?: number;
   load_duration?: number;
@@ -46,45 +48,24 @@ const MAX_INFERENCE_EDGE_PX = 1024;
 const INFERENCE_JPEG_QUALITY = 85;
 
 /**
- * Ollama answers a generate request with HTTP 200 and an EMPTY completion when
- * the model is not resident yet — it does not queue behind the load. Loading a
- * 5.5GB vision model off disk takes around two minutes, and OLLAMA_KEEP_ALIVE
- * evicts it after five idle minutes. So for a household scanning one card a
- * day, the cold load is the normal case, not an edge: the scan lands mid-load
- * and comes back with nothing.
+ * What we ask the model to do when the caller doesn't say.
  *
- * Rather than guess a backoff, wait for the condition — poll until the model
- * reports resident, then try once more.
+ * This is load-bearing, not a nicety. `/api/generate` treats an EMPTY prompt as
+ * "load this model into memory and return" — it answers 200 in ~250ms with
+ * `{"response":"","done_reason":"load"}` and never looks at the image. The one
+ * caller in image-parse.service.ts passes '' (correct for the other three
+ * providers, which run their own pipelines and ignore the argument), so every
+ * scan that fell through to this backstop asked Ollama to warm up and reported
+ * the resulting silence as a failed read.
+ *
+ * Verified on the box against the photo from a failed session: this prompt
+ * transcribes a handwritten index card in ~4s, while '' returns
+ * done_reason 'load' in 248ms. Same image, same warm model.
  */
-const MODEL_READY_POLL_MS = 3000;
-
-/** True once Ollama reports the model loaded and holding VRAM. */
-async function isModelResident(host: string, model: string): Promise<boolean> {
-  try {
-    const res = await fetch(`${host}/api/ps`, { signal: AbortSignal.timeout(5000) });
-    if (!res.ok) return false;
-    const data = (await res.json()) as { models?: Array<{ name: string }> };
-    // /api/ps reports the fully qualified tag, so `moondream` shows as
-    // `moondream:latest` — compare on the bare name.
-    const bare = (tag: string) => tag.split(':')[0];
-    return (data.models ?? []).some((m) => bare(m.name) === bare(model));
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Block until the model is loaded, or until we have waited longer than a cold
- * load plausibly takes. Returns whether it became ready.
- */
-async function waitForModel(host: string, model: string): Promise<boolean> {
-  const deadline = Date.now() + config.OLLAMA_MODEL_READY_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    if (await isModelResident(host, model)) return true;
-    await new Promise((resolve) => setTimeout(resolve, MODEL_READY_POLL_MS));
-  }
-  return isModelResident(host, model);
-}
+const DEFAULT_TRANSCRIPTION_PROMPT =
+  'Transcribe every word of text in this image exactly as written, preserving ' +
+  'line breaks. Include the title, all ingredients with their quantities, and ' +
+  'all instructions. Output only the transcribed text.';
 
 /**
  * Shrink an image to something a local vision model can actually hold.
@@ -221,6 +202,9 @@ export class OllamaVisionProvider implements VisionProvider {
   ): Promise<VisionResult> {
     const startTime = Date.now();
     const model = await this.resolveModel();
+    // An empty prompt is a load request to Ollama, not a question — see
+    // DEFAULT_TRANSCRIPTION_PROMPT.
+    const effectivePrompt = prompt.trim() ? prompt : DEFAULT_TRANSCRIPTION_PROMPT;
 
     logger.info({ host: this.host, model, bufferSize: imageBuffer.length }, 'Starting Ollama parseImage');
 
@@ -244,7 +228,7 @@ export class OllamaVisionProvider implements VisionProvider {
         },
         body: JSON.stringify({
           model,
-          prompt,
+          prompt: effectivePrompt,
           images: [imageBase64],
           stream: false,
           options: {
@@ -261,41 +245,7 @@ export class OllamaVisionProvider implements VisionProvider {
         throw new Error(`Ollama API error: ${response.status} - ${errorText}`);
       }
 
-      let data = (await response.json()) as OllamaGenerateResponse;
-
-      // Empty completion means the model was not ready, not that the image was
-      // unreadable — Ollama returns 200 immediately rather than queueing behind
-      // the load. Wait for it to finish loading and ask once more.
-      if (!data.response || !data.response.trim()) {
-        logger.info({ model }, 'Empty completion — waiting for the model to finish loading');
-        const ready = await waitForModel(this.host, model);
-        if (ready) {
-          // Its own budget: the original controller was disarmed by the
-          // clearTimeout above, so reusing its signal would leave the retry
-          // unbounded.
-          const retryController = new AbortController();
-          const retryTimeout = setTimeout(
-            () => retryController.abort(),
-            config.IMAGE_PARSE_TIMEOUT_MS
-          );
-          const retry = await fetch(`${this.host}/api/generate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model,
-              prompt,
-              images: [imageBase64],
-              stream: false,
-              options: { temperature: 0.1 },
-            }),
-            signal: retryController.signal,
-          }).finally(() => clearTimeout(retryTimeout));
-          if (retry.ok) {
-            data = (await retry.json()) as OllamaGenerateResponse;
-            logger.info({ model }, 'Retried after model load');
-          }
-        }
-      }
+      const data = (await response.json()) as OllamaGenerateResponse;
 
       const processingTimeMs = Date.now() - startTime;
 
@@ -305,14 +255,39 @@ export class OllamaVisionProvider implements VisionProvider {
           processingTimeMs,
           totalDuration: data.total_duration,
           evalCount: data.eval_count,
+          doneReason: data.done_reason,
         },
         'Ollama image parsing completed'
       );
 
-      // Still empty after waiting for the load — a genuine failure now.
       if (!data.response || !data.response.trim()) {
+        // Log the fields whose absence hid this for so long: an empty answer
+        // is only ever explicable through done_reason and eval_count.
+        logger.error(
+          {
+            model,
+            doneReason: data.done_reason,
+            evalCount: data.eval_count,
+            promptEvalCount: data.prompt_eval_count,
+            promptLength: effectivePrompt.length,
+          },
+          'Ollama returned an empty completion'
+        );
+
+        // 'load' means Ollama read the request as "warm this model up" and
+        // never ran inference — it only does that for an empty prompt, so
+        // this is our bug, not the model's, and retrying would just warm it
+        // up again. Out-of-VRAM, by contrast, comes back as a 500 with an
+        // explicit error body and is handled above.
+        if (data.done_reason === 'load') {
+          throw new Error(
+            `Ollama treated the request as a model load and never read the image ` +
+              `(done_reason=load, prompt length ${effectivePrompt.length}). This is a bug in Basis, not a problem with your photo.`
+          );
+        }
+
         throw new Error(
-          `${model} returned no text. The AI model may still be starting up — this can take a couple of minutes after the box has been idle. Try again shortly.`
+          `${model} read the image but produced no text (done_reason=${data.done_reason ?? 'unknown'}).`
         );
       }
 

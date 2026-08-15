@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { loadSharp } from '../../src/lib/sharp.js';
-import { config } from '../../src/config/index.js';
 
 const mocks = vi.hoisted(() => ({
   getVisionModel: vi.fn().mockResolvedValue('qwen2.5vl:7b'),
@@ -16,49 +15,33 @@ const { OllamaVisionProvider } = await import(
 
 /**
  * A phone photo handed to a 7B vision model whole expands into enough image
- * tokens to exhaust an 8GB card. Ollama answers "CUDA error: out of memory" —
- * sometimes a 500, sometimes a 200 with an empty completion — and the import
- * produced no text at all after a 24-second wait.
- *
+ * tokens to exhaust an 8GB card, so we downscale before inference.
  * Preprocessing (deskew, contrast, resize) lives inside the vlm-llm sidecar's
- * /extract/base64, so this only ever bit the Ollama path: the backstop every
- * box without that sidecar falls back to.
+ * /extract/base64, so this only ever mattered on the Ollama path: the backstop
+ * every box without that sidecar falls back to.
+ *
+ * The prompt tests below cover the separate reason that backstop never
+ * produced any text at all — see DEFAULT_TRANSCRIPTION_PROMPT.
  */
 
 const originalFetch = globalThis.fetch;
-let sentPayloads: Array<{ images: string[] }> = [];
-let psCalls = 0;
+let sentPayloads: Array<{ images: string[]; prompt: string }> = [];
 
-function mockOllama(response: string) {
+/** Mock /api/generate with an arbitrary response body. */
+function mockOllama(body: Record<string, unknown>) {
   sentPayloads = [];
-  psCalls = 0;
   globalThis.fetch = (async (_url: string, init: { body: string }) => {
     sentPayloads.push(JSON.parse(init.body));
-    return { ok: true, json: async () => ({ response }) } as unknown as Response;
+    return { ok: true, json: async () => body } as unknown as Response;
   }) as unknown as typeof fetch;
 }
 
-/**
- * Ollama answers 200 with an empty completion while a model is still loading
- * rather than queueing behind it. `generateResponses` is consumed one per
- * /api/generate call; /api/ps reports the model resident once `residentAfter`
- * ps calls have been made.
- */
-function mockOllamaSequence(generateResponses: string[], residentAfter: number) {
+/** Mock /api/generate failing the way an out-of-VRAM run actually fails. */
+function mockOllamaError(status: number, errorBody: string) {
   sentPayloads = [];
-  psCalls = 0;
-  let generateCall = 0;
-  globalThis.fetch = (async (url: string, init?: { body: string }) => {
-    if (String(url).includes('/api/ps')) {
-      psCalls++;
-      return {
-        ok: true,
-        json: async () => ({ models: psCalls >= residentAfter ? [{ name: 'qwen2.5vl:7b' }] : [] }),
-      } as unknown as Response;
-    }
-    if (init) sentPayloads.push(JSON.parse(init.body));
-    const response = generateResponses[Math.min(generateCall++, generateResponses.length - 1)];
-    return { ok: true, json: async () => ({ response }) } as unknown as Response;
+  globalThis.fetch = (async (_url: string, init: { body: string }) => {
+    sentPayloads.push(JSON.parse(init.body));
+    return { ok: false, status, text: async () => errorBody } as unknown as Response;
   }) as unknown as typeof fetch;
 }
 
@@ -72,27 +55,22 @@ async function bigPhoto(): Promise<Buffer> {
     .toBuffer();
 }
 
-const originalReadyTimeout = config.OLLAMA_MODEL_READY_TIMEOUT_MS;
-
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getVisionModel.mockResolvedValue('qwen2.5vl:7b');
-  // Production waits out a real cold load; the suite should not.
-  config.OLLAMA_MODEL_READY_TIMEOUT_MS = 200;
 });
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  config.OLLAMA_MODEL_READY_TIMEOUT_MS = originalReadyTimeout;
 });
 
 describe('Ollama vision provider: image size sent for inference', () => {
   it('downscales a phone-sized photo before sending it to the model', async () => {
     const original = await bigPhoto();
-    mockOllama('Spoon Bread\n2 eggs');
+    mockOllama({ response: 'Spoon Bread\n2 eggs', done_reason: 'stop' });
 
     const provider = new OllamaVisionProvider();
-    await provider.parseImage(original, 'image/jpeg', 'transcribe');
+    await provider.parseImage(original, 'image/jpeg', '');
 
     expect(sentPayloads).toHaveLength(1);
     const sentBytes = Buffer.from(sentPayloads[0].images[0], 'base64').length;
@@ -111,38 +89,80 @@ describe('Ollama vision provider: image size sent for inference', () => {
     })
       .jpeg()
       .toBuffer();
-    mockOllama('some text');
+    mockOllama({ response: 'some text', done_reason: 'stop' });
 
     const provider = new OllamaVisionProvider();
-    await provider.parseImage(small, 'image/jpeg', 'transcribe');
+    await provider.parseImage(small, 'image/jpeg', '');
 
     const sentBytes = Buffer.from(sentPayloads[0].images[0], 'base64').length;
     expect(sentBytes).toBe(small.length);
   }, 30000);
+});
 
-  it('waits for the model to load and retries when the first call comes back empty', async () => {
-    // The real failure: a 5.5GB model evicted after five idle minutes takes
-    // about two to reload, and Ollama answers 200-with-nothing throughout.
-    // Every scan after a quiet spell hit this.
+describe('Ollama vision provider: the prompt actually sent', () => {
+  /**
+   * The whole bug in one assertion. image-parse.service.ts passes '' — right
+   * for the three providers that run their own pipelines, fatal here, because
+   * Ollama reads an empty prompt as "load the model and return" and never
+   * looks at the image.
+   *
+   * The previous version of this suite passed 'transcribe' on every call,
+   * which is exactly why it went on passing while every real scan failed.
+   */
+  it('asks the model to do something when the caller supplies no prompt', async () => {
     const photo = await bigPhoto();
-    mockOllamaSequence(['', 'Spoon Bread\n2 eggs'], 2);
+    mockOllama({ response: 'Spoon Bread', done_reason: 'stop' });
 
     const provider = new OllamaVisionProvider();
-    const result = await provider.parseImage(photo, 'image/jpeg', 'transcribe');
+    await provider.parseImage(photo, 'image/jpeg', '');
 
-    expect(result.rawText).toContain('Spoon Bread');
-    expect(psCalls).toBeGreaterThan(0); // it actually waited on readiness
-    expect(sentPayloads).toHaveLength(2); // and asked again
+    expect(sentPayloads[0].prompt.trim()).not.toBe('');
+    expect(sentPayloads[0].prompt).toMatch(/transcribe/i);
   }, 30000);
 
-  it('gives up with an honest message when it stays empty', async () => {
+  it('passes a caller-supplied prompt through unchanged', async () => {
     const photo = await bigPhoto();
-    // Never becomes resident, so the readiness wait gives up.
-    mockOllamaSequence([''], Number.MAX_SAFE_INTEGER);
+    mockOllama({ response: 'a list', done_reason: 'stop' });
 
     const provider = new OllamaVisionProvider();
-    await expect(provider.parseImage(photo, 'image/jpeg', 'transcribe')).rejects.toThrow(
-      /still be starting up/i
+    await provider.parseImage(photo, 'image/jpeg', 'List the ingredients only.');
+
+    expect(sentPayloads[0].prompt).toBe('List the ingredients only.');
+  }, 30000);
+});
+
+describe('Ollama vision provider: empty and failed completions', () => {
+  it('reports done_reason=load as our bug rather than a bad photo', async () => {
+    // Observed verbatim on the box: 200 in 248ms, no inference at all.
+    const photo = await bigPhoto();
+    mockOllama({ response: '', done: true, done_reason: 'load' });
+
+    const provider = new OllamaVisionProvider();
+    await expect(provider.parseImage(photo, 'image/jpeg', '')).rejects.toThrow(
+      /bug in Basis, not a problem with your photo/i
     );
+  }, 30000);
+
+  it('does not blame the photo when the model simply returned nothing', async () => {
+    const photo = await bigPhoto();
+    mockOllama({ response: '', done: true, done_reason: 'stop' });
+
+    const provider = new OllamaVisionProvider();
+    await expect(provider.parseImage(photo, 'image/jpeg', '')).rejects.toThrow(
+      /produced no text \(done_reason=stop\)/i
+    );
+  }, 30000);
+
+  it('surfaces the real reason when the model runs out of VRAM', async () => {
+    // A genuine out-of-memory run is a 500 with an explicit body, NOT an
+    // empty 200 — which is what makes done_reason=load unambiguous above.
+    const photo = await bigPhoto();
+    mockOllamaError(
+      500,
+      '{"error":"an error was encountered while running the model: CUDA error\\nCUDA error: out of memory"}'
+    );
+
+    const provider = new OllamaVisionProvider();
+    await expect(provider.parseImage(photo, 'image/jpeg', '')).rejects.toThrow(/out of memory/i);
   }, 30000);
 });
