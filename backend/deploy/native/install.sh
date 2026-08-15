@@ -331,6 +331,18 @@ if [ "$OS_ID" != macos ]; then
   log "Installing systemd units"
   cp "$INSTALL_PATH/backend/deploy/native/basis.service"        /etc/systemd/system/
   cp "$INSTALL_PATH/backend/deploy/native/basis-worker.service" /etc/systemd/system/
+  # Runs the post-update restart + health watchdog in its OWN cgroup. Without
+  # it the watchdog is torn down with basis.service the moment it restarts it,
+  # so basis-worker keeps running the old code and rollback never fires
+  # (basis-bugs#9). Not enabled — the updater starts it on demand.
+  cp "$INSTALL_PATH/backend/deploy/native/basis-post-update.service" /etc/systemd/system/
+  # Stable copy outside versions/: the watchdog repoints /opt/basis/current
+  # during a rollback, and bash reads a script incrementally. The update script
+  # refreshes this from the staged release, so watchdog fixes still ship via the
+  # Update button even though the unit file above does not.
+  install -o root -g root -m 0755 \
+    "$INSTALL_PATH/backend/deploy/native/post-update-watchdog.sh" \
+    /opt/basis/post-update-watchdog.sh
   [ "$PARSER_OK" -eq 1 ] && cp "$INSTALL_PATH/backend/deploy/native/basis-ingredient-parser.service" /etc/systemd/system/
   systemctl daemon-reload
   systemctl enable basis.service basis-worker.service >/dev/null
@@ -344,7 +356,7 @@ if [ "$OS_ID" != macos ]; then
   # require the password.
   SYSTEMCTL="$(command -v systemctl)"
   cat > /etc/sudoers.d/basis <<SUDOERS
-basis ALL=(root) NOPASSWD: $SYSTEMCTL restart basis basis-worker basis-ingredient-parser, $SYSTEMCTL restart basis basis-worker, $SYSTEMCTL restart basis, $SYSTEMCTL restart basis-worker, $SYSTEMCTL restart basis-ingredient-parser, $SYSTEMCTL reset-failed basis basis-worker basis-ingredient-parser, $SYSTEMCTL reset-failed basis basis-worker
+basis ALL=(root) NOPASSWD: $SYSTEMCTL restart basis basis-worker basis-ingredient-parser, $SYSTEMCTL restart basis basis-worker, $SYSTEMCTL restart basis, $SYSTEMCTL restart basis-worker, $SYSTEMCTL restart basis-ingredient-parser, $SYSTEMCTL reset-failed basis basis-worker basis-ingredient-parser, $SYSTEMCTL reset-failed basis basis-worker, $SYSTEMCTL start --no-block basis-post-update.service
 SUDOERS
   chmod 440 /etc/sudoers.d/basis
   visudo -cf /etc/sudoers.d/basis >/dev/null 2>&1 \

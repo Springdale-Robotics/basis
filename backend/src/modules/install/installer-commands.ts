@@ -79,7 +79,10 @@ function frpAsset(platform: NodeJS.Platform, arch: string): string {
   throw new Error(`Unsupported platform: ${platform}/${arch}`);
 }
 
-const COMMANDS: InstallerCommand[] = [
+// Exported for tests: the emitted shell is only validated by running it
+// through `bash -n`, and buildArgv() resolves a release over the network for
+// update-self, which a syntax test has no business doing.
+export const COMMANDS: InstallerCommand[] = [
   {
     // Freeform shell for the admin-only Terminal settings page. Runs as the
     // backend user — same trust boundary as that user's SSH session. Listed
@@ -244,10 +247,42 @@ echo "  (Connection to this terminal will drop when the service restarts.)"
 # to PREV_TARGET if the new version never becomes healthy). Fall back to the
 # plain detached restart if this release predates the watchdog script.
 WATCHDOG="$DEST/backend/deploy/native/post-update-watchdog.sh"
+
+# Refresh the stable copy the systemd unit execs, so watchdog fixes ship through
+# the Update button. The unit file itself lives in /etc and can only change via
+# install.sh, but it is a thin exec shim, so that is fine.
 if [ -f "$WATCHDOG" ]; then
+  cp "$WATCHDOG" /opt/basis/post-update-watchdog.sh 2>/dev/null || true
+  chmod 0755 /opt/basis/post-update-watchdog.sh 2>/dev/null || true
+fi
+
+# Hand the watchdog its arguments. Written to a temp file and moved into place
+# so the unit can never read a half-written file.
+{ echo "BASIS_PREV_TARGET=$PREV_TARGET"; echo "BASIS_NEW_VERSION=$NEW_VERSION"; } > /opt/basis/post-update.env.tmp 2>/dev/null || true
+mv -f /opt/basis/post-update.env.tmp /opt/basis/post-update.env 2>/dev/null || true
+
+# Preferred path: start the watchdog as its own systemd unit. That puts it in
+# its OWN cgroup, so restarting basis.service cannot kill it. Everything we
+# tried before ran inside basis.service's cgroup -- setsid gives a new session,
+# not a new cgroup -- so systemd tore the watchdog down mid-restart:
+# basis-worker never came back and the health check and rollback never ran.
+# --no-block returns immediately, leaving the work to PID 1.
+#
+# Attempt-and-fallback rather than probing for the unit file: a box that has run
+# the newer install.sh gets the unit, one that has not falls through to the
+# legacy path automatically.
+if sudo systemctl start --no-block basis-post-update.service 2>/dev/null; then
+  echo "Handed off to basis-post-update.service (own cgroup, survives the restart)."
+elif [ -f "$WATCHDOG" ]; then
+  echo "basis-post-update.service not installed -- using the legacy detached watchdog."
+  echo "Run backend/deploy/native/install.sh once on this box to enable the reliable path."
   setsid bash "$WATCHDOG" "$PREV_TARGET" "$NEW_VERSION" </dev/null >/dev/null 2>&1 &
 else
-  setsid bash -c 'sleep 3 && { sudo systemctl reset-failed basis basis-worker || true; } && { sudo systemctl restart basis-ingredient-parser || true; } && sudo systemctl restart basis basis-worker' </dev/null >/dev/null 2>&1 &
+  # Last resort. Worker FIRST, basis LAST: this runs inside basis.service's
+  # cgroup, so restarting basis kills this shell -- anything queued after it
+  # never happens. The old order restarted basis first and left the worker on
+  # stale code every single update. Do not "tidy" this back into one command.
+  setsid bash -c 'sleep 3 && { sudo systemctl reset-failed basis basis-worker || true; } && { sudo systemctl restart basis-ingredient-parser || true; } && sudo systemctl restart basis-worker && sudo systemctl restart basis' </dev/null >/dev/null 2>&1 &
 fi
 echo "Update complete — now at $NEW_VERSION"
 echo "A health watchdog will auto-roll back the code to the previous version if"
