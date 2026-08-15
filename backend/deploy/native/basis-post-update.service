@@ -1,0 +1,39 @@
+[Unit]
+Description=Basis post-update restart + health watchdog
+# Deliberately NOT PartOf=/BindsTo=/After= basis.service. The entire point of
+# this unit is that it lives in its own cgroup: the watchdog's job is to restart
+# basis.service, and anything sharing that cgroup gets killed the moment it
+# does. The updater used to run the watchdog with `setsid` from inside
+# basis.service's cgroup — a new session, but the same cgroup — so systemd tore
+# it down mid-restart. basis-worker never came back and the health check and
+# rollback never ran.
+Documentation=https://github.com/Springdale-Robotics/basis/issues/9
+
+[Service]
+Type=oneshot
+# The watchdog restarts the units, polls health, and rolls the symlink back if
+# the new version never comes up. Worst case that is a restart, a 60s health
+# window, a rollback restart and a second health window.
+TimeoutStartSec=600
+
+# Arguments from the update script. `-` so a missing file is not a failure:
+# the watchdog degrades to "restart, health-check, but don't roll back" rather
+# than refusing to run, which would leave the new code un-restarted.
+EnvironmentFile=-/opt/basis/post-update.env
+
+# Read from a stable path, NOT /opt/basis/current/... — the watchdog may repoint
+# that symlink underneath itself during a rollback, and bash reads scripts
+# incrementally. The update script refreshes this copy from the staged release
+# before invoking us, so watchdog fixes still ship through the Update button.
+ExecStart=/opt/basis/post-update-watchdog.sh
+
+# Clear the args once we're done so a later `systemctl start` can't replay a
+# previous update's rollback target.
+ExecStopPost=/bin/rm -f /opt/basis/post-update.env
+
+# RemainAfterExit=no means a second `start` while this is running is rejected as
+# "job already running" — the dedupe we want if an update is somehow retried.
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

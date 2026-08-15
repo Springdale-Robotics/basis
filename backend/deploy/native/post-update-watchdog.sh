@@ -2,11 +2,18 @@
 #
 # Post-update health watchdog with automatic code rollback.
 #
-# The self-updater (installer-commands.ts, "update-self") invokes this DETACHED
-# via setsid, AFTER it has staged the new version and swapped the
-# /opt/basis/current symlink. This script restarts the service, waits for it to
-# pass a health check, and — if the new version never becomes healthy — reverts
-# the symlink to the previous version and restarts again.
+# The self-updater (installer-commands.ts, "update-self") runs this AFTER it has
+# staged the new version and swapped the /opt/basis/current symlink. It restarts
+# the services, waits for a health check, and — if the new version never becomes
+# healthy — reverts the symlink to the previous version and restarts again.
+#
+# It must run in its OWN cgroup, which is why basis-post-update.service exists:
+# restarting basis.service kills everything in basis.service's cgroup, and the
+# updater previously launched this with `setsid` from inside it. setsid gives a
+# new session, not a new cgroup, so systemd killed the watchdog and its in-flight
+# `systemctl restart` — basis-worker was never restarted and the health check and
+# rollback never ran (basis-bugs#9). Args therefore arrive via EnvironmentFile
+# rather than argv; $1/$2 remain supported for direct invocation and tests.
 #
 # Before this existed, a new version that passed the pre-swap smoke test but
 # crash-looped at runtime (e.g. a migration that interacts badly with real data)
@@ -19,9 +26,9 @@
 # the update. If the migration was destructive, the log points the operator at
 # the snapshot.
 #
-# Args:
-#   $1  previous symlink target (e.g. "versions/0.1.13-alpha"); empty if unknown
-#   $2  new version string (for logging)
+# Args (env preferred, argv supported):
+#   BASIS_PREV_TARGET / $1  previous symlink target (e.g. "versions/0.1.13-alpha")
+#   BASIS_NEW_VERSION / $2  new version string (for logging)
 #
 # Env overrides (used by the test harness; production uses the defaults):
 #   BASIS_SYSTEMCTL       command used to drive systemd     (default: "sudo systemctl")
@@ -32,15 +39,34 @@
 #   BASIS_RESTART_DELAY   seconds to wait before restarting  (default: 3)
 set -u
 
-PREV_TARGET="${1:-}"
-NEW_VERSION="${2:-unknown}"
+PREV_TARGET="${1:-${BASIS_PREV_TARGET:-}}"
+NEW_VERSION="${2:-${BASIS_NEW_VERSION:-unknown}}"
 
-SYSTEMCTL="${BASIS_SYSTEMCTL:-sudo systemctl}"
+# Under the systemd unit we are already root; sudo would be both unnecessary and
+# unavailable-by-policy. Keep sudo for direct invocation as the basis user.
+if [ "$(id -u)" -eq 0 ]; then
+  SYSTEMCTL="${BASIS_SYSTEMCTL:-systemctl}"
+else
+  SYSTEMCTL="${BASIS_SYSTEMCTL:-sudo systemctl}"
+fi
 CURRENT_LINK="${BASIS_CURRENT_LINK:-/opt/basis/current}"
 HEALTH_URL="${BASIS_HEALTH_URL:-http://127.0.0.1:${PORT:-3000}/api/v1/health/live}"
 RETRIES="${BASIS_HEALTH_RETRIES:-30}"
 INTERVAL="${BASIS_HEALTH_INTERVAL:-2}"
 DELAY="${BASIS_RESTART_DELAY:-3}"
+
+# PREV_TARGET reaches us from a file written by the unprivileged basis user and
+# is fed to `ln -sfn` as root. Anything that isn't a versions/ path we produced
+# is refused — a corrupt or hostile value becomes a logged no-op rather than an
+# arbitrary root-owned symlink.
+validate_prev_target() {
+  case "$PREV_TARGET" in
+    '') ;;
+    versions/*) case "$PREV_TARGET" in *..*) return 1 ;; esac ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
 
 log() {
   logger -t basis-update "$*" 2>/dev/null || true
@@ -52,7 +78,11 @@ restart_service() {
   # The parser sidecar is best-effort; the core units are not.
   $SYSTEMCTL reset-failed basis basis-worker 2>/dev/null || true
   $SYSTEMCTL restart basis-ingredient-parser 2>/dev/null || true
-  $SYSTEMCTL restart basis basis-worker
+  # Worker first, basis last. Order is load-bearing on the legacy path where
+  # this runs inside basis.service's cgroup: restarting basis kills the caller,
+  # so anything queued after it never happens. Harmless here, protective there.
+  $SYSTEMCTL restart basis-worker
+  $SYSTEMCTL restart basis
 }
 
 healthy() {
@@ -65,6 +95,11 @@ healthy() {
   done
   return 1
 }
+
+if ! validate_prev_target; then
+  log "refusing suspicious rollback target '$PREV_TARGET' — continuing without rollback"
+  PREV_TARGET=""
+fi
 
 sleep "$DELAY"
 log "restarting into $NEW_VERSION"
