@@ -57,6 +57,41 @@ const UNIT =
 /** Longest a line can be and still read as a bare ingredient rather than prose. */
 const MAX_BARE_INGREDIENT_WORDS = 5;
 
+/**
+ * A sentence boundary inside a run of prose.
+ *
+ * Line breaks can't be relied on to separate steps. A vision model
+ * transcribing a recipe card preserves the card's line structure sometimes and
+ * runs the whole method together on one line at other times, from the same
+ * photo — so a method arrived as a single 266-character line and became a
+ * single step.
+ *
+ * The three characters before the terminator must all be alphanumeric. That is
+ * the same rule used for joining wrapped lines, and it is what separates the
+ * end of a sentence from an abbreviation: "combined." qualifies, while "2 qt."
+ * and "Add 1 c." do not, because the three-character window falls across the
+ * space. Recipes are dense with abbreviations and they sit exactly where a
+ * measurement ends, which is often the end of a line.
+ *
+ * Requiring the next character to be a capital or a digit keeps decimals and
+ * mid-sentence initials from splitting.
+ */
+const SENTENCE_BOUNDARY = /(?<=[A-Za-z0-9]{3}[.!?]["')\]]?)\s+(?=[A-Z0-9])/;
+
+/**
+ * Break a run of method prose into steps.
+ *
+ * Only for prose the author didn't already divide up: a recipe that numbers its
+ * own steps has said what it means, and "1." may well cover several sentences.
+ * Explicit structure wins over inference, the same way a heading does.
+ */
+export function splitIntoSteps(text: string): string[] {
+  return text
+    .split(SENTENCE_BOUNDARY)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
 export interface LineContext {
   /** Inside an explicit "Ingredients" heading. */
   inIngredientsSection: boolean;

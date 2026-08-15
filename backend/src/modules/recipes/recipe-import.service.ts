@@ -2,7 +2,7 @@ import { db } from '../../config/database.js';
 import { recipes, recipeIngredients, recipeImportSessions, ingredientAliases, inventoryItems } from '../../db/schema/index.js';
 import { eq, and, inArray } from 'drizzle-orm';
 import type { ParsedRecipe, ParsedIngredient, IngredientMatch, RecipeInstruction, IngredientGroup } from '../../db/schema/recipes.js';
-import { classifyRecipeLine } from './recipe-line-classifier.js';
+import { classifyRecipeLine, splitIntoSteps } from './recipe-line-classifier.js';
 import { matchIngredients } from './ingredient-matching.service.js';
 import { normalizeIngredientName } from './ingredient-matching.service.js';
 import { Errors } from '../../lib/errors.js';
@@ -271,6 +271,29 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
   const instructions: string[] = [];
   if (instructionsStart > -1) {
     let currentInstruction = '';
+    let currentIsNumbered = false;
+
+    /**
+     * Line breaks don't decide where steps divide — the text does.
+     *
+     * Unnumbered lines are joined into a paragraph first, because a PDF or a
+     * web page wraps one step across several lines, and then the paragraph is
+     * divided on sentence structure. Doing it this way means it no longer
+     * matters whether the source kept its line breaks: a photographed card
+     * whose whole method came back as one 266-character line divides into the
+     * same steps as one that arrived line by line.
+     *
+     * A recipe that numbers its own steps is left alone — "1." may well span
+     * several sentences, and the author has already said where the divisions
+     * are. Explicit structure wins over inference, as with headings.
+     */
+    const flush = () => {
+      const text = currentInstruction.trim();
+      currentInstruction = '';
+      if (!text) return;
+      if (currentIsNumbered) instructions.push(text);
+      else instructions.push(...splitIntoSteps(text));
+    };
 
     for (let i = instructionsStart; i < lines.length; i++) {
       const line = lines[i];
@@ -285,37 +308,18 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
       // Check if line starts with a number (step number)
       const stepMatch = line.match(/^(\d+)[.)]\s*(.*)$/);
       if (stepMatch) {
-        if (currentInstruction) {
-          instructions.push(currentInstruction.trim());
-        }
+        flush();
         currentInstruction = stepMatch[2];
+        currentIsNumbered = true;
       } else if (currentInstruction) {
-        // Unnumbered lines are joined, because a PDF or a web page wraps one
-        // step across several lines. A line that ended in a full stop wasn't
-        // wrapped though — it finished — so the next one starts a new step.
-        // Punctuation, not phrasing: a wrapped line breaks mid-clause and has
-        // nothing to end it with.
-        //
-        // The three-character requirement is what separates a full stop from
-        // an abbreviation. Recipes are full of them, and they cluster at line
-        // ends because that is where the measurement goes: the Spoon Bread
-        // card's front finishes "Add 1 c.", mid-sentence, continuing onto the
-        // back. Abbreviations are short by nature — "c.", "qt.", "oz." — while
-        // the word that actually ends a sentence rarely is.
-        if (/[A-Za-z0-9]{3,}[.!?]["')\]]?$/.test(currentInstruction.trim())) {
-          instructions.push(currentInstruction.trim());
-          currentInstruction = line;
-        } else {
-          currentInstruction += ' ' + line;
-        }
+        currentInstruction += ' ' + line;
       } else {
         currentInstruction = line;
+        currentIsNumbered = false;
       }
     }
 
-    if (currentInstruction) {
-      instructions.push(currentInstruction.trim());
-    }
+    flush();
   }
 
   // Try to extract timing info

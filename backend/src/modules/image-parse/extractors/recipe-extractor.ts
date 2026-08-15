@@ -4,6 +4,7 @@ import {
   INGREDIENTS_HEADER,
   INSTRUCTIONS_HEADER,
   classifyRecipeLine,
+  splitIntoSteps,
 } from '../../recipes/recipe-line-classifier.js';
 
 interface RawRecipeData {
@@ -215,7 +216,13 @@ export function parseRecipeFromText(rawText: string): ParsedRecipeContent {
 
     if (kind === 'instruction') {
       const cleaned = cleanInstructionText(line);
-      if (cleaned) instructions.push(cleaned);
+      // A transcription may hand back the entire method as one line, so the
+      // step divisions come from the sentences rather than the line breaks.
+      // A line the recipe itself numbered is left whole.
+      if (cleaned) {
+        if (/^\d+[.)]\s/.test(line)) instructions.push(cleaned);
+        else instructions.push(...splitIntoSteps(cleaned));
+      }
     }
   }
 
