@@ -1,5 +1,6 @@
 import { config } from '../../../config/index.js';
 import { logger } from '../../../lib/logger.js';
+import { loadSharp } from '../../../lib/sharp.js';
 import { getVisionModel } from '../../llm/llm-settings.js';
 import type { VisionProvider, VisionResult } from './index.js';
 
@@ -23,6 +24,67 @@ interface OllamaTagsResponse {
     modified_at: string;
     size: number;
   }>;
+}
+
+/**
+ * Longest edge, in pixels, of the image actually sent to the model.
+ *
+ * A phone photo is ~3MB and 12MP. Handed to a 7B vision model whole, it
+ * expands into enough image tokens to exhaust an 8GB card: Ollama returns
+ * "CUDA error: out of memory" — sometimes as a 500, sometimes as a 200 with an
+ * empty completion — and the import silently produced no text at all.
+ *
+ * The same photo at 1024px transcribed a handwritten index card correctly in
+ * 11.8s where the full-size version had burned 23.7s and returned nothing.
+ * Text stays legible well below phone resolution; the tokens do not.
+ *
+ * The vlm-llm sidecar does its own preprocessing (deskew, contrast, resize)
+ * inside /extract/base64, which is why this only ever bit the Ollama path —
+ * the backstop that every box without the sidecar falls back to.
+ */
+const MAX_INFERENCE_EDGE_PX = 1024;
+const INFERENCE_JPEG_QUALITY = 85;
+
+/**
+ * Shrink an image to something a local vision model can actually hold.
+ * Best-effort: if sharp is unavailable or the buffer isn't decodable we send
+ * the original rather than failing the import outright.
+ */
+async function downscaleForInference(imageBuffer: Buffer): Promise<Buffer> {
+  try {
+    const sharp = await loadSharp();
+    const image = sharp(imageBuffer, { failOn: 'none' });
+    const { width, height } = await image.metadata();
+
+    if (!width || !height) return imageBuffer;
+    if (Math.max(width, height) <= MAX_INFERENCE_EDGE_PX) return imageBuffer;
+
+    const resized = await image
+      .rotate() // honour EXIF orientation before we drop the metadata
+      .resize(MAX_INFERENCE_EDGE_PX, MAX_INFERENCE_EDGE_PX, {
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .jpeg({ quality: INFERENCE_JPEG_QUALITY })
+      .toBuffer();
+
+    logger.info(
+      {
+        fromBytes: imageBuffer.length,
+        toBytes: resized.length,
+        fromDimensions: `${width}x${height}`,
+        maxEdge: MAX_INFERENCE_EDGE_PX,
+      },
+      'Downscaled image for vision inference'
+    );
+    return resized;
+  } catch (error) {
+    logger.warn(
+      { error: error instanceof Error ? error.message : String(error) },
+      'Could not downscale image for inference — sending the original'
+    );
+    return imageBuffer;
+  }
 }
 
 export class OllamaVisionProvider implements VisionProvider {
@@ -121,8 +183,10 @@ export class OllamaVisionProvider implements VisionProvider {
 
     logger.info({ host: this.host, model, bufferSize: imageBuffer.length }, 'Starting Ollama parseImage');
 
+    const forInference = await downscaleForInference(imageBuffer);
+
     // Convert image to base64
-    const imageBase64 = imageBuffer.toString('base64');
+    const imageBase64 = forInference.toString('base64');
 
     logger.info({ base64Length: imageBase64.length }, 'Image converted to base64, calling Ollama API');
 
@@ -168,6 +232,16 @@ export class OllamaVisionProvider implements VisionProvider {
         },
         'Ollama image parsing completed'
       );
+
+      // An empty completion is a failure wearing a 200. Ollama answers this
+      // way when the model cannot run — out of VRAM, most often — and treating
+      // it as success walked the user to an empty review box with no
+      // explanation, after a 24-second wait. Say what happened instead.
+      if (!data.response || !data.response.trim()) {
+        throw new Error(
+          `${model} returned no text. The image may be too large for the available VRAM, or the model may not be a vision model.`
+        );
+      }
 
       // Try to parse structured JSON from the response
       const structured = this.extractStructuredContent(data.response);

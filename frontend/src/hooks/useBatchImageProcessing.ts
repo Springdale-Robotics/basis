@@ -52,9 +52,33 @@ export function useBatchImageProcessing(
   options: UseBatchImageProcessingOptions = {},
 ): UseBatchImageProcessingResult {
   const { concurrency = 3, pollIntervalMs = 3000 } = options;
-  const [items, setItems] = useState<BatchItem[]>([]);
+  const [items, setItemsState] = useState<BatchItem[]>([]);
+  // Deliberately NOT assigned during render: a render triggered while a state
+  // update is still pending would write the pre-update value back over a ref
+  // the setter had already advanced. The setter below is the single writer.
   const itemsRef = useRef<BatchItem[]>([]);
-  itemsRef.current = items;
+
+  /**
+   * Keeps `itemsRef` in step with the state on every update, not merely on
+   * every render.
+   *
+   * The polling loop reads session ids out of the ref, and `startPolling`
+   * polls once immediately. Assigning the ref during render alone meant that
+   * first poll ran before React had re-rendered from the uploads that had just
+   * completed — so it saw items with no `imageSessionId`, concluded there was
+   * nothing to wait for, and cleared its own interval. The batch never polled
+   * once: the dialog sat on "processing 0 of 2" while the jobs had in fact
+   * already finished on the server.
+   */
+  const setItems = useCallback<React.Dispatch<React.SetStateAction<BatchItem[]>>>((update) => {
+    setItemsState((prev) => {
+      const next = typeof update === 'function'
+        ? (update as (p: BatchItem[]) => BatchItem[])(prev)
+        : update;
+      itemsRef.current = next;
+      return next;
+    });
+  }, []);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Auto-clear interval on unmount.
@@ -81,7 +105,7 @@ export function useBatchImageProcessing(
       const fresh = newItems.filter(n => !existingFiles.has(n.file));
       return fresh.length ? [...prev, ...fresh] : prev;
     });
-  }, []);
+  }, [setItems]);
 
   const addRecipeFiles = useCallback((files: FileList | File[] | null) => {
     if (!files) return;
@@ -110,7 +134,7 @@ export function useBatchImageProcessing(
       };
       reader.readAsText(file);
     });
-  }, []);
+  }, [setItems]);
 
   const startPolling = useCallback(() => {
     if (pollingRef.current) clearInterval(pollingRef.current);
@@ -164,7 +188,7 @@ export function useBatchImageProcessing(
 
     pollingRef.current = setInterval(poll, pollIntervalMs);
     poll(); // Run immediately
-  }, [pollIntervalMs]);
+  }, [pollIntervalMs, setItems]);
 
   const startImageProcessing = useCallback(async () => {
     const pending = itemsRef.current.filter(i => i.status === 'pending' && i.file);
@@ -194,13 +218,13 @@ export function useBatchImageProcessing(
     const workers = Array.from({ length: Math.min(concurrency, pending.length) }, () => uploadNext());
     await Promise.all(workers);
     startPolling();
-  }, [concurrency, startPolling]);
+  }, [concurrency, startPolling, setItems]);
 
   const reset = useCallback(() => {
     if (pollingRef.current) clearInterval(pollingRef.current);
     pollingRef.current = null;
     setItems([]);
-  }, []);
+  }, [setItems]);
 
   return { items, setItems, addImageFiles, addRecipeFiles, startImageProcessing, reset };
 }
