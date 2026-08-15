@@ -171,16 +171,32 @@ export async function getVisionProviderStatus(): Promise<VisionProviderStatus> {
   }
 
   if (provider.name === 'ollama') {
+    // Read from settings rather than provider.getModel(). The auto path above
+    // gates the Ollama backstop on isReachable() rather than isAvailable(), so
+    // resolveModel() has never run on this instance and getModel() would still
+    // be echoing the OLLAMA_VLM_MODEL env default — reporting llava:7b on a
+    // box where an admin selected qwen2.5vl:7b.
+    const model = await getVisionModel();
+
+    // Reachable is enough to *pick* Ollama as a backstop, but not enough to
+    // call image parsing ready: install.sh now installs Ollama on every box,
+    // so "running, no vision model pulled" is the state of every fresh
+    // install until an admin visits this settings page. Reporting available
+    // there sends the user to a scan that fails on Ollama's 404, where before
+    // they got a clear "no provider available" up front.
+    // isAvailable() resolves the selected model and checks it against
+    // /api/tags — the same strict check getAllProvidersStatus already uses for
+    // this provider, so the two no longer disagree about the same box.
+    const modelPresent = await provider.isAvailable();
+
     return {
-      available: true,
+      available: modelPresent,
       name: provider.name,
-      // Read from settings rather than provider.getModel(). The auto path
-      // above gates the Ollama backstop on isReachable() rather than
-      // isAvailable(), so resolveModel() has never run on this instance and
-      // getModel() would still be echoing the OLLAMA_VLM_MODEL env default —
-      // reporting llava:7b on a box where an admin selected qwen2.5vl:7b.
-      model: await getVisionModel(),
+      model,
       expectedProcessingMs: 150000, // Default CPU estimate
+      error: modelPresent
+        ? undefined
+        : `Ollama is running but the ${model} vision model isn't installed yet. Install it under Settings → AI Models.`,
     };
   }
 
@@ -288,9 +304,16 @@ export async function getAllProvidersStatus(): Promise<AllProvidersStatus> {
     if (!primaryStatus) {
       primaryStatus = ollamaStatus;
       if (available) activeProvider = 'ollama';
-    } else {
+    } else if (!fallbackStatus) {
+      // Guarded like the primary slot above. Without this, a box with
+      // HandwritingOCR configured reports ocr as primary, vlm-llm as fallback,
+      // and then Ollama silently overwrites the vlm-llm entry — so the status
+      // endpoint never mentions the two-stage service and the UI can't warn
+      // that it's down.
       fallbackStatus = ollamaStatus;
       if (available && !activeProvider) activeProvider = 'ollama';
+    } else if (available && !activeProvider) {
+      activeProvider = 'ollama';
     }
   } catch {
     const ollamaError: VisionProviderStatus = {
