@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  isReachable, listInstalledTags, pullModel, deleteModel, type PullProgress,
+  isReachable, fetchInstalledTags, pullModel, deleteModel, type PullProgress,
 } from '../../src/modules/llm/ollama-client.js';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -35,25 +35,44 @@ describe('isReachable', () => {
   });
 });
 
-describe('listInstalledTags', () => {
-  it('returns the model names', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+describe('fetchInstalledTags', () => {
+  it('answers reachability and the model list from a single request', async () => {
+    // These were two calls to the same endpoint, combined by callers as though
+    // they agreed. A timeout on the second while the first succeeded read as
+    // "Ollama is up, nothing installed" — which the settings page renders as
+    // every selection being missing, and which made PUT /settings reject a
+    // model that was in fact installed.
+    const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ models: [{ name: 'qwen2.5:7b' }, { name: 'llava:7b' }] }), { status: 200 })
-    ));
-    expect(await listInstalledTags()).toEqual(['qwen2.5:7b', 'llava:7b']);
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await fetchInstalledTags()).toEqual({
+      reachable: true,
+      tags: ['qwen2.5:7b', 'llava:7b'],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('returns an empty list when Ollama is unreachable', async () => {
+  it('reports unreachable with a reason rather than an empty list', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
-    expect(await listInstalledTags()).toEqual([]);
+
+    const result = await fetchInstalledTags();
+    expect(result.reachable).toBe(false);
+    expect(result.tags).toEqual([]);
+    expect(result.reachable === false && result.error).toMatch(/ECONNREFUSED/);
   });
 
-  it('returns an empty list when the body is not valid JSON', async () => {
-    // The third never-throw path: HTTP 200 but res.json() rejects. The settings
-    // page calls this on load, so a throw here breaks the page rather than
-    // showing the install action.
+  it('treats a non-OK response as unreachable, not as an empty catalogue', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 500 })));
+    expect((await fetchInstalledTags()).reachable).toBe(false);
+  });
+
+  it('never throws when the body is not valid JSON', async () => {
+    // HTTP 200 but res.json() rejects. The settings page calls this on load, so
+    // a throw here breaks the page rather than showing the install action.
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>nope</html>', { status: 200 })));
-    expect(await listInstalledTags()).toEqual([]);
+    expect((await fetchInstalledTags()).reachable).toBe(false);
   });
 });
 
@@ -70,6 +89,24 @@ describe('pullModel', () => {
 
     expect(seen.map((p) => p.status)).toEqual(['pulling manifest', 'downloading', 'success']);
     expect(seen[1]).toMatchObject({ completed: 500, total: 1000 });
+  });
+
+  it('leaves the byte counts alone on a frame that carries none', async () => {
+    // Ollama's terminal {"status":"success"} line has no completed/total.
+    // Defaulting them to 0 snapped the progress bar to 0% for one frame just
+    // as the download finished.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ndjsonResponse([
+      JSON.stringify({ status: 'downloading', completed: 900, total: 1000 }),
+      JSON.stringify({ status: 'success' }),
+    ])));
+
+    const seen: PullProgress[] = [];
+    await pullModel('x:1b', (p) => seen.push({ ...p }));
+
+    expect(seen).toEqual([
+      { status: 'downloading', completed: 900, total: 1000 },
+      { status: 'success' },
+    ]);
   });
 
   it('tolerates a partial line split across chunks', async () => {

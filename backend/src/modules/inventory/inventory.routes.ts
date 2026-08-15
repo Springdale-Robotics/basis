@@ -895,6 +895,14 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      // The area applies uniformly to every selected item, so it is checked
+      // once here rather than per item. It used to sit inside the loop, which
+      // issued the same lookup for all 50 items in a batch. (Predates the LLM
+      // work — came in with the defaultAreaId tenancy fix.)
+      if (input.updates.defaultAreaId) {
+        await assertHouseholdArea(input.updates.defaultAreaId, request.user!.householdId);
+      }
+
       const updatedItems = [];
       for (const itemId of input.itemIds) {
         const updateData: Record<string, unknown> = { updatedAt: new Date() };
@@ -909,10 +917,8 @@ export async function inventoryRoutes(app: FastifyInstance): Promise<void> {
           updateData.minStockQuantity = input.updates.minStockQuantity.toString();
         }
         if (input.updates.defaultAreaId !== undefined) {
-          // This schema is nullable — null clears the area and needs no check.
-          if (input.updates.defaultAreaId) {
-            await assertHouseholdArea(input.updates.defaultAreaId, request.user!.householdId);
-          }
+          // Nullable schema: null clears the area. Ownership was checked once
+          // above, before the loop.
           updateData.defaultAreaId = input.updates.defaultAreaId;
         }
         if (input.updates.defaultUnit !== undefined) {

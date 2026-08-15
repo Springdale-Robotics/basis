@@ -26,13 +26,41 @@ const controllers = new Map<string, AbortController>();
 /** How long a finished pull stays readable before it is reaped. */
 const TERMINAL_RETENTION_MS = 10 * 60 * 1000;
 
+/**
+ * Floor between progress broadcasts. Ollama emits an NDJSON line per chunk, so
+ * a multi-gigabyte pull produced thousands of socket frames per second, fanned
+ * out to every connected admin, to move a progress bar nobody can read that
+ * fast. State is still updated on every frame — only the broadcast is paced.
+ */
+const PROGRESS_EMIT_INTERVAL_MS = 250;
+
 let io: Server | null = null;
 
 function emit(state: PullState): void {
   io?.of('/llm').emit('pull:progress', state);
 }
 
+/**
+ * Two browser tabs, or two admins, hitting Install on the same model used to
+ * start two real downloads that then fought over one progress row: the bar
+ * flickered between them, and cancelling one cleared the row while the other
+ * kept running. A pull is identified by what it is fetching, so a request for
+ * a tag already downloading joins the pull in flight instead of racing it.
+ *
+ * Only running pulls match — a finished pull must not stop the user from
+ * re-pulling the same tag later.
+ */
+function findRunningPullByTag(tag: string): PullState | undefined {
+  for (const state of pulls.values()) {
+    if (state.state === 'running' && state.tag === tag) return state;
+  }
+  return undefined;
+}
+
 export function startPull(tag: string): string {
+  const existing = findRunningPullByTag(tag);
+  if (existing) return existing.id;
+
   const id = randomUUID();
   const controller = new AbortController();
   const state: PullState = {
@@ -42,10 +70,21 @@ export function startPull(tag: string): string {
   pulls.set(id, state);
   controllers.set(id, controller);
 
+  // The first frame goes out immediately — the user just clicked, and waiting
+  // a quarter second to acknowledge it reads as a dead button.
+  let lastEmitAt = 0;
+
   void pullModel(
     tag,
     (progress) => {
+      // Always current, even when we don't broadcast: a client reconnecting
+      // mid-pull is replayed from `state`, and it should get the latest
+      // numbers rather than whatever was last put on the wire.
       Object.assign(state, progress);
+
+      const now = Date.now();
+      if (now - lastEmitAt < PROGRESS_EMIT_INTERVAL_MS) return;
+      lastEmitAt = now;
       emit(state);
     },
     controller.signal
