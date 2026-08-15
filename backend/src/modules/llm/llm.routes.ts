@@ -6,7 +6,7 @@ import { Errors } from '../../lib/errors.js';
 import { config } from '../../config/index.js';
 import { detectHardware } from './llm-hardware.js';
 import { catalogWithFit, combinedFootprint, normalizeTag, CATALOG } from './llm-catalog.js';
-import { isReachable, listInstalledTags, deleteModel } from './ollama-client.js';
+import { fetchInstalledTags, deleteModel } from './ollama-client.js';
 import { getTextModel, getVisionModel, setModel } from './llm-settings.js';
 import { startPull } from './llm.ws.js';
 
@@ -90,9 +90,11 @@ export async function llmRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get('/status', { preHandler: [authMiddleware, requireAdmin()] }, async () => {
-    const [reachable, installed, hw, text, vision] = await Promise.all([
-      isReachable(),
-      listInstalledTags(),
+    // One request for both facts. Asking twice let them disagree: a timeout on
+    // the second while the first succeeded produced "reachable, nothing
+    // installed", which this route reports as every selection being missing.
+    const [{ reachable, tags: installed }, hw, text, vision] = await Promise.all([
+      fetchInstalledTags(),
       detectHardware(),
       getTextModel(),
       getVisionModel(),
@@ -121,7 +123,19 @@ export async function llmRoutes(app: FastifyInstance): Promise<void> {
 
   app.put('/settings', { preHandler: [authMiddleware, requireAdmin()] }, async (request) => {
     const input = updateSettingsSchema.parse(request.body);
-    const installed = await listInstalledTags();
+    const { reachable, tags: installed } = await fetchInstalledTags();
+
+    // "We couldn't ask" is not "it isn't installed". The frontend fires this
+    // PUT the moment a pull completes, so a momentary blip used to reject the
+    // model that had just finished downloading, telling the user to install
+    // something they had only just installed. Say what actually went wrong and
+    // let them retry.
+    if (!reachable) {
+      throw Errors.unavailable(
+        "Can't reach Ollama right now, so the model list is unknown. Try again in a moment."
+      );
+    }
+
     const installedNormalized = new Set(installed.map(normalizeTag));
 
     const requested = (

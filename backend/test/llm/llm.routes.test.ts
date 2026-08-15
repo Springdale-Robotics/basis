@@ -7,7 +7,10 @@ import { setupRouteTest, type RouteTestContext, type TestUser } from '../helpers
 
 vi.mock('../../src/modules/llm/ollama-client.js', () => ({
   isReachable: vi.fn().mockResolvedValue(true),
-  listInstalledTags: vi.fn().mockResolvedValue(['qwen2.5:7b']),
+  // One call now answers both questions, so a test can no longer construct the
+  // impossible "reachable but nothing installed" state that used to arise from
+  // two requests disagreeing.
+  fetchInstalledTags: vi.fn().mockResolvedValue({ reachable: true, tags: ['qwen2.5:7b'] }),
   pullModel: vi.fn().mockResolvedValue(undefined),
   deleteModel: vi.fn().mockResolvedValue(undefined),
 }));
@@ -21,7 +24,7 @@ vi.mock('fs/promises', async (importOriginal) => {
 
 // Imported after the mock so per-test overrides (mockResolvedValueOnce) can
 // reach the same mock instances the routes call.
-const { isReachable, listInstalledTags, pullModel, deleteModel } = await import('../../src/modules/llm/ollama-client.js');
+const { fetchInstalledTags, pullModel, deleteModel } = await import('../../src/modules/llm/ollama-client.js');
 const { statfs } = await import('fs/promises');
 
 let ctx: RouteTestContext;
@@ -95,12 +98,13 @@ describe('GET /api/v1/llm/status', () => {
   });
 
   it('does not report models missing when Ollama is unreachable', async () => {
-    // An unreachable Ollama also makes listInstalledTags() return []. Without
-    // the `reachable &&` guard on `missing`, every selection would flip to
-    // "missing" and the settings page would read as "every model needs
-    // reinstalling" instead of the actual problem, "Ollama is not running".
-    vi.mocked(isReachable).mockResolvedValueOnce(false);
-    vi.mocked(listInstalledTags).mockResolvedValueOnce([]);
+    // Unreachable means an empty tag list too. Without the `reachable &&`
+    // guard on `missing`, every selection would flip to "missing" and the
+    // settings page would read as "every model needs reinstalling" instead of
+    // the actual problem, "Ollama is not running".
+    vi.mocked(fetchInstalledTags).mockResolvedValueOnce({
+      reachable: false, tags: [], error: 'ECONNREFUSED',
+    });
 
     const body = await (await admin.fetch('/api/v1/llm/status')).json();
     expect(body.data.reachable).toBe(false);
@@ -130,6 +134,26 @@ describe('PUT /api/v1/llm/settings', () => {
 
     const status = await (await admin.fetch('/api/v1/llm/status')).json();
     expect(status.data.selected.text).not.toBe('not-pulled:7b');
+  });
+
+  it('says Ollama is unreachable rather than blaming the model', async () => {
+    // The frontend fires this PUT the instant a pull completes, so a momentary
+    // blip used to reject the model that had just finished downloading and
+    // tell the user to install something they had only just installed. "We
+    // couldn't ask" is a retry; "that isn't installed" is not.
+    vi.mocked(fetchInstalledTags).mockResolvedValueOnce({
+      reachable: false, tags: [], error: 'ECONNREFUSED',
+    });
+
+    const res = await admin.fetch('/api/v1/llm/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ textModel: 'qwen2.5:7b' }),
+    });
+
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error.message).toMatch(/reach Ollama/i);
+    expect(body.error.message).not.toMatch(/not installed/i);
   });
 
   it('persists nothing when one of two submitted tags is not installed', async () => {
@@ -184,7 +208,7 @@ describe('tag normalization against what Ollama reports', () => {
   });
 
   it('accepts a bare tag on PUT when Ollama reports it with :latest', async () => {
-    vi.mocked(listInstalledTags).mockResolvedValueOnce(['moondream:latest']);
+    vi.mocked(fetchInstalledTags).mockResolvedValueOnce({ reachable: true, tags: ['moondream:latest'] });
 
     const res = await admin.fetch('/api/v1/llm/settings', {
       method: 'PUT',
@@ -196,7 +220,7 @@ describe('tag normalization against what Ollama reports', () => {
   it('does not flag a bare selection as missing when Ollama reports :latest', async () => {
     await setSetting('llm.textModel', 'qwen2.5:7b');
     await setSetting('llm.visionModel', 'moondream');
-    vi.mocked(listInstalledTags).mockResolvedValueOnce(['qwen2.5:7b', 'moondream:latest']);
+    vi.mocked(fetchInstalledTags).mockResolvedValueOnce({ reachable: true, tags: ['qwen2.5:7b', 'moondream:latest'] });
 
     const body = await (await admin.fetch('/api/v1/llm/status')).json();
     expect(body.data.missing.vision).toBe(false);
@@ -208,7 +232,7 @@ describe('tag normalization against what Ollama reports', () => {
     // silently under-reports the "these two won't both fit" warning.
     await setSetting('llm.textModel', 'qwen2.5:7b');
     await setSetting('llm.visionModel', 'moondream:latest');
-    vi.mocked(listInstalledTags).mockResolvedValueOnce(['qwen2.5:7b', 'moondream:latest']);
+    vi.mocked(fetchInstalledTags).mockResolvedValueOnce({ reachable: true, tags: ['qwen2.5:7b', 'moondream:latest'] });
 
     const body = await (await admin.fetch('/api/v1/llm/status')).json();
     // 4700 (qwen2.5:7b) + 1800 (moondream) — not 4700 + 0.

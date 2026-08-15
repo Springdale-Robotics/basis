@@ -145,6 +145,14 @@ export const Errors = {
   validation: (message: string, details?: Record<string, unknown>) =>
     new AppError(ErrorCode.VALIDATION_FAILED, message, details),
 
+  /**
+   * A dependency we don't control is down or unanswerable. Distinct from
+   * validation on purpose: "we couldn't ask" is a retry, "that's wrong" is
+   * not, and conflating them tells users to fix things that aren't broken.
+   */
+  unavailable: (message: string, details?: Record<string, unknown>) =>
+    new AppError(ErrorCode.EXTERNAL_SERVICE_UNAVAILABLE, message, details, 503),
+
   duplicate: (field: string) =>
     new AppError(
       ErrorCode.VALIDATION_DUPLICATE_VALUE,
