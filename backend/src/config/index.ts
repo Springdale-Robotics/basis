@@ -122,6 +122,10 @@ const envSchema = z.object({
   // Image parsing configuration
   IMAGE_PARSE_PROVIDER: z.enum(['vlm-llm', 'handwriting-ocr', 'ollama-vision', 'auto']).default('auto'),
   IMAGE_PARSE_TIMEOUT_MS: z.coerce.number().default(180000), // 3 minutes for CPU processing
+  // How long to wait for Ollama to finish loading a model before giving up on
+  // a scan. A 5.5GB vision model off a spinning disk or SD card can take well
+  // over a minute, and Ollama answers 200-with-nothing while it loads.
+  OLLAMA_MODEL_READY_TIMEOUT_MS: z.coerce.number().default(150000),
   IMAGE_PARSE_MAX_SIZE_MB: z.coerce.number().default(10),
   IMAGE_PARSE_SESSION_TTL_HOURS: z.coerce.number().default(24),
   IMAGE_PARSE_REQUIRE_AI: z.coerce.boolean().default(false),

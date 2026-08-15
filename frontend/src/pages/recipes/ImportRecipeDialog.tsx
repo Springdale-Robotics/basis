@@ -432,7 +432,12 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     const { sessionId: imgSessionId } = await imageParseApi.uploadImage(file, 'recipe', undefined, 'accurate');
     setImageParseSessionId(imgSessionId);
 
-    const maxWaitMs = 180000; // 3 minutes
+    // Generous because a cold model load dominates: Ollama evicts after five
+    // idle minutes and reloading a 5.5GB vision model off disk takes about
+    // two, so the first scan after a quiet spell pays that before any
+    // inference starts. At three minutes the client gave up while the backend
+    // was still working and would have succeeded.
+    const maxWaitMs = 300000; // 5 minutes
     const startTime = Date.now();
     let delay = 1000;
 

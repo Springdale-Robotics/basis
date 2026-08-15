@@ -287,7 +287,12 @@ export async function initializeWorkers(): Promise<void> {
       const { processImageParseJob } = await import('./image-parse.worker.js');
       return processImageParseJob(job);
     },
-    { connection: redis, concurrency: 2 }
+    // One at a time: these run a local vision model on a single GPU, and two
+    // concurrent 7B inferences on an 8GB card contend for VRAM rather than
+    // going faster — the second used to come back empty in under 400ms.
+    // Serialising also makes the batch progress counter advance one photo at a
+    // time, which is what the UI implies anyway.
+    { connection: redis, concurrency: 1 }
   );
 
   imageParseWorker.on('completed', (job) => {

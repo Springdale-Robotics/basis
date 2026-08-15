@@ -413,19 +413,21 @@ describe('POST /api/v1/receipts/scans/:id/reprocess', () => {
     // time a user clicks "reprocess" on a failed scan.
     await queueReceiptParse({ scanId, householdId: user.householdId });
 
-    const before = await receiptQueue.getJobCounts();
-    const totalBefore = Object.values(before).reduce((a, b) => a + b, 0);
-
     const res = await user.fetch(`/api/v1/receipts/scans/${scanId}/reprocess`, { method: 'POST' });
     expect(res.status).toBe(200);
 
-    const after = await receiptQueue.getJobCounts();
-    const totalAfter = Object.values(after).reduce((a, b) => a + b, 0);
-
-    // A second, real job must land in the queue — BullMQ's jobId dedup must
-    // not silently swallow the reprocess because `receipt-${scanId}` already
-    // exists. Before the fix this fails: totalAfter === totalBefore.
-    expect(totalAfter).toBe(totalBefore + 1);
+    // Assert the reprocess job itself is in the queue, by its own id.
+    //
+    // This used to compare total job counts before and after, which quietly
+    // stopped working once the queue reached its removeOnComplete cap of 50:
+    // adding a job then evicts an older one and the total does not move, so
+    // the test failed on any developer machine with a long-lived Redis while
+    // passing in CI against a fresh one. What it actually means to prove is
+    // that BullMQ's jobId dedup did not swallow the reprocess — and that is a
+    // question about one specific job, not about arithmetic.
+    const jobs = await receiptQueue.getJobs(['waiting', 'delayed', 'active', 'completed', 'failed']);
+    const reprocessJobs = jobs.filter(j => j?.id?.startsWith(`receipt-retry-${scanId}-`));
+    expect(reprocessJobs).toHaveLength(1);
   });
 });
 

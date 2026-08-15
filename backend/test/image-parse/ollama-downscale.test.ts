@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { loadSharp } from '../../src/lib/sharp.js';
+import { config } from '../../src/config/index.js';
 
 const mocks = vi.hoisted(() => ({
   getVisionModel: vi.fn().mockResolvedValue('qwen2.5vl:7b'),
@@ -26,11 +27,37 @@ const { OllamaVisionProvider } = await import(
 
 const originalFetch = globalThis.fetch;
 let sentPayloads: Array<{ images: string[] }> = [];
+let psCalls = 0;
 
 function mockOllama(response: string) {
   sentPayloads = [];
+  psCalls = 0;
   globalThis.fetch = (async (_url: string, init: { body: string }) => {
     sentPayloads.push(JSON.parse(init.body));
+    return { ok: true, json: async () => ({ response }) } as unknown as Response;
+  }) as unknown as typeof fetch;
+}
+
+/**
+ * Ollama answers 200 with an empty completion while a model is still loading
+ * rather than queueing behind it. `generateResponses` is consumed one per
+ * /api/generate call; /api/ps reports the model resident once `residentAfter`
+ * ps calls have been made.
+ */
+function mockOllamaSequence(generateResponses: string[], residentAfter: number) {
+  sentPayloads = [];
+  psCalls = 0;
+  let generateCall = 0;
+  globalThis.fetch = (async (url: string, init?: { body: string }) => {
+    if (String(url).includes('/api/ps')) {
+      psCalls++;
+      return {
+        ok: true,
+        json: async () => ({ models: psCalls >= residentAfter ? [{ name: 'qwen2.5vl:7b' }] : [] }),
+      } as unknown as Response;
+    }
+    if (init) sentPayloads.push(JSON.parse(init.body));
+    const response = generateResponses[Math.min(generateCall++, generateResponses.length - 1)];
     return { ok: true, json: async () => ({ response }) } as unknown as Response;
   }) as unknown as typeof fetch;
 }
@@ -45,13 +72,18 @@ async function bigPhoto(): Promise<Buffer> {
     .toBuffer();
 }
 
+const originalReadyTimeout = config.OLLAMA_MODEL_READY_TIMEOUT_MS;
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getVisionModel.mockResolvedValue('qwen2.5vl:7b');
+  // Production waits out a real cold load; the suite should not.
+  config.OLLAMA_MODEL_READY_TIMEOUT_MS = 200;
 });
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  config.OLLAMA_MODEL_READY_TIMEOUT_MS = originalReadyTimeout;
 });
 
 describe('Ollama vision provider: image size sent for inference', () => {
@@ -88,16 +120,29 @@ describe('Ollama vision provider: image size sent for inference', () => {
     expect(sentBytes).toBe(small.length);
   }, 30000);
 
-  it('treats an empty completion as a failure rather than an empty success', async () => {
-    // Ollama returns 200 with an empty response when the model cannot run.
-    // Reporting that as success walked the user to a blank review box with no
-    // explanation, after a 24-second wait.
-    const small = await bigPhoto();
-    mockOllama('');
+  it('waits for the model to load and retries when the first call comes back empty', async () => {
+    // The real failure: a 5.5GB model evicted after five idle minutes takes
+    // about two to reload, and Ollama answers 200-with-nothing throughout.
+    // Every scan after a quiet spell hit this.
+    const photo = await bigPhoto();
+    mockOllamaSequence(['', 'Spoon Bread\n2 eggs'], 2);
 
     const provider = new OllamaVisionProvider();
-    await expect(provider.parseImage(small, 'image/jpeg', 'transcribe')).rejects.toThrow(
-      /returned no text/i
+    const result = await provider.parseImage(photo, 'image/jpeg', 'transcribe');
+
+    expect(result.rawText).toContain('Spoon Bread');
+    expect(psCalls).toBeGreaterThan(0); // it actually waited on readiness
+    expect(sentPayloads).toHaveLength(2); // and asked again
+  }, 30000);
+
+  it('gives up with an honest message when it stays empty', async () => {
+    const photo = await bigPhoto();
+    // Never becomes resident, so the readiness wait gives up.
+    mockOllamaSequence([''], Number.MAX_SAFE_INTEGER);
+
+    const provider = new OllamaVisionProvider();
+    await expect(provider.parseImage(photo, 'image/jpeg', 'transcribe')).rejects.toThrow(
+      /still be starting up/i
     );
   }, 30000);
 });
