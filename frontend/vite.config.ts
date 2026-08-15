@@ -7,7 +7,12 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt', not 'autoUpdate': autoUpdate reloads the page the moment a
+      // new worker activates, which throws away unsaved work mid-import. The
+      // new worker waits until the user accepts the banner in UpdatePrompt.
+      // Note the generated register module only calls onNeedRefresh in this
+      // mode — under 'autoUpdate' that callback is dead code.
+      registerType: 'prompt',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
       manifest: {
         name: 'Basis',

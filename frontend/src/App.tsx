@@ -6,6 +6,7 @@ import { ThemeProvider } from './providers/ThemeProvider';
 import { WebSocketProvider } from './providers/WebSocketProvider';
 import { Toaster } from './components/ui/toaster';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
+import { UpdatePrompt } from './components/shared/UpdatePrompt';
 import { LoadingPage } from './components/shared/LoadingSpinner';
 
 import { AppShell } from './components/layout/AppShell';
@@ -128,6 +129,7 @@ export function App() {
               </Suspense>
               </ErrorBoundary>
               <Toaster />
+              <UpdatePrompt />
             </WebSocketProvider>
           </AuthProvider>
         </BrowserRouter>
