@@ -18,7 +18,7 @@ import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { recipesApi, type IngredientMatch, type ImportSession, type ParsedRecipe, type ParseMethod } from '@/api/recipes';
-import { imageParseApi } from '@/api/image-parse';
+import { imageParseApi, type ParsedContent } from '@/api/image-parse';
 import { formatOcrForEditing } from '@/lib/recipe-utils';
 import { inventoryApi } from '@/api/inventory';
 import { cn } from '@/lib/utils';
@@ -114,6 +114,13 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
   const [imageError, setImageError] = useState<string | null>(null);
   const [imageRawText, setImageRawText] = useState<string | null>(null);
   const [imagePickerOpen, setImagePickerOpen] = useState(false);
+  /**
+   * Photos added but not yet committed to a reading. More than one is
+   * ambiguous — the front and back of one card, or several different cards —
+   * and only the user knows which, so we ask rather than guess.
+   */
+  const [pendingPhotos, setPendingPhotos] = useState<File[]>([]);
+  const [imagePageProgress, setImagePageProgress] = useState<{ done: number; total: number } | null>(null);
   const [pdfFileName, setPdfFileName] = useState<string | null>(null);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [pdfError, setPdfError] = useState<string | null>(null);
@@ -291,6 +298,8 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     setImageError(null);
     setImageRawText(null);
     setImagePickerOpen(false);
+    setPendingPhotos([]);
+    setImagePageProgress(null);
     setPdfFileName(null);
     setPdfBase64(null);
     setPdfError(null);
@@ -413,48 +422,82 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     e.target.value = '';
   }, []);
 
-  const handleImageUpload = useCallback(async (file: File) => {
+  /**
+   * Upload one photo and wait for the OCR session to settle, returning what
+   * was read. Split out of the single-photo handler so a recipe photographed
+   * across several pages can run the same path per page and combine the
+   * results.
+   */
+  const ocrOnePhoto = useCallback(async (file: File) => {
+    const { sessionId: imgSessionId } = await imageParseApi.uploadImage(file, 'recipe', undefined, 'accurate');
+    setImageParseSessionId(imgSessionId);
+
+    const maxWaitMs = 180000; // 3 minutes
+    const startTime = Date.now();
+    let delay = 1000;
+
+    while (Date.now() - startTime < maxWaitMs) {
+      await new Promise(resolve => setTimeout(resolve, delay));
+      const { session } = await imageParseApi.getSession(imgSessionId);
+
+      if (session.status === 'review') {
+        // An empty read is a failure, not an empty success — the provider now
+        // reports why (usually the image was too large for available VRAM).
+        if (!session.rawText && !session.parsedContent) {
+          throw new Error(session.parseWarnings?.[0] ?? 'No text could be read from that photo.');
+        }
+        return {
+          rawText: session.rawText ?? '',
+          parsedContent: session.parsedContent ?? null,
+          warnings: session.parseWarnings ?? [],
+        };
+      }
+
+      if (session.status === 'failed') {
+        throw new Error(session.parseWarnings?.[0] ?? 'Image processing failed. Try a clearer photo.');
+      }
+
+      delay = Math.min(delay * 1.5, 5000);
+    }
+
+    throw new Error('Image processing timed out. Please try again.');
+  }, []);
+
+  /**
+   * Read one or more photos as a SINGLE recipe — the front and back of a
+   * recipe card, or a page that spills over. Pages are read in the order they
+   * were added and their text concatenated, then formatted once so the review
+   * box has one set of section headings rather than one per page.
+   */
+  const handlePhotosAsOneRecipe = useCallback(async (files: File[]) => {
     setImageProcessing(true);
     setImageError(null);
     setImageRawText(null);
+    setImagePageProgress(files.length > 1 ? { done: 0, total: files.length } : null);
 
     try {
-      // Upload image to the image-parse service
-      const { sessionId: imgSessionId } = await imageParseApi.uploadImage(file, 'recipe', undefined, 'accurate');
-      setImageParseSessionId(imgSessionId);
-
-      // Poll until processing is complete
-      const maxWaitMs = 180000; // 3 minutes
-      const startTime = Date.now();
-      let delay = 1000;
-
-      while (Date.now() - startTime < maxWaitMs) {
-        await new Promise(resolve => setTimeout(resolve, delay));
-        const { session: imgSession } = await imageParseApi.getSession(imgSessionId);
-
-        if (imgSession.status === 'review') {
-          // Build editable text with clear section headers from structured data
-          // so the user can see and fix any misplaced content before CRF parsing
-          const editableText = formatOcrForEditing(imgSession.rawText, imgSession.parsedContent);
-          setImageRawText(editableText);
-          setParseWarnings(imgSession.parseWarnings || []);
-          setImageProcessing(false);
-          return;
-        }
-
-        if (imgSession.status === 'failed') {
-          throw new Error('Image processing failed. Try a clearer photo.');
-        }
-
-        delay = Math.min(delay * 1.5, 5000);
+      const pages: Array<{ rawText: string; parsedContent: ParsedContent | null; warnings: string[] }> = [];
+      for (const [index, file] of files.entries()) {
+        pages.push(await ocrOnePhoto(file));
+        setImagePageProgress(files.length > 1 ? { done: index + 1, total: files.length } : null);
       }
 
-      throw new Error('Image processing timed out. Please try again.');
+      if (pages.length === 1) {
+        setImageRawText(formatOcrForEditing(pages[0].rawText, pages[0].parsedContent));
+      } else {
+        // Structured data is per-page and would conflict across pages, so the
+        // combined text is formatted from raw and the user tidies the seam.
+        const combined = pages.map(p => p.rawText).filter(Boolean).join('\n\n');
+        setImageRawText(formatOcrForEditing(combined, null));
+      }
+      setParseWarnings([...new Set(pages.flatMap(p => p.warnings))]);
     } catch (e) {
       setImageError(getErrorMessage(e, 'Failed to process image'));
+    } finally {
       setImageProcessing(false);
+      setImagePageProgress(null);
     }
-  }, []);
+  }, [ocrOnePhoto]);
 
   const handleMatchUpdate = useCallback((parsedName: string, matchedItemId?: string, matchedItemName?: string, unit?: string) => {
     setIngredientMatches(prev =>
@@ -785,9 +828,13 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                     {imageProcessing ? (
                       <div className="border-2 border-dashed rounded-lg p-8 text-center space-y-4">
                         <LoadingSpinner className="h-12 w-12 mx-auto text-primary" />
-                        <p className="text-sm font-medium">Processing image...</p>
+                        <p className="text-sm font-medium">
+                          {imagePageProgress
+                            ? `Reading photo ${Math.min(imagePageProgress.done + 1, imagePageProgress.total)} of ${imagePageProgress.total}...`
+                            : 'Reading photo...'}
+                        </p>
                         <p className="text-xs text-muted-foreground">
-                          Extracting text from image. This may take up to a minute.
+                          This can take up to a minute per photo.
                         </p>
                       </div>
                     ) : imageRawText !== null ? (
@@ -834,7 +881,29 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <Label>Upload one or more recipe photos</Label>
+                        <Label>
+                          {pendingPhotos.length === 0
+                            ? 'Add recipe photos'
+                            : `${pendingPhotos.length} photo${pendingPhotos.length === 1 ? '' : 's'} added`}
+                        </Label>
+
+                        {pendingPhotos.length > 0 && (
+                          <ul className="rounded-md border divide-y divide-border text-sm">
+                            {pendingPhotos.map((file, index) => (
+                              <li key={`${file.name}-${index}`} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                                <span className="truncate">{file.name}</span>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setPendingPhotos(prev => prev.filter((_, i) => i !== index))}
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </Button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
                         <Button
                           type="button"
                           variant="outline"
@@ -842,26 +911,78 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                           onClick={() => setImagePickerOpen(true)}
                         >
                           <Camera className="mr-2 h-4 w-4" />
-                          Choose photos
+                          {pendingPhotos.length === 0 ? 'Choose photos' : 'Add another photo'}
                         </Button>
+
+                        {/* One photo is unambiguous — read it. Several are not:
+                            the front and back of one card, or several cards.
+                            Guessing either way is wrong half the time. */}
+                        {pendingPhotos.length === 1 && (
+                          <Button
+                            type="button"
+                            className="w-full"
+                            onClick={() => {
+                              const photos = pendingPhotos;
+                              setPendingPhotos([]);
+                              void handlePhotosAsOneRecipe(photos);
+                            }}
+                          >
+                            Read this photo
+                          </Button>
+                        )}
+
+                        {pendingPhotos.length > 1 && (
+                          <div className="space-y-2 rounded-md border border-primary/30 bg-primary/5 p-3">
+                            <p className="text-sm font-medium">
+                              What are these {pendingPhotos.length} photos?
+                            </p>
+                            <Button
+                              type="button"
+                              className="w-full"
+                              onClick={() => {
+                                const photos = pendingPhotos;
+                                setPendingPhotos([]);
+                                void handlePhotosAsOneRecipe(photos);
+                              }}
+                            >
+                              One recipe across {pendingPhotos.length} photos
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="w-full"
+                              onClick={() => {
+                                const photos = pendingPhotos;
+                                setPendingPhotos([]);
+                                enterBatchMode(photos);
+                              }}
+                            >
+                              {pendingPhotos.length} separate recipes
+                            </Button>
+                            <p className="text-xs text-muted-foreground">
+                              One recipe combines the text from every photo in the order above.
+                            </p>
+                          </div>
+                        )}
                         <FileSourcePicker
                           open={imagePickerOpen}
                           onOpenChange={setImagePickerOpen}
                           onSelect={(files) => {
                             if (files.length === 0) return;
-                            if (files.length > 1) {
-                              enterBatchMode(files);
-                              return;
-                            }
-                            handleImageUpload(files[0]);
+                            // Accumulate. A phone camera hands back exactly one
+                            // photo per invocation, so capturing the back of a
+                            // card means coming through here a second time —
+                            // replacing the selection would have made that
+                            // impossible.
+                            setPendingPhotos(prev => [...prev, ...files]);
                           }}
                           accept="image/jpeg,image/png,image/gif,image/webp,image/heic"
                           multiple
                           title="Add recipe photos"
-                          description="Pick one photo for a single recipe, or several to import them all."
+                          description="Add one photo, or several. You'll choose what they are next."
                         />
                         <p className="text-xs text-muted-foreground">
-                          Pick one photo for a single recipe, or several to process them all at once. Supports JPG, PNG, GIF, WebP, HEIC (max 10MB each).
+                          JPG, PNG, GIF, WebP or HEIC, up to 10MB each.
                         </p>
                       </div>
                     )}
