@@ -44,8 +44,24 @@ export interface PlannedItem {
   similarExisting: Array<{ itemId: string; name: string; score: number; reason: string }>;
 }
 
+/**
+ * A set of new items that all read like the same thing, so the household can
+ * settle them in one decision instead of meeting the same pair twice.
+ *
+ * Built as connected components over the similarity pairs: if "salt" resembles
+ * "table salt" and "table salt" resembles "sea salt", all three belong in one
+ * conversation even where the first and last were never compared directly.
+ */
+export interface PlannedCluster {
+  canonicalNames: string[];
+  /** Strongest pairwise score in the cluster — for ordering the review. */
+  topScore: number;
+}
+
 export interface ItemPlan {
   items: PlannedItem[];
+  /** Groups of new items that resemble each other. */
+  clusters: PlannedCluster[];
   /** Count of plans with at least one suggestion worth a decision. */
   needingReview: number;
 }
@@ -129,8 +145,40 @@ export function planIngredientItems(input: PlanInput): ItemPlan {
 
   return {
     items: plans,
+    clusters: buildClusters(creating),
     needingReview: plans.filter(
       (p) => p.similarPlanned.length > 0 || p.similarExisting.length > 0
     ).length,
   };
+}
+
+/** Connected components over the similarity pairs recorded above. */
+function buildClusters(creating: PlannedItem[]): PlannedCluster[] {
+  const byName = new Map(creating.map((p) => [p.canonicalName, p]));
+  const unvisited = new Set(byName.keys());
+  const clusters: PlannedCluster[] = [];
+
+  for (const start of byName.keys()) {
+    if (!unvisited.has(start)) continue;
+    unvisited.delete(start);
+
+    const members: string[] = [start];
+    let topScore = 0;
+    const queue = [start];
+    while (queue.length > 0) {
+      const name = queue.shift()!;
+      for (const neighbour of byName.get(name)?.similarPlanned ?? []) {
+        topScore = Math.max(topScore, neighbour.score);
+        if (unvisited.delete(neighbour.canonicalName)) {
+          members.push(neighbour.canonicalName);
+          queue.push(neighbour.canonicalName);
+        }
+      }
+    }
+
+    // A name resembling nothing is not a conversation.
+    if (members.length > 1) clusters.push({ canonicalNames: members, topScore });
+  }
+
+  return clusters.sort((a, b) => b.topScore - a.topScore);
 }

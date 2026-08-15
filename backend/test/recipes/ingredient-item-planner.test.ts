@@ -114,3 +114,35 @@ describe('planIngredientItems: nothing is written', () => {
     expect(JSON.stringify({ existing, incoming })).toBe(snapshot);
   });
 });
+
+describe('planIngredientItems: clusters for review', () => {
+  it('groups a pair into one conversation', () => {
+    const result = plan(['salt', 'table salt', 'flour']);
+
+    expect(result.clusters).toHaveLength(1);
+    expect([...result.clusters[0].canonicalNames].sort()).toEqual(['salt', 'table salt']);
+  });
+
+  it('joins names linked only through a third', () => {
+    // Whichever pairs happen to score above the threshold, anything
+    // transitively connected belongs in the same decision — otherwise the
+    // household settles "salt vs table salt", then meets "sea salt" alone.
+    const result = plan(['salt', 'table salt', 'sea salt']);
+
+    expect(result.clusters).toHaveLength(1);
+    expect(result.clusters[0].canonicalNames).toHaveLength(3);
+  });
+
+  it('does not invent a cluster for something that resembles nothing', () => {
+    const result = plan(['salt', 'flour', 'butter']);
+    expect(result.clusters).toEqual([]);
+  });
+
+  it('keeps separate look-alikes in separate conversations', () => {
+    const result = plan(['salt', 'table salt', 'cinnamon', 'cinamon']);
+
+    expect(result.clusters).toHaveLength(2);
+    const sizes = result.clusters.map((c) => c.canonicalNames.length);
+    expect(sizes).toEqual([2, 2]);
+  });
+});

@@ -396,6 +396,30 @@ export const recipesApi = {
    * the same item share it. Doing this per-row on the client re-created items
    * the household already had.
    */
+  /**
+   * What creating items from these ingredients would do — without doing it.
+   *
+   * Writes nothing, so it can be asked before the household has decided
+   * anything. Names that resemble each other come back grouped, because
+   * "salt" on one card and "table salt" on another would otherwise become two
+   * items and stay that way.
+   */
+  planItemsForIngredients: (ingredients: Array<{ name: string }>) =>
+    apiPost<{
+      items: Array<{
+        originalNames: string[];
+        canonicalName: string;
+        action: 'link' | 'create';
+        existingItemId?: string;
+        existingItemName?: string;
+        similarPlanned: Array<{ canonicalName: string; score: number; reason: string }>;
+        similarExisting: Array<{ itemId: string; name: string; score: number; reason: string }>;
+      }>;
+      clusters: Array<{ canonicalNames: string[]; topScore: number }>;
+      needingReview: number;
+      warnings: string[];
+    }>('/recipes/ingredients/plan-items', { ingredients }),
+
   createItemsForIngredients: (ingredients: Array<{ name: string; unit?: string }>) =>
     apiPost<{
       results: Array<{

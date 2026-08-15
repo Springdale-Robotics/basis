@@ -25,6 +25,8 @@ import { inventoryApi } from '@/api/inventory';
 import { deduplicateIngredientMatches, dedupeKeyFor } from '@/lib/recipe-utils';
 import { useBatchImageProcessing, type BatchItem } from '@/hooks/useBatchImageProcessing';
 import { FileSourcePicker } from '@/components/shared/FileSourcePicker';
+import { ReconcileIngredientsDialog } from '@/components/recipes/ReconcileIngredientsDialog';
+import { useIngredientReconciliation } from '@/hooks/useIngredientReconciliation';
 import { toast } from '@/hooks/useToast';
 import { BulkIngredientActions } from './BulkIngredientActions';
 import { IngredientMatchRow } from './IngredientMatchRow';
@@ -302,26 +304,13 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
     });
   }, []);
 
-  // Create all unmatched
+  const reconciliation = useIngredientReconciliation(handleMatchUpdate);
+
+  // Create all unmatched — via the look-alike check, which is invisible when
+  // there is nothing to settle.
   const handleCreateAllUnmatched = useCallback(async () => {
-    const unmatched = allIngredientMatches.filter(m => !m.matchedItemId);
-    if (unmatched.length === 0) return;
-
-    // Whole batch in one request: the server canonicalises the names, reuses
-    // items the household already has, and gives ingredients that reduce to
-    // the same item a single entry. Doing it row by row here produced a
-    // duplicate every time two recipes worded a staple differently.
-    const { results } = await recipesApi.createItemsForIngredients(
-      unmatched.map(m => ({ name: m.parsedName, unit: m.parsedUnit }))
-    );
-    for (const result of results) {
-      handleMatchUpdate(result.originalName, result.itemId, result.itemName);
-    }
-
-    queryClient.invalidateQueries({ queryKey: ['inventory'] });
-    queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
-    queryClient.invalidateQueries({ queryKey: ['ingredient-suggestions'] });
-  }, [allIngredientMatches, handleMatchUpdate, queryClient]);
+    await reconciliation.begin(allIngredientMatches.filter(m => !m.matchedItemId));
+  }, [allIngredientMatches, reconciliation]);
 
   // ========== START PROCESSING ==========
 
@@ -931,6 +920,10 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
           multiple
           title={mode === 'file' ? 'Add .recipe files' : 'Add recipe images'}
         />
+
+        {reconciliation.dialogProps && (
+          <ReconcileIngredientsDialog {...reconciliation.dialogProps} />
+        )}
     </>
   );
 
