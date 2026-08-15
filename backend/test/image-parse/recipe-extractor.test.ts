@@ -43,7 +43,10 @@ describe('parseRecipeFromText: a card with no section headings', () => {
   });
 
   it('recognises the method rather than filing it under ingredients', () => {
-    expect(parsed.instructions).toEqual(['Beat eggs in medium bowl. Add 1 c.']);
+    // Divided per sentence. "Add 1 c." is a fragment because the front of the
+    // card ends there and continues on the back.
+    expect(parsed.instructions).toEqual(['Beat eggs in medium bowl.', 'Add 1 c.']);
+    expect(parsed.ingredients.map((i) => i.name).join(' ')).not.toContain('Beat eggs');
   });
 });
 
@@ -73,12 +76,13 @@ describe('parseRecipeFromText: line classification', () => {
       // Prefixed with a quantity line so the "tail" rule has ingredients to
       // trail, matching how these appear on a real card.
       const parsed = parseRecipeFromText(`Test Recipe\n1 cup flour\n${line}`);
-      // Step numbers are stripped when a line is stored as an instruction, so
-      // compare against the line without one.
+      // A line stored as an instruction has its step number stripped and may
+      // be divided into sentences, so compare on the text rather than on
+      // whole-line identity.
       const withoutStepNumber = line.replace(/^\d+[.)]\s*/, '');
       const landed = parsed.ingredients.some((i) => i.name === line)
         ? 'ingredient'
-        : parsed.instructions.some((s) => s === withoutStepNumber)
+        : parsed.instructions.join(' ') === withoutStepNumber
           ? 'instruction'
           : 'dropped';
       expect(landed).toBe(expected);

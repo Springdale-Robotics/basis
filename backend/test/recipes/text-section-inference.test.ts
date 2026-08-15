@@ -59,22 +59,78 @@ describe('parseRecipeTextWithConfidence: a card photographed front and back', ()
     expect(result.warnings.join(' ')).toMatch(/inferred/i);
   });
 
-  it('breaks the method into steps at sentence ends', () => {
-    expect(result.recipe.instructions).toHaveLength(3);
-    expect(result.recipe.instructions[1]).toBe('Pour mixture into greased 2 qt. baking dish.');
+  it('breaks the method into one step per sentence', () => {
+    expect(result.recipe.instructions).toEqual([
+      'Beat eggs in medium bowl.',
+      'Add 1 c. Cheese, both corns, muffin mix, sour cream & melted butter, mixing thoroughly until combined.',
+      'Pour mixture into greased 2 qt. baking dish.',
+      'Bake in preheated 350° oven 45 min or until center is set.',
+      'Top with remaining cheese, bake 2 min more or until cheese is melted.',
+    ]);
   });
 
-  it('rejoins the sentence that runs across the two photos', () => {
-    // The front of the card stops at "Add 1 c." — an abbreviation, not a full
-    // stop — and the back continues "Cheese, both corns…". Treating that
-    // period as the end of a step split one sentence into two.
-    expect(result.recipe.instructions[0]).toBe(
-      'Beat eggs in medium bowl. Add 1 c. Cheese, both corns, muffin mix, sour cream & melted butter, mixing thoroughly until combined.'
-    );
+  it('does not mistake an abbreviation for the end of a step', () => {
+    // Two traps in this card. The front stops at "Add 1 c." and continues onto
+    // the back, so that period must not divide anything; and "2 qt. baking
+    // dish" carries one mid-step.
+    expect(result.recipe.instructions[1]).toMatch(/^Add 1 c\. Cheese/);
+    expect(result.recipe.instructions[2]).toBe('Pour mixture into greased 2 qt. baking dish.');
+  });
+});
+
+describe('parseRecipeTextWithConfidence: a method transcribed as a single line', () => {
+  /**
+   * The reported failure, verbatim. Asked to transcribe the same card twice,
+   * the vision model kept the line breaks once and ran the whole method
+   * together the next time. Splitting on line breaks alone therefore produced
+   * a recipe with one enormous step — for the same photo that had worked
+   * moments earlier.
+   */
+  const ONE_LINE_BACK =
+    'Cheese, both corn, muffin mix, pour cream & melted butter, mixing thoroughly until combined. Pour mixture into greased 2 qt. baking dish. Bake in preheated 350° oven 45 min or until center is set. Top with remaining cheese, bake 2 min more or until cheese is melted.';
+
+  it('divides it into steps anyway', () => {
+    const result = parseRecipeTextWithConfidence([CARD_FRONT, ONE_LINE_BACK].join('\n\n'));
+
+    expect(result.recipe.instructions).toEqual([
+      'Beat eggs in medium bowl.',
+      'Add 1 c. Cheese, both corn, muffin mix, pour cream & melted butter, mixing thoroughly until combined.',
+      'Pour mixture into greased 2 qt. baking dish.',
+      'Bake in preheated 350° oven 45 min or until center is set.',
+      'Top with remaining cheese, bake 2 min more or until cheese is melted.',
+    ]);
+  });
+
+  it('reads the same whether or not the transcription kept its line breaks', () => {
+    const asLines = parseRecipeTextWithConfidence([CARD_FRONT, CARD_BACK].join('\n\n'));
+    const asOneLine = parseRecipeTextWithConfidence([CARD_FRONT, ONE_LINE_BACK].join('\n\n'));
+
+    expect(asOneLine.recipe.instructions).toHaveLength(asLines.recipe.instructions.length);
+    expect(asOneLine.recipe.ingredients).toEqual(asLines.recipe.ingredients);
   });
 });
 
 describe('parseRecipeTextWithConfidence: wrapped lines', () => {
+  it('leaves a recipe that numbers its own steps alone', () => {
+    // "1." may deliberately cover several sentences. The author has said where
+    // the divisions are, so they are not second-guessed.
+    const result = parseRecipeTextWithConfidence(
+      [
+        'Bread',
+        'Ingredients',
+        '500 g flour',
+        'Instructions',
+        '1. Mix the dough. Knead it for ten minutes. Leave it to rise.',
+        '2. Shape and bake.',
+      ].join('\n')
+    );
+
+    expect(result.recipe.instructions).toEqual([
+      'Mix the dough. Knead it for ten minutes. Leave it to rise.',
+      'Shape and bake.',
+    ]);
+  });
+
   it('still rejoins a step wrapped across lines by a PDF', () => {
     const result = parseRecipeTextWithConfidence(
       [
