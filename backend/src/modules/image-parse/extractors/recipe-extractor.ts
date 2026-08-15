@@ -156,7 +156,6 @@ export function parseRecipeFromText(rawText: string): ParsedRecipeContent {
   // First pass: try structured parsing with section headers
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
-    const lowerLine = line.toLowerCase();
 
     // Skip empty lines
     if (!line) continue;
@@ -166,19 +165,18 @@ export function parseRecipeFromText(rawText: string): ParsedRecipeContent {
       continue;
     }
 
-    // Detect section headers
-    if (lowerLine.includes('ingredient') || lowerLine === 'ingredients:') {
+    // Detect section headers. A header is a line that IS the word, not any
+    // line mentioning it — "Mix all ingredients until smooth" is a step, and
+    // treating it as a header moved the rest of the recipe into the wrong
+    // list. Trailing punctuation and a parenthetical ("Ingredients (sauce):")
+    // are still headers.
+    if (INGREDIENTS_HEADER.test(line)) {
       inIngredientsSection = true;
       inInstructionsSection = false;
       continue;
     }
 
-    if (
-      lowerLine.includes('instruction') ||
-      lowerLine.includes('direction') ||
-      lowerLine.includes('method') ||
-      lowerLine === 'steps:'
-    ) {
+    if (INSTRUCTIONS_HEADER.test(line)) {
       inInstructionsSection = true;
       inIngredientsSection = false;
       continue;
@@ -192,26 +190,27 @@ export function parseRecipeFromText(rawText: string): ParsedRecipeContent {
       }
     }
 
+    const kind = classifyLine(line, {
+      inIngredientsSection,
+      inInstructionsSection,
+      seenIngredient: ingredients.length > 0,
+    });
+
     // Collect ingredient lines as raw text. Per-line parsing happens at the
     // caller via CRF — we used to call a regex parser here, but silent
     // regex output produces confident-looking-but-wrong quantities, which
     // is worse than knowing parsing failed.
-    if (inIngredientsSection || (!inInstructionsSection && isIngredientLine(line))) {
+    if (kind === 'ingredient') {
       const cleaned = line.replace(/^[\-\*•]\s*/, '').trim();
       if (cleaned.length > 0) {
         ingredients.push({ name: cleaned, quantity: undefined, unit: undefined, confidence: 0 });
-        inIngredientsSection = true;
       }
       continue;
     }
 
-    // Parse instruction lines
-    if (inInstructionsSection || isInstructionLine(line)) {
+    if (kind === 'instruction') {
       const cleaned = cleanInstructionText(line);
-      if (cleaned) {
-        instructions.push(cleaned);
-        inInstructionsSection = true;
-      }
+      if (cleaned) instructions.push(cleaned);
     }
   }
 
@@ -341,6 +340,49 @@ function normalizeUnit(unit?: string): string | undefined {
 /**
  * Check if a line looks like an ingredient
  */
+/** A line that is a section heading, not a line that happens to say the word. */
+const INGREDIENTS_HEADER = /^\s*ingredients?\b[^A-Za-z]*$/i;
+const INSTRUCTIONS_HEADER = /^\s*(instructions?|directions?|method|steps?)\b[^A-Za-z]*$/i;
+
+/**
+ * Decide what a single line of a recipe is.
+ *
+ * Handwritten cards carry no "Ingredients"/"Instructions" headings — the
+ * quantities simply stop and the prose begins. The previous version latched
+ * into "ingredients" the moment any quantity-led line appeared and never left,
+ * so the instruction check below was unreachable and a card came back as eight
+ * ingredients (the last being "Beat eggs in medium bowl. Add 1 c.") and no
+ * method at all. Sections now latch only on a real heading; otherwise every
+ * line is judged on its own.
+ *
+ * Order matters. Quantity-led lines are claimed as ingredients first, so that
+ * "1 c. sour cream" can never be mistaken for a step on the strength of a word
+ * like "cream", while "Add 1 c." — which is not quantity-led — reaches the
+ * verb test.
+ */
+function classifyLine(
+  line: string,
+  ctx: { inIngredientsSection: boolean; inInstructionsSection: boolean; seenIngredient: boolean }
+): 'ingredient' | 'instruction' | null {
+  // An explicit heading is a promise about everything under it, including
+  // lines that look like nothing in particular.
+  if (ctx.inIngredientsSection) return 'ingredient';
+  if (ctx.inInstructionsSection) return 'instruction';
+
+  if (isIngredientLine(line)) return 'ingredient';
+
+  // Short unpunctuated tails after the quantities have started — "Salt and
+  // pepper to taste", "Butter for the dish". These carry cooking words, so
+  // without this they read as one-word method steps.
+  const words = line.split(/\s+/).length;
+  if (ctx.seenIngredient && words <= 5 && !/[.!?]$/.test(line)) return 'ingredient';
+
+  if (isInstructionLine(line)) return 'instruction';
+
+  // Deliberately dropped rather than guessed at, as before.
+  return null;
+}
+
 function isIngredientLine(line: string): boolean {
   // Check for quantity patterns
   const hasQuantity = /^\s*[\d½¼¾⅓⅔⅛⅜⅝⅞]+/.test(line);
@@ -357,8 +399,11 @@ function isInstructionLine(line: string): boolean {
   // Numbered steps
   if (/^\d+[\.\)]\s*/.test(line)) return true;
 
-  // Contains cooking verbs
-  const cookingVerbs = /\b(preheat|heat|cook|bake|fry|sauté|boil|simmer|stir|mix|combine|add|pour|place|remove|let|allow|set|cover|season|taste|serve|slice|dice|chop|mince|grate)\b/i;
+  // Contains cooking verbs. The Spoon Bread card's only method line survived
+  // on "Add" alone — "Beat" wasn't listed — so the common ones a handwritten
+  // recipe opens with are included now.
+  const cookingVerbs =
+    /\b(preheat|heat|cook|bake|fry|sauté|boil|simmer|stir|mix|combine|add|pour|place|remove|let|allow|set|cover|season|taste|serve|slice|dice|chop|mince|grate|beat|whisk|fold|knead|drain|blend|sprinkle|spread|transfer|refrigerate|chill|freeze|toss|brush|layer|melt|dissolve|garnish)\b/i;
   return cookingVerbs.test(line);
 }
 
