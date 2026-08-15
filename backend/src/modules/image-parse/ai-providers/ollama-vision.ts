@@ -46,6 +46,47 @@ const MAX_INFERENCE_EDGE_PX = 1024;
 const INFERENCE_JPEG_QUALITY = 85;
 
 /**
+ * Ollama answers a generate request with HTTP 200 and an EMPTY completion when
+ * the model is not resident yet — it does not queue behind the load. Loading a
+ * 5.5GB vision model off disk takes around two minutes, and OLLAMA_KEEP_ALIVE
+ * evicts it after five idle minutes. So for a household scanning one card a
+ * day, the cold load is the normal case, not an edge: the scan lands mid-load
+ * and comes back with nothing.
+ *
+ * Rather than guess a backoff, wait for the condition — poll until the model
+ * reports resident, then try once more.
+ */
+const MODEL_READY_POLL_MS = 3000;
+
+/** True once Ollama reports the model loaded and holding VRAM. */
+async function isModelResident(host: string, model: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${host}/api/ps`, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { models?: Array<{ name: string }> };
+    // /api/ps reports the fully qualified tag, so `moondream` shows as
+    // `moondream:latest` — compare on the bare name.
+    const bare = (tag: string) => tag.split(':')[0];
+    return (data.models ?? []).some((m) => bare(m.name) === bare(model));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Block until the model is loaded, or until we have waited longer than a cold
+ * load plausibly takes. Returns whether it became ready.
+ */
+async function waitForModel(host: string, model: string): Promise<boolean> {
+  const deadline = Date.now() + config.OLLAMA_MODEL_READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (await isModelResident(host, model)) return true;
+    await new Promise((resolve) => setTimeout(resolve, MODEL_READY_POLL_MS));
+  }
+  return isModelResident(host, model);
+}
+
+/**
  * Shrink an image to something a local vision model can actually hold.
  * Best-effort: if sharp is unavailable or the buffer isn't decodable we send
  * the original rather than failing the import outright.
@@ -220,7 +261,42 @@ export class OllamaVisionProvider implements VisionProvider {
         throw new Error(`Ollama API error: ${response.status} - ${errorText}`);
       }
 
-      const data = (await response.json()) as OllamaGenerateResponse;
+      let data = (await response.json()) as OllamaGenerateResponse;
+
+      // Empty completion means the model was not ready, not that the image was
+      // unreadable — Ollama returns 200 immediately rather than queueing behind
+      // the load. Wait for it to finish loading and ask once more.
+      if (!data.response || !data.response.trim()) {
+        logger.info({ model }, 'Empty completion — waiting for the model to finish loading');
+        const ready = await waitForModel(this.host, model);
+        if (ready) {
+          // Its own budget: the original controller was disarmed by the
+          // clearTimeout above, so reusing its signal would leave the retry
+          // unbounded.
+          const retryController = new AbortController();
+          const retryTimeout = setTimeout(
+            () => retryController.abort(),
+            config.IMAGE_PARSE_TIMEOUT_MS
+          );
+          const retry = await fetch(`${this.host}/api/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model,
+              prompt,
+              images: [imageBase64],
+              stream: false,
+              options: { temperature: 0.1 },
+            }),
+            signal: retryController.signal,
+          }).finally(() => clearTimeout(retryTimeout));
+          if (retry.ok) {
+            data = (await retry.json()) as OllamaGenerateResponse;
+            logger.info({ model }, 'Retried after model load');
+          }
+        }
+      }
+
       const processingTimeMs = Date.now() - startTime;
 
       logger.info(
@@ -233,13 +309,10 @@ export class OllamaVisionProvider implements VisionProvider {
         'Ollama image parsing completed'
       );
 
-      // An empty completion is a failure wearing a 200. Ollama answers this
-      // way when the model cannot run — out of VRAM, most often — and treating
-      // it as success walked the user to an empty review box with no
-      // explanation, after a 24-second wait. Say what happened instead.
+      // Still empty after waiting for the load — a genuine failure now.
       if (!data.response || !data.response.trim()) {
         throw new Error(
-          `${model} returned no text. The image may be too large for the available VRAM, or the model may not be a vision model.`
+          `${model} returned no text. The AI model may still be starting up — this can take a couple of minutes after the box has been idle. Try again shortly.`
         );
       }
 
