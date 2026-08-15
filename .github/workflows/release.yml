@@ -184,6 +184,17 @@ jobs:
       - name: Compose release notes from tag annotation
         id: notes
         run: |
+          # actions/checkout leaves refs/tags/<name> as a LIGHTWEIGHT ref
+          # pointing straight at the commit, even with fetch-depth: 0 — the
+          # annotation is peeled away. %(contents) then quietly returns the
+          # commit message instead, which is why every release so far had to
+          # have its notes rewritten by hand. Fetch the real tag object back.
+          git fetch origin --force "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+
+          if [ "$(git cat-file -t "${GITHUB_REF_NAME}")" != "tag" ]; then
+            echo "::warning::${GITHUB_REF_NAME} is not an annotated tag — release notes will fall back to a placeholder."
+          fi
+
           # Use the annotation message of the tag as the release body. Falls
           # back to a default if the tag was lightweight (no annotation).
           NOTES="$(git tag -l --format='%(contents)' "${GITHUB_REF_NAME}")"
