@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query';
-import { Upload, Link, FileText, Check, X, ChevronRight, Loader2, AlertCircle, AlertTriangle, Info, FileUp, Camera } from 'lucide-react';
+import { Upload, Link, FileText, Check, X, ChevronRight, Loader2, AlertCircle, AlertTriangle, Info, FileUp, Camera, RefreshCw } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -459,7 +459,10 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
       }
 
       if (session.status === 'failed') {
-        throw new Error(session.parseWarnings?.[0] ?? 'Image processing failed. Try a clearer photo.');
+        // No "try a clearer photo" default: the backend records the real
+        // reason, and guessing at the photo sent people off retaking cards
+        // when the fault was ours.
+        throw new Error(session.parseWarnings?.[0] ?? 'The photo could not be read.');
       }
 
       delay = Math.min(delay * 1.5, 5000);
@@ -496,6 +499,10 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
         setImageRawText(formatOcrForEditing(combined, null));
       }
       setParseWarnings([...new Set(pages.flatMap(p => p.warnings))]);
+      // Only now. Held until the read succeeds so a failure leaves the photos
+      // in place to retry — clearing them up front is what turned every
+      // backend hiccup into "go and photograph the card again".
+      setPendingPhotos([]);
     } catch (e) {
       setImageError(getErrorMessage(e, 'Failed to process image'));
     } finally {
@@ -926,11 +933,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                           <Button
                             type="button"
                             className="w-full"
-                            onClick={() => {
-                              const photos = pendingPhotos;
-                              setPendingPhotos([]);
-                              void handlePhotosAsOneRecipe(photos);
-                            }}
+                            onClick={() => void handlePhotosAsOneRecipe(pendingPhotos)}
                           >
                             Read this photo
                           </Button>
@@ -944,11 +947,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                             <Button
                               type="button"
                               className="w-full"
-                              onClick={() => {
-                                const photos = pendingPhotos;
-                                setPendingPhotos([]);
-                                void handlePhotosAsOneRecipe(photos);
-                              }}
+                              onClick={() => void handlePhotosAsOneRecipe(pendingPhotos)}
                             >
                               One recipe across {pendingPhotos.length} photos
                             </Button>
@@ -995,7 +994,22 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                     {imageError && (
                       <Alert variant="destructive">
                         <AlertCircle className="h-4 w-4" />
-                        <AlertDescription>{imageError}</AlertDescription>
+                        <AlertDescription className="space-y-2">
+                          <p>{imageError}</p>
+                          {/* The photos are still here, so retrying costs a
+                              click rather than another trip to the recipe box. */}
+                          {pendingPhotos.length > 0 && !imageProcessing && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void handlePhotosAsOneRecipe(pendingPhotos)}
+                            >
+                              <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                              Try again with the same {pendingPhotos.length === 1 ? 'photo' : 'photos'}
+                            </Button>
+                          )}
+                        </AlertDescription>
                       </Alert>
                     )}
                   </div>
