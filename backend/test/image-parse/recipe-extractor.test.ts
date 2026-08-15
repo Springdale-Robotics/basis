@@ -59,8 +59,13 @@ describe('parseRecipeFromText: line classification', () => {
     { line: '6 Tbsp butter, melted', expect: 'ingredient', why: 'quantity-led, despite "melted"' },
     { line: 'Salt and pepper to taste', expect: 'ingredient', why: 'short tail with no sentence punctuation' },
     { line: 'Beat eggs in medium bowl. Add 1 c.', expect: 'instruction', why: 'prose, not quantity-led' },
-    { line: 'Preheat oven to 350 degrees.', expect: 'instruction', why: 'opens with a cooking verb' },
-    { line: 'Bake until the top is golden brown.', expect: 'instruction', why: 'opens with a cooking verb' },
+    { line: 'Preheat oven to 350 degrees.', expect: 'instruction', why: 'a sentence, not a quantity' },
+    { line: 'Bake until the top is golden brown.', expect: 'instruction', why: 'a sentence, not a quantity' },
+    // The point of classifying on structure rather than vocabulary: no list of
+    // cooking words contains these, and it doesn't matter.
+    { line: 'Spatchcock the bird and blowtorch the skin.', expect: 'instruction', why: 'no verb list needed' },
+    { line: 'Temper the chocolate over a bain-marie.', expect: 'instruction', why: 'no verb list needed' },
+    { line: '1. Preheat the oven.', expect: 'instruction', why: 'a step number is not a quantity' },
   ];
 
   for (const { line, expect: expected, why } of cases) {
@@ -68,9 +73,12 @@ describe('parseRecipeFromText: line classification', () => {
       // Prefixed with a quantity line so the "tail" rule has ingredients to
       // trail, matching how these appear on a real card.
       const parsed = parseRecipeFromText(`Test Recipe\n1 cup flour\n${line}`);
+      // Step numbers are stripped when a line is stored as an instruction, so
+      // compare against the line without one.
+      const withoutStepNumber = line.replace(/^\d+[.)]\s*/, '');
       const landed = parsed.ingredients.some((i) => i.name === line)
         ? 'ingredient'
-        : parsed.instructions.some((s) => s === line)
+        : parsed.instructions.some((s) => s === withoutStepNumber)
           ? 'instruction'
           : 'dropped';
       expect(landed).toBe(expected);

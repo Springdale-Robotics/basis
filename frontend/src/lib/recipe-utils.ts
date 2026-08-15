@@ -58,21 +58,23 @@ export function formatOcrForEditing(rawText: string | null, parsedContent: Parse
     return sections.join('\n');
   }
 
-  // No structured data — use raw text, but ensure section headers exist
+  // No structured data — show the text as read.
+  //
+  // This used to append "Ingredients / (move ingredient lines here)" and the
+  // same for instructions, meant as guidance. It destroyed the recipe: the
+  // parser anchors its ingredients section at the first heading it finds, so
+  // the placeholder lines became the entire recipe — one ingredient reading
+  // "(move ingredient lines here)" and one step reading "(move instruction
+  // lines here)" — and everything actually transcribed was dropped. The
+  // multi-photo path hits this every time, since it deliberately passes no
+  // structured data (per-page structure would conflict across pages).
+  //
+  // Appending bare headings instead would be no better: an "Ingredients"
+  // heading at the end of the text anchors the section at the end of the
+  // text. The backend infers the split from the content, so hand it the
+  // content.
   if (rawText) {
-    const hasIngredients = /^ingredients?$/im.test(rawText);
-    const hasInstructions = /^(instructions?|directions?|method|steps?)$/im.test(rawText);
-
-    // If headers are already present, return as-is
-    if (hasIngredients && hasInstructions) {
-      return rawText;
-    }
-
-    // Add missing headers as guidance
-    const lines = [rawText, ''];
-    if (!hasIngredients) lines.push('Ingredients', '(move ingredient lines here)', '');
-    if (!hasInstructions) lines.push('Instructions', '(move instruction lines here)', '');
-    return lines.join('\n');
+    return rawText;
   }
 
   // Nothing at all
