@@ -32,8 +32,17 @@ import { cn } from '@/lib/utils';
  *  Kept as a last-resort fallback for the unlikely case a pull's terminal
  *  event never arrives (e.g. the socket was down the whole time) — the
  *  normal path now resolves immediately off `pull:progress` over the /llm
- *  socket instead of waiting on this timeout. */
-const INSTALL_POLL_TIMEOUT_MS = 5 * 60 * 1000;
+ *  socket instead of waiting on this timeout.
+ *
+ *  This bounds SILENCE, not the download. Every catalog default is 4.7-6.5 GB,
+ *  which is well over five minutes on ordinary home bandwidth, so measuring
+ *  from the click declared healthy downloads dead half-way through — and,
+ *  worse, dropped the tag from `installing`, so the auto-select never fired
+ *  when the pull did land. Each progress frame resets the clock. */
+const INSTALL_SILENCE_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** How often to re-check for a stalled pull. */
+const SILENCE_CHECK_INTERVAL_MS = 15 * 1000;
 
 /** MB → a rounded "N GB" string, dropping a trailing ".0". */
 function formatGb(mb: number): string {
@@ -211,6 +220,8 @@ export function AiModelsSettingsPage() {
   const [advancedTag, setAdvancedTag] = useState('');
   const [advancedPullTag, setAdvancedPullTag] = useState<string | null>(null);
   const advancedPullTagRef = useRef<string | null>(null);
+  /** Last time a progress frame arrived, per tag. Drives the silence timeouts. */
+  const lastProgressAtRef = useRef<Map<string, number>>(new Map());
   useEffect(() => {
     advancedPullTagRef.current = advancedPullTag;
   }, [advancedPullTag]);
@@ -313,7 +324,10 @@ export function AiModelsSettingsPage() {
         continue;
       }
 
-      if (now - entry.startedAt > INSTALL_POLL_TIMEOUT_MS) {
+      // A pull that is still streaming bytes is not stuck, however long it
+      // has been going.
+      const lastBeat = lastProgressAtRef.current.get(tag) ?? entry.startedAt;
+      if (now - lastBeat > INSTALL_SILENCE_TIMEOUT_MS) {
         next.delete(tag);
         changed = true;
         toast({
@@ -341,6 +355,12 @@ export function AiModelsSettingsPage() {
     socketRef.current = socket;
 
     socket.on('pull:progress', (state: PullState) => {
+      if (state.state === 'running') {
+        lastProgressAtRef.current.set(state.tag, Date.now());
+      } else {
+        lastProgressAtRef.current.delete(state.tag);
+      }
+
       setPullProgress((prev) => {
         const next = new Map(prev);
         if (state.state === 'running') {
@@ -398,14 +418,21 @@ export function AiModelsSettingsPage() {
   useEffect(() => {
     if (!advancedPullTag) return;
     const tag = advancedPullTag;
-    const timer = setTimeout(() => {
+    const startedAt = Date.now();
+    // Checked on an interval rather than armed once, so an active download
+    // keeps the field disabled for as long as it needs. Firing unconditionally
+    // after five minutes re-enabled the Pull button mid-download and invited a
+    // second, duplicate pull of a tag already on its way.
+    const timer = setInterval(() => {
+      const lastBeat = lastProgressAtRef.current.get(tag) ?? startedAt;
+      if (Date.now() - lastBeat < INSTALL_SILENCE_TIMEOUT_MS) return;
       setAdvancedPullTag(null);
       toast({
         title: 'Still installing',
         description: `${tag} may still be downloading, or it may have failed. Try again if it doesn't appear shortly.`,
       });
-    }, INSTALL_POLL_TIMEOUT_MS);
-    return () => clearTimeout(timer);
+    }, SILENCE_CHECK_INTERVAL_MS);
+    return () => clearInterval(timer);
   }, [advancedPullTag]);
 
   const handleCancelPull = (pullId: string) => {
