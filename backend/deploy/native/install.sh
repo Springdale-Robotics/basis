@@ -30,6 +30,12 @@ Options:
   --source DIR    Path to a Basis source checkout or extracted tarball.
   --port PORT     Backend port (default 3000).
   --skip-deps     Don't apt-install Node/Postgres/Redis (use existing).
+  --units-only    Only (re)install the systemd units, the post-update watchdog
+                  and the sudoers rule. Does not deploy, build, migrate or
+                  restart anything. Use this to pick up changes to units or
+                  sudoers on a box that is already running — a full run would
+                  redeploy from --source and repoint /opt/basis/current at an
+                  unreleased build.
   -h, --help      Show this message.
 EOF
   exit 0
@@ -39,11 +45,13 @@ EOF
 SOURCE_DIR=""
 PORT=3000
 SKIP_DEPS=0
+UNITS_ONLY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --source)    SOURCE_DIR="$2"; shift 2 ;;
     --port)      PORT="$2"; shift 2 ;;
     --skip-deps) SKIP_DEPS=1; shift ;;
+    --units-only) UNITS_ONLY=1; shift ;;
     -h|--help)   usage ;;
     *)           err "Unknown argument: $1 (try --help)" ;;
   esac
@@ -55,6 +63,59 @@ done
   || err "$SOURCE_DIR doesn't look like a Basis source tree (missing backend/ or frontend/)"
 SOURCE_DIR="$(cd "$SOURCE_DIR" && pwd)"  # absolute path
 
+# ─── units, watchdog, sudoers ─────────────────────────────────────────────
+#
+# Shared by the full install and by --units-only. Kept in one place because the
+# sudoers rule has to match, character for character, the invocation the
+# updater makes -- two copies would drift and the drift would only show up as a
+# silent password prompt during an unattended update.
+#
+#   $1  directory containing backend/deploy/native/*  (source checkout, or the
+#       version directory a full install just deployed)
+#   $2  1 to also install the ingredient-parser sidecar unit
+install_units_and_sudoers() {
+  local root="$1" parser_ok="${2:-0}"
+
+  log "Installing systemd units"
+  cp "$root/backend/deploy/native/basis.service"        /etc/systemd/system/
+  cp "$root/backend/deploy/native/basis-worker.service" /etc/systemd/system/
+  [ "$parser_ok" -eq 1 ] && cp "$root/backend/deploy/native/basis-ingredient-parser.service" /etc/systemd/system/
+  # Runs the post-update restart + health watchdog in its OWN cgroup. Without
+  # it the watchdog is torn down with basis.service the moment it restarts it,
+  # so basis-worker keeps running the old code and rollback never fires
+  # (basis-bugs#9). Not enabled — the updater starts it on demand.
+  cp "$root/backend/deploy/native/basis-post-update.service" /etc/systemd/system/
+  # Stable copy outside versions/: the watchdog repoints /opt/basis/current
+  # during a rollback, and bash reads a script incrementally. The update script
+  # refreshes this from the staged release, so watchdog fixes still ship via the
+  # Update button even though the unit file above does not.
+  install -o root -g root -m 0755 \
+    "$root/backend/deploy/native/post-update-watchdog.sh" \
+    /opt/basis/post-update-watchdog.sh
+  systemctl daemon-reload
+  systemctl enable basis.service basis-worker.service >/dev/null
+  [ "$parser_ok" -eq 1 ] && systemctl enable basis-ingredient-parser.service >/dev/null
+
+  # Let the service account restart its own units without a password, so the
+  # in-UI "Update" flow can hand off to the new version unattended (its restart
+  # is detached with stdin from /dev/null, so an interactive sudo prompt would
+  # hang forever and the new code would never start). Deliberately narrow — only
+  # these exact systemctl invocations, nothing else; apt/tailscale/etc. still
+  # require the password.
+  SYSTEMCTL="$(command -v systemctl)"
+  cat > /etc/sudoers.d/basis.new <<SUDOERS
+basis ALL=(root) NOPASSWD: $SYSTEMCTL restart basis basis-worker basis-ingredient-parser, $SYSTEMCTL restart basis basis-worker, $SYSTEMCTL restart basis, $SYSTEMCTL restart basis-worker, $SYSTEMCTL restart basis-ingredient-parser, $SYSTEMCTL reset-failed basis basis-worker basis-ingredient-parser, $SYSTEMCTL reset-failed basis basis-worker, $SYSTEMCTL start --no-block basis-post-update.service
+SUDOERS
+  chmod 440 /etc/sudoers.d/basis.new
+  # Validate BEFORE it is in place. A malformed drop-in takes sudo down for
+  # every user on the box, so the live file is only replaced once the new one
+  # parses.
+  visudo -cf /etc/sudoers.d/basis.new >/dev/null 2>&1 \
+    || { rm -f /etc/sudoers.d/basis.new; err "Generated sudoers file failed validation"; }
+  mv -f /etc/sudoers.d/basis.new /etc/sudoers.d/basis
+  ok "Installed /etc/sudoers.d/basis (passwordless restart of basis units only)"
+}
+
 # ─── OS detect ────────────────────────────────────────────────────────────
 if [ -f /etc/os-release ]; then
   . /etc/os-release
@@ -63,6 +124,34 @@ elif [[ "$OSTYPE" == darwin* ]]; then
   OS_ID="macos"
 else
   err "Can't detect OS (no /etc/os-release)"
+fi
+
+# ─── --units-only ─────────────────────────────────────────────────────────
+#
+# The rest of this script deploys: it rsyncs --source into a fresh
+# /opt/basis/versions/<timestamp>, rebuilds, migrates and repoints
+# /opt/basis/current at it. On a box already running a released version that
+# would replace the release with an unreleased build stamped with a timestamp,
+# which also breaks the updater's version comparison. So changing a unit file
+# or the sudoers rule needed a full redeploy, or hand-editing sudoers on a live
+# box. This is the narrow path for exactly that.
+if [ "$UNITS_ONLY" -eq 1 ]; then
+  [ "$OS_ID" != macos ] || err "--units-only is for systemd hosts; macOS has no units to install."
+  [ -d /opt/basis ] || err "/opt/basis not found — run a full install first."
+
+  # The venv lives outside the version dirs and survives updates, so its
+  # presence is the honest signal for whether the sidecar is set up here. We
+  # are not building it in this mode.
+  PARSER_PRESENT=0
+  [ -d /opt/basis/ingredient-parser-venv ] && PARSER_PRESENT=1
+
+  install_units_and_sudoers "$SOURCE_DIR" "$PARSER_PRESENT"
+
+  echo
+  ok "Units, watchdog and sudoers updated."
+  log "Nothing was deployed, built, migrated or restarted."
+  log "Running services keep serving the version they are on until the next update."
+  exit 0
 fi
 
 case "$OS_ID" in
@@ -328,40 +417,7 @@ if [ "$OS_ID" != macos ]; then
   systemctl enable systemd-networkd-wait-online.service >/dev/null 2>&1 \
     || systemctl enable NetworkManager-wait-online.service >/dev/null 2>&1 || true
 
-  log "Installing systemd units"
-  cp "$INSTALL_PATH/backend/deploy/native/basis.service"        /etc/systemd/system/
-  cp "$INSTALL_PATH/backend/deploy/native/basis-worker.service" /etc/systemd/system/
-  # Runs the post-update restart + health watchdog in its OWN cgroup. Without
-  # it the watchdog is torn down with basis.service the moment it restarts it,
-  # so basis-worker keeps running the old code and rollback never fires
-  # (basis-bugs#9). Not enabled — the updater starts it on demand.
-  cp "$INSTALL_PATH/backend/deploy/native/basis-post-update.service" /etc/systemd/system/
-  # Stable copy outside versions/: the watchdog repoints /opt/basis/current
-  # during a rollback, and bash reads a script incrementally. The update script
-  # refreshes this from the staged release, so watchdog fixes still ship via the
-  # Update button even though the unit file above does not.
-  install -o root -g root -m 0755 \
-    "$INSTALL_PATH/backend/deploy/native/post-update-watchdog.sh" \
-    /opt/basis/post-update-watchdog.sh
-  [ "$PARSER_OK" -eq 1 ] && cp "$INSTALL_PATH/backend/deploy/native/basis-ingredient-parser.service" /etc/systemd/system/
-  systemctl daemon-reload
-  systemctl enable basis.service basis-worker.service >/dev/null
-  [ "$PARSER_OK" -eq 1 ] && systemctl enable basis-ingredient-parser.service >/dev/null
-
-  # Let the service account restart its own units without a password, so the
-  # in-UI "Update" flow can hand off to the new version unattended (its restart
-  # is detached with stdin from /dev/null, so an interactive sudo prompt would
-  # hang forever and the new code would never start). Deliberately narrow — only
-  # these exact systemctl invocations, nothing else; apt/tailscale/etc. still
-  # require the password.
-  SYSTEMCTL="$(command -v systemctl)"
-  cat > /etc/sudoers.d/basis <<SUDOERS
-basis ALL=(root) NOPASSWD: $SYSTEMCTL restart basis basis-worker basis-ingredient-parser, $SYSTEMCTL restart basis basis-worker, $SYSTEMCTL restart basis, $SYSTEMCTL restart basis-worker, $SYSTEMCTL restart basis-ingredient-parser, $SYSTEMCTL reset-failed basis basis-worker basis-ingredient-parser, $SYSTEMCTL reset-failed basis basis-worker, $SYSTEMCTL start --no-block basis-post-update.service
-SUDOERS
-  chmod 440 /etc/sudoers.d/basis
-  visudo -cf /etc/sudoers.d/basis >/dev/null 2>&1 \
-    || { rm -f /etc/sudoers.d/basis; err "Generated sudoers file failed validation"; }
-  ok "Installed /etc/sudoers.d/basis (passwordless restart of basis units only)"
+  install_units_and_sudoers "$INSTALL_PATH" "$PARSER_OK"
 
   log "Starting Basis"
   # Clear any latched start-limit/failed state from a prior aborted attempt —
