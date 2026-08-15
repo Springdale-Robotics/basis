@@ -1,5 +1,10 @@
 import type { ParsedRecipeContent, ParsedRecipeIngredient } from '../../../db/schema/image-parse.js';
 import { logger } from '../../../lib/logger.js';
+import {
+  INGREDIENTS_HEADER,
+  INSTRUCTIONS_HEADER,
+  classifyRecipeLine,
+} from '../../recipes/recipe-line-classifier.js';
 
 interface RawRecipeData {
   title?: string;
@@ -190,7 +195,7 @@ export function parseRecipeFromText(rawText: string): ParsedRecipeContent {
       }
     }
 
-    const kind = classifyLine(line, {
+    const kind = classifyRecipeLine(line, {
       inIngredientsSection,
       inInstructionsSection,
       seenIngredient: ingredients.length > 0,
@@ -337,75 +342,7 @@ function normalizeUnit(unit?: string): string | undefined {
   return UNIT_MAP[lower] || lower;
 }
 
-/**
- * Check if a line looks like an ingredient
- */
-/** A line that is a section heading, not a line that happens to say the word. */
-const INGREDIENTS_HEADER = /^\s*ingredients?\b[^A-Za-z]*$/i;
-const INSTRUCTIONS_HEADER = /^\s*(instructions?|directions?|method|steps?)\b[^A-Za-z]*$/i;
 
-/**
- * Decide what a single line of a recipe is.
- *
- * Handwritten cards carry no "Ingredients"/"Instructions" headings — the
- * quantities simply stop and the prose begins. The previous version latched
- * into "ingredients" the moment any quantity-led line appeared and never left,
- * so the instruction check below was unreachable and a card came back as eight
- * ingredients (the last being "Beat eggs in medium bowl. Add 1 c.") and no
- * method at all. Sections now latch only on a real heading; otherwise every
- * line is judged on its own.
- *
- * Order matters. Quantity-led lines are claimed as ingredients first, so that
- * "1 c. sour cream" can never be mistaken for a step on the strength of a word
- * like "cream", while "Add 1 c." — which is not quantity-led — reaches the
- * verb test.
- */
-function classifyLine(
-  line: string,
-  ctx: { inIngredientsSection: boolean; inInstructionsSection: boolean; seenIngredient: boolean }
-): 'ingredient' | 'instruction' | null {
-  // An explicit heading is a promise about everything under it, including
-  // lines that look like nothing in particular.
-  if (ctx.inIngredientsSection) return 'ingredient';
-  if (ctx.inInstructionsSection) return 'instruction';
-
-  if (isIngredientLine(line)) return 'ingredient';
-
-  // Short unpunctuated tails after the quantities have started — "Salt and
-  // pepper to taste", "Butter for the dish". These carry cooking words, so
-  // without this they read as one-word method steps.
-  const words = line.split(/\s+/).length;
-  if (ctx.seenIngredient && words <= 5 && !/[.!?]$/.test(line)) return 'ingredient';
-
-  if (isInstructionLine(line)) return 'instruction';
-
-  // Deliberately dropped rather than guessed at, as before.
-  return null;
-}
-
-function isIngredientLine(line: string): boolean {
-  // Check for quantity patterns
-  const hasQuantity = /^\s*[\d½¼¾⅓⅔⅛⅜⅝⅞]+/.test(line);
-  const hasUnit = /\b(cup|tbsp|tsp|oz|lb|g|kg|ml|l|tablespoon|teaspoon|ounce|pound|gram|kilogram)\b/i.test(line);
-  const hasBullet = /^[\-\*•]\s*/.test(line);
-
-  return hasQuantity || (hasBullet && hasUnit);
-}
-
-/**
- * Check if a line looks like an instruction step
- */
-function isInstructionLine(line: string): boolean {
-  // Numbered steps
-  if (/^\d+[\.\)]\s*/.test(line)) return true;
-
-  // Contains cooking verbs. The Spoon Bread card's only method line survived
-  // on "Add" alone — "Beat" wasn't listed — so the common ones a handwritten
-  // recipe opens with are included now.
-  const cookingVerbs =
-    /\b(preheat|heat|cook|bake|fry|sauté|boil|simmer|stir|mix|combine|add|pour|place|remove|let|allow|set|cover|season|taste|serve|slice|dice|chop|mince|grate|beat|whisk|fold|knead|drain|blend|sprinkle|spread|transfer|refrigerate|chill|freeze|toss|brush|layer|melt|dissolve|garnish)\b/i;
-  return cookingVerbs.test(line);
-}
 
 
 /**

@@ -2,6 +2,7 @@ import { db } from '../../config/database.js';
 import { recipes, recipeIngredients, recipeImportSessions, ingredientAliases, inventoryItems } from '../../db/schema/index.js';
 import { eq, and, inArray } from 'drizzle-orm';
 import type { ParsedRecipe, ParsedIngredient, IngredientMatch, RecipeInstruction, IngredientGroup } from '../../db/schema/recipes.js';
+import { classifyRecipeLine } from './recipe-line-classifier.js';
 import { matchIngredients } from './ingredient-matching.service.js';
 import { normalizeIngredientName } from './ingredient-matching.service.js';
 import { Errors } from '../../lib/errors.js';
@@ -195,6 +196,31 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
     }
   }
 
+  // Nothing announced where the method begins, so work it out. Without this
+  // the ingredients ran to the last line of the recipe and the method was
+  // collected as things to buy — which is what a recipe photographed off a
+  // card looks like, since the quantities simply stop and the prose starts.
+  if (instructionsStart === -1 && ingredientsStart > -1) {
+    for (let i = ingredientsStart; i < ingredientsEnd; i++) {
+      const line = lines[i];
+      // A group header ("For the sauce:", "To serve:") carries cooking words
+      // but belongs to the ingredients.
+      if (isIngredientGroupHeader(line)) continue;
+
+      const kind = classifyRecipeLine(line, {
+        inIngredientsSection: false,
+        inInstructionsSection: false,
+        seenIngredient: i > ingredientsStart,
+      });
+      if (kind === 'instruction') {
+        ingredientsEnd = i;
+        instructionsStart = i;
+        warnings.push('Instructions section inferred from content');
+        break;
+      }
+    }
+  }
+
   // Collect raw ingredient lines (with grouping). Per-line parsing happens
   // downstream via parseIngredientLinesViaCRF — this function only handles
   // structural detection.
@@ -264,7 +290,24 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
         }
         currentInstruction = stepMatch[2];
       } else if (currentInstruction) {
-        currentInstruction += ' ' + line;
+        // Unnumbered lines are joined, because a PDF or a web page wraps one
+        // step across several lines. A line that ended in a full stop wasn't
+        // wrapped though — it finished — so the next one starts a new step.
+        // Punctuation, not phrasing: a wrapped line breaks mid-clause and has
+        // nothing to end it with.
+        //
+        // The three-character requirement is what separates a full stop from
+        // an abbreviation. Recipes are full of them, and they cluster at line
+        // ends because that is where the measurement goes: the Spoon Bread
+        // card's front finishes "Add 1 c.", mid-sentence, continuing onto the
+        // back. Abbreviations are short by nature — "c.", "qt.", "oz." — while
+        // the word that actually ends a sentence rarely is.
+        if (/[A-Za-z0-9]{3,}[.!?]["')\]]?$/.test(currentInstruction.trim())) {
+          instructions.push(currentInstruction.trim());
+          currentInstruction = line;
+        } else {
+          currentInstruction += ' ' + line;
+        }
       } else {
         currentInstruction = line;
       }
