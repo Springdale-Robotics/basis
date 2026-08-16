@@ -120,6 +120,7 @@ export async function imageParseRoutes(app: FastifyInstance): Promise<void> {
           detectedType: imageParseSessions.detectedType,
           parseWarnings: imageParseSessions.parseWarnings,
           consumedByRecipeId: imageParseSessions.consumedByRecipeId,
+          label: imageParseSessions.label,
           createdAt: imageParseSessions.createdAt,
         })
         .from(imageParseSessions)
@@ -132,6 +133,32 @@ export async function imageParseRoutes(app: FastifyInstance): Promise<void> {
         .orderBy(asc(imageParseSessions.createdAt));
 
       return { success: true, data: { batch, scans } };
+    }
+  );
+
+  /**
+   * Rename a page. Grouping later is the same operation: two pages of one
+   * recipe are two scans given the same name.
+   */
+  app.patch<{ Params: { sessionId: string } }>(
+    '/:sessionId/label',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const { label } = z.object({ label: z.string().max(200) }).parse(request.body ?? {});
+
+      const [updated] = await db
+        .update(imageParseSessions)
+        .set({ label: label.trim() || null, updatedAt: new Date() })
+        .where(
+          and(
+            eq(imageParseSessions.id, request.params.sessionId),
+            eq(imageParseSessions.householdId, request.user!.householdId)
+          )
+        )
+        .returning({ id: imageParseSessions.id, label: imageParseSessions.label });
+
+      if (!updated) throw Errors.notFound('Scan', request.params.sessionId);
+      return { success: true, data: { scan: updated } };
     }
   );
 
@@ -236,7 +263,8 @@ export async function imageParseRoutes(app: FastifyInstance): Promise<void> {
           request.user!.id,
           targetType,
           extractionMode,
-          batchId
+          batchId,
+          fields?.label?.value?.slice(0, 200)
         );
 
         logger.info({ sessionId }, 'Session created, processing image');

@@ -171,6 +171,83 @@ describe('tenancy', () => {
     expect(still?.status).toBe('open');
   });
 
+  it('files an uploaded scan under its batch, with its name', async () => {
+    /**
+     * Pins that a batch id and a name survive an upload — but note what this
+     * test cannot do.
+     *
+     * Over real HTTP the fields must be written into the form BEFORE the file.
+     * `request.file()` resolves at the file part, and fields parsed after it
+     * are not there yet when they are read: a browser uploading a 172KB
+     * photograph filed it under no batch at all, and the symptom was a
+     * photographing session that stayed empty while every upload reported
+     * success. Reordering the client fixed it, observed directly.
+     *
+     * In here the whole body is already in memory, so the race resolves
+     * favourably and moving the file first still passes — verified. The
+     * ordering is therefore guaranteed by construction in the client, not by
+     * this test, which only proves the fields are honoured when they do
+     * arrive.
+     */
+    const batch = await createBatch(user, 'Ordering');
+
+    // A real (if tiny) JPEG — the route inspects what it is given.
+    const { loadSharp } = await import('../../src/lib/sharp.js');
+    const sharp = await loadSharp();
+    const jpeg = await sharp({
+      create: { width: 64, height: 64, channels: 3, background: { r: 200, g: 180, b: 190 } },
+    })
+      .jpeg()
+      .toBuffer();
+
+    const form = new FormData();
+    form.append('targetType', 'recipe');
+    form.append('batchId', batch.id);
+    form.append('label', 'Page one');
+    form.append('file', new Blob([jpeg], { type: 'image/jpeg' }), 'p.jpg');
+
+    const res = await user.fetch('/api/v1/image-parse/upload', { method: 'POST', body: form });
+    expect(res.status).toBe(200);
+    const { data } = await json(res);
+
+    const scan = await db.query.imageParseSessions.findFirst({
+      where: eq(imageParseSessions.id, data.sessionId),
+    });
+    expect(scan?.batchId).toBe(batch.id);
+    expect(scan?.label).toBe('Page one');
+  });
+
+  it('can rename a page afterwards', async () => {
+    const batch = await createBatch(user, 'Renaming');
+    const scanId = await seedScan(batch.id, 'review');
+
+    const res = await user.fetch(`/api/v1/image-parse/${scanId}/label`, {
+      method: 'PATCH',
+      body: JSON.stringify({ label: 'Spoon Bread, back' }),
+    });
+    expect(res.status).toBe(200);
+
+    const scan = await db.query.imageParseSessions.findFirst({
+      where: eq(imageParseSessions.id, scanId),
+    });
+    expect(scan?.label).toBe('Spoon Bread, back');
+  });
+
+  it("will not rename another household's page", async () => {
+    const scanId = await seedScan(null, 'review', neighbourHouseholdId, neighbour);
+
+    const res = await user.fetch(`/api/v1/image-parse/${scanId}/label`, {
+      method: 'PATCH',
+      body: JSON.stringify({ label: 'mine now' }),
+    });
+    expect(res.status).toBe(404);
+
+    const scan = await db.query.imageParseSessions.findFirst({
+      where: eq(imageParseSessions.id, scanId),
+    });
+    expect(scan?.label ?? null).toBeNull();
+  });
+
   it('refuses to file a scan under a batch that is not the household\'s', async () => {
     const theirs = await createBatch(neighbour, 'Foreign batch');
 
@@ -179,6 +256,8 @@ describe('tenancy', () => {
     form.append('batchId', theirs.id);
 
     const res = await user.fetch('/api/v1/image-parse/upload', { method: 'POST', body: form });
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    // Specifically refused, not merely "not 2xx" — a vaguer assertion passed
+    // for a while against a 500 that had nothing to do with ownership.
+    expect(res.status).toBe(400);
   });
 });

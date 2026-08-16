@@ -108,6 +108,12 @@ export const imageParseSessions = pgTable('image_parse_sessions', {
   /** The photographing session this scan belongs to, if any. */
   batchId: uuid('batch_id').references(() => recipeImportBatches.id, { onDelete: 'set null' }),
 
+  /**
+   * What the photographer called this page. Grouping is the same fact: two
+   * pages of one recipe are two scans wearing the same name.
+   */
+  label: varchar('label', { length: 200 }),
+
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
   /**

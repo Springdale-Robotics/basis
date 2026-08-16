@@ -120,6 +120,13 @@
       "when": 1786759200000,
       "tag": "0016_recipe_import_batches",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1786845600000,
+      "tag": "0017_scan_label",
+      "breakpoints": true
     }
   ]
 }

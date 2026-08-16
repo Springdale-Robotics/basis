@@ -33,6 +33,7 @@ const ConnectDevicePage = lazyPage(() => import('./pages/calendar/ConnectDeviceP
 const RecipesPage = lazyPage(() => import('./pages/recipes/RecipesPage'), 'RecipesPage');
 const RecipeDetailPage = lazyPage(() => import('./pages/recipes/RecipeDetailPage'), 'RecipeDetailPage');
 const CookModePage = lazyPage(() => import('./pages/recipes/CookModePage'), 'CookModePage');
+const CaptureRecipesPage = lazyPage(() => import('./pages/recipes/CaptureRecipesPage'), 'CaptureRecipesPage');
 const MealPlanPage = lazyPage(() => import('./pages/recipes/MealPlanPage'), 'MealPlanPage');
 const InventoryPage = lazyPage(() => import('./pages/inventory/InventoryPage'), 'InventoryPage');
 const ShoppingListPage = lazyPage(() => import('./pages/inventory/ShoppingListPage'), 'ShoppingListPage');
@@ -88,6 +89,7 @@ export function App() {
 
                   {/* Recipes */}
                   <Route path="recipes" element={<RecipesPage />} />
+                  <Route path="recipes/capture" element={<CaptureRecipesPage />} />
                   <Route path="recipes/:id" element={<RecipeDetailPage />} />
                   <Route path="recipes/:id/cook" element={<CookModePage />} />
                   <Route path="meal-plan" element={<MealPlanPage />} />

@@ -105,14 +105,23 @@ export const imageParseApi = {
     file: File,
     targetType?: ParsedContentType,
     onProgress?: (progress: number) => void,
-    extractionMode: ExtractionMode = 'accurate'
+    extractionMode: ExtractionMode = 'accurate',
+    /** The photographing session this page belongs to, and what it is called. */
+    batch?: { batchId?: string; label?: string }
   ): Promise<{ sessionId: string; status: string }> => {
     const formData = new FormData();
-    formData.append('file', file);
+    // Every field goes in BEFORE the file. The server reads them from the
+    // streamed multipart via request.file(), which only exposes what was
+    // parsed ahead of the file part — anything appended after it silently
+    // never arrives. A batch id sent that way produced a photographing
+    // session with nothing in it.
     if (targetType) {
       formData.append('targetType', targetType);
     }
     formData.append('extractionMode', extractionMode);
+    if (batch?.batchId) formData.append('batchId', batch.batchId);
+    if (batch?.label) formData.append('label', batch.label);
+    formData.append('file', file);
 
     const url = `${API_BASE_URL}/image-parse/upload`;
     const csrfToken = await getCsrfToken();
@@ -274,4 +283,50 @@ export const imageParseApi = {
         allDone: boolean;
       };
     }>('/image-parse/batch-status', { sessionIds }),
+
+  /** Photographing sessions you can walk away from and come back to. */
+  createBatch: (name?: string) =>
+    apiPost<{ batch: ImportBatch }>('/image-parse/batches', name ? { name } : {}),
+
+  listBatches: (status: 'open' | 'closed' = 'open') =>
+    apiGet<{ batches: ImportBatchSummary[] }>('/image-parse/batches', { params: { status } }),
+
+  getBatch: (batchId: string) =>
+    apiGet<{ batch: ImportBatch; scans: BatchScan[] }>(`/image-parse/batches/${batchId}`),
+
+  closeBatch: (batchId: string) =>
+    apiPatch<{ batch: ImportBatch }>(`/image-parse/batches/${batchId}`, { status: 'closed' }),
+
+  renameScan: (sessionId: string, label: string) =>
+    apiPatch<{ scan: { id: string; label: string | null } }>(
+      `/image-parse/${sessionId}/label`,
+      { label }
+    ),
 };
+
+export interface ImportBatch {
+  id: string;
+  name: string | null;
+  status: 'open' | 'closed';
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A batch with its progress counted from the scans themselves. */
+export interface ImportBatchSummary extends ImportBatch {
+  total: number;
+  ready: number;
+  working: number;
+  failed: number;
+}
+
+export interface BatchScan {
+  id: string;
+  status: ImageParseStatus;
+  processingStage: string | null;
+  detectedType: string | null;
+  parseWarnings: string[] | null;
+  consumedByRecipeId: string | null;
+  label: string | null;
+  createdAt: string;
+}
