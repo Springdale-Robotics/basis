@@ -385,6 +385,65 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
   // Doing it in one server-side pass fixes all three: names are canonicalised,
   // existing items are reused, and ingredients that reduce to the same item
   // share it.
+  /**
+   * What creating items from these ingredients would do — without doing it.
+   *
+   * Its sibling below inserts first and reports near-matches afterwards, which
+   * offers the household a decision about a row that already exists. Founding
+   * an inventory from an import is exactly when that ordering matters: the
+   * duplicates it creates are permanent, because nothing later revisits them.
+   *
+   * Writes nothing. The caller resolves whatever it raises — merging variants
+   * by sending one name instead of two — and then posts the settled list to
+   * create-items.
+   */
+  app.post(
+    '/ingredients/plan-items',
+    { preHandler: [authMiddleware, requireInventoryAccess('edit')] },
+    async (request) => {
+      const schema = z.object({
+        ingredients: z.array(z.object({
+          name: z.string().min(1).max(255),
+        })).min(1).max(500),
+      });
+      const { ingredients } = schema.parse(request.body);
+      const householdId = request.user!.householdId;
+
+      const [{ simplifyIngredientNames }, { SUGGESTION_THRESHOLD }, { planIngredientItems }] =
+        await Promise.all([
+          import('../../services/ingredient-name-utils.js'),
+          import('./ingredient-matching.service.js'),
+          import('./ingredient-item-planner.js'),
+        ]);
+
+      const warnings: string[] = [];
+      let canonicalNames: string[];
+      try {
+        canonicalNames = await simplifyIngredientNames(ingredients.map((i) => i.name));
+      } catch {
+        canonicalNames = ingredients.map((i) => i.name);
+        warnings.push(
+          'Ingredient parser unavailable — names are shown exactly as the recipes wrote them, so some may need tidying.'
+        );
+      }
+
+      const existing = await db.query.inventoryItems.findMany({
+        where: eq(inventoryItems.householdId, householdId),
+      });
+
+      const plan = planIngredientItems({
+        incoming: ingredients.map((ing, index) => ({
+          name: ing.name,
+          canonicalName: canonicalNames[index] ?? ing.name,
+        })),
+        existing: existing.map((item) => ({ id: item.id, name: item.name })),
+        suggestionThreshold: SUGGESTION_THRESHOLD,
+      });
+
+      return { success: true, data: { ...plan, warnings } };
+    }
+  );
+
   app.post(
     '/ingredients/create-items',
     { preHandler: [authMiddleware, requireInventoryAccess('edit')] },

@@ -27,6 +27,8 @@ import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { IngredientMatchRow } from './IngredientMatchRow';
 import { BulkIngredientActions } from './BulkIngredientActions';
 import { BulkImportRecipeDialog } from './BulkImportRecipeDialog';
+import { ReconcileIngredientsDialog } from '@/components/recipes/ReconcileIngredientsDialog';
+import { useIngredientReconciliation } from '@/hooks/useIngredientReconciliation';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
 import { Checkbox } from '@/components/ui/checkbox';
 import { FileSourcePicker } from '@/components/shared/FileSourcePicker';
@@ -590,27 +592,17 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     );
   }, []);
 
+  const reconciliation = useIngredientReconciliation(
+    handleMatchUpdate,
+    useCallback((warnings: string[]) => setParseWarnings(prev => [...prev, ...warnings]), []),
+  );
+
+  // Create every unmatched ingredient as an item — after checking whether any
+  // of them are things the household already stocks under another name. The
+  // check is invisible when there is nothing to settle.
   const handleCreateAllUnmatched = useCallback(async () => {
-    const unmatched = ingredientMatches.filter(m => !m.matchedItemId);
-    if (unmatched.length === 0) return;
-
-    // One request for the whole set. Creating them one at a time meant each
-    // row was resolved against a catalog snapshot taken before the previous
-    // row created anything, so "olive oil" and "extra virgin olive oil" in the
-    // same recipe became two items.
-    const { results, warnings } = await recipesApi.createItemsForIngredients(
-      unmatched.map(m => ({ name: m.parsedName, unit: m.parsedUnit }))
-    );
-
-    for (const result of results) {
-      handleMatchUpdate(result.originalName, result.itemId, result.itemName);
-    }
-    if (warnings.length > 0) setParseWarnings(prev => [...prev, ...warnings]);
-
-    queryClient.invalidateQueries({ queryKey: ['inventory'] });
-    queryClient.invalidateQueries({ queryKey: ['inventory-items'] });
-    queryClient.invalidateQueries({ queryKey: ['ingredient-suggestions'] });
-  }, [ingredientMatches, handleMatchUpdate, queryClient]);
+    await reconciliation.begin(ingredientMatches.filter(m => !m.matchedItemId));
+  }, [ingredientMatches, reconciliation]);
 
   const handleSkipAllUnmatched = useCallback(() => {
     // Nothing to do - unmatched items will be imported without inventory links
@@ -682,6 +674,9 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
   return (
     <>
     {confirmDialog}
+    {reconciliation.dialogProps && (
+      <ReconcileIngredientsDialog {...reconciliation.dialogProps} />
+    )}
     <Dialog
       open={open}
       onOpenChange={(o) => {
