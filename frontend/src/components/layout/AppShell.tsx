@@ -3,6 +3,7 @@ import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { MobileNav } from './MobileNav';
 import { OfflineIndicator } from './OfflineIndicator';
+import { ImportProgressIndicator } from '@/components/recipes/ImportProgressIndicator';
 import { MusicPlayer } from '@/components/music/MusicPlayer';
 import { BugReportButton } from '@/components/shared/BugReportButton';
 import { ErrorBoundary } from '@/components/shared/ErrorBoundary';
@@ -52,6 +53,7 @@ export function AppShell() {
 
       {/* Offline / sync status */}
       <OfflineIndicator />
+      <ImportProgressIndicator />
 
       {/* Floating bug-report button */}
       <BugReportButton />

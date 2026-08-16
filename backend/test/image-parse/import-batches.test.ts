@@ -330,3 +330,46 @@ describe('composing a batch into recipes', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('the photograph itself', () => {
+  /**
+   * Needed to come back to a photographing session: the frames are long gone
+   * from whatever device took them, so without this the pages left from
+   * earlier are anonymous tiles and naming or grouping them means guessing.
+   */
+  it('serves a page to the household that took it', async () => {
+    const { loadSharp } = await import('../../src/lib/sharp.js');
+    const sharp = await loadSharp();
+    const jpeg = await sharp({
+      create: { width: 32, height: 32, channels: 3, background: { r: 1, g: 2, b: 3 } },
+    })
+      .jpeg()
+      .toBuffer();
+
+    const batch = await createBatch(user, 'Serving');
+    const form = new FormData();
+    form.append('targetType', 'recipe');
+    form.append('batchId', batch.id);
+    form.append('file', new Blob([jpeg], { type: 'image/jpeg' }), 'p.jpg');
+    const { data } = await json(
+      await user.fetch('/api/v1/image-parse/upload', { method: 'POST', body: form })
+    );
+
+    const served = await user.fetch(`/api/v1/image-parse/${data.sessionId}/image`);
+    expect(served.status).toBe(200);
+    expect((await served.arrayBuffer()).byteLength).toBeGreaterThan(0);
+  });
+
+  it("will not serve another household's page", async () => {
+    const theirs = await seedScan(null, 'review', neighbourHouseholdId, neighbour);
+    const res = await user.fetch(`/api/v1/image-parse/${theirs}/image`);
+    expect(res.status).toBe(404);
+  });
+
+  it('says so plainly when the file has gone', async () => {
+    // Swept by retention, or never stored.
+    const scanId = await seedScan(null, 'review');
+    const res = await user.fetch(`/api/v1/image-parse/${scanId}/image`);
+    expect(res.status).toBe(404);
+  });
+});

@@ -113,11 +113,17 @@ assume it.
 - [x] **0.3 — Batch status endpoint.** *Done 2026-08-16 as part of 0.1.*
       `GET /image-parse/batches` returns every open batch with total / ready /
       working / failed counted from the scans. Replaces per-session polling.
-- [ ] **0.4 — Batch survives the client.** Reload, close the tab, open on a
-      phone — the batch is found and resumed. Remove the assumption that the
-      dialog owns the lifecycle (`useBatchImageProcessing`).
-- [ ] **0.5 — Ambient progress.** A small indicator visible anywhere in the app,
-      not tied to the import dialog, showing an in-flight batch and its progress.
+- [x] **0.4 — Batch survives the client.** *Done 2026-08-16.* An unfinished
+      session is offered on arrival — offered, never assumed, because quietly
+      appending a new binder to yesterday's is not recoverable from — and
+      `?batch=` opens one directly. Its pages come back with their names and
+      their photographs, served from the box, since the frames are long gone
+      from whatever device took them.
+- [x] **0.5 — Ambient progress.** *Done 2026-08-16.* A quiet pill anywhere in
+      the app: "Reading 3 of 40", or "12 recipes read — review", linking back
+      to the session. It appears only when there is something to say, hides on
+      the capture page which says it better, and stops asking while the tab is
+      in the background.
 - [ ] **0.6 — Tell them when it is done.** Use the existing notification module
       so the answer to "is it finished?" doesn't require checking.
 - [x] **0.7 — The photograph becomes part of the recipe.** *Done 2026-08-16.*
@@ -348,7 +354,7 @@ Applies to every phase; not optional.
 
 | Phase | Status | Notes |
 | --- | --- | --- |
-| 0 — Walking away | In progress | 0.1, 0.2, 0.3, 0.7 done. Remaining: 0.4 resume in the UI, 0.5 ambient progress, 0.6 notify. |
+| 0 — Walking away | Nearly done | 0.1–0.5 and 0.7 done. Remaining: 0.6, telling you when it has finished. |
 | 1 — Capture | In progress | 1.1–1.5 done. Remaining: 1.6 rectangles, 1.7 bad signal. |
 | 2 — Background parsing | Not started | Mostly already true; needs surfacing. |
 | 3 — Prioritised review | Not started | |
