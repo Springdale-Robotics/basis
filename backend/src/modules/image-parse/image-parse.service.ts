@@ -53,13 +53,16 @@ export async function createSession(
   householdId: string,
   userId: string,
   targetType?: ParsedContentType,
-  extractionMode: ExtractionMode = 'accurate'
+  extractionMode: ExtractionMode = 'accurate',
+  /** The photographing session this scan belongs to, already checked. */
+  batchId?: string
 ): Promise<string> {
   const sessionId = randomUUID();
   await db.insert(imageParseSessions).values({
     id: sessionId,
     householdId,
     userId,
+    batchId: batchId ?? null,
     status: 'uploading',
     selectedType: targetType,
     extractionMode,

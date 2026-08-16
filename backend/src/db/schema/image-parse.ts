@@ -39,6 +39,30 @@ export const processingStageEnum = pgEnum('processing_stage', [
 ]);
 
 // Main table for image parse sessions
+/**
+ * A photographing session you can walk away from.
+ *
+ * Parsing already runs in a worker, so closing the browser never stopped it —
+ * but nothing recorded that a group of scans belonged together, so there was
+ * nothing to come back to. Deliberately thin: progress is counted from the
+ * scans themselves rather than duplicated here, because two records of the
+ * same thing drift.
+ */
+export const recipeImportBatches = pgTable('recipe_import_batches', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  householdId: uuid('household_id')
+    .notNull()
+    .references(() => households.id, { onDelete: 'cascade' }),
+  createdBy: uuid('created_by')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 200 }),
+  /** 'open' while being captured or reviewed, 'closed' when finished. */
+  status: varchar('status', { length: 20 }).notNull().default('open'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
 export const imageParseSessions = pgTable('image_parse_sessions', {
   id: uuid('id').primaryKey().defaultRandom(),
   householdId: uuid('household_id')
@@ -80,6 +104,9 @@ export const imageParseSessions = pgTable('image_parse_sessions', {
    * operations require `review` and would break if it moved.
    */
   consumedByRecipeId: uuid('consumed_by_recipe_id'),
+
+  /** The photographing session this scan belongs to, if any. */
+  batchId: uuid('batch_id').references(() => recipeImportBatches.id, { onDelete: 'set null' }),
 
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
