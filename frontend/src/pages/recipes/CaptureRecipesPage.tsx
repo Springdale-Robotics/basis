@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Camera, Check, Loader2, AlertCircle, X, RotateCw, ImageUp } from 'lucide-react';
+import { Camera, Check, Loader2, AlertCircle, X, RotateCw, ImageUp, Crop } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { imageParseApi, type BatchScan } from '@/api/image-parse';
+import { CropOverlay, type CropRect } from '@/components/recipes/CropOverlay';
 import { measureFrame, judgeFrame, type PhotoVerdict } from '@/lib/photo-quality';
 import { toast } from '@/hooks/useToast';
 import { cn } from '@/lib/utils';
@@ -54,6 +55,17 @@ export function CaptureRecipesPage() {
   const [batchId, setBatchId] = useState<string | null>(null);
   const [shots, setShots] = useState<Shot[]>([]);
   const [rejected, setRejected] = useState<{ verdict: PhotoVerdict; blob: Blob; thumbnail: string } | null>(null);
+  /**
+   * The page just taken, kept at full size so it can be cropped.
+   *
+   * Only the last one. A binder is hundreds of pages and a decoded frame is
+   * megabytes, so holding them all would exhaust the phone — and the moment
+   * anybody notices the neighbouring recipe crept into shot is the moment
+   * they took it.
+   */
+  const [lastShot, setLastShot] = useState<{ key: string; blob: Blob; url: string } | null>(null);
+  const [cropping, setCropping] = useState(false);
+  const [savingCrop, setSavingCrop] = useState(false);
   const [scans, setScans] = useState<BatchScan[]>([]);
 
   // ─── The camera ────────────────────────────────────────────────────────
@@ -133,10 +145,14 @@ export function CaptureRecipesPage() {
 
   // ─── Taking a page ─────────────────────────────────────────────────────
   const upload = useCallback(
-    async (blob: Blob, thumbnail: string) => {
-      const key = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      const label = `Recipe ${shots.length + 1}`;
-      setShots((prev) => [...prev, { key, label, thumbnail, state: 'uploading' }]);
+    async (blob: Blob, thumbnail: string, replaces?: { key: string; label: string; sessionId?: string }) => {
+      const key = replaces?.key ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const label = replaces?.label ?? `Recipe ${shots.length + 1}`;
+      setShots((prev) =>
+        replaces
+          ? prev.map((shot) => (shot.key === key ? { ...shot, thumbnail, state: 'uploading' } : shot))
+          : [...prev, { key, label, thumbnail, state: 'uploading' }]
+      );
 
       try {
         const id = await ensureBatch();
@@ -148,6 +164,13 @@ export function CaptureRecipesPage() {
         setShots((prev) =>
           prev.map((shot) => (shot.key === key ? { ...shot, sessionId, state: 'sent' } : shot))
         );
+        // The uncropped page is no longer wanted — cancelled after the crop is
+        // safely up, never before, so a failure leaves the original standing.
+        if (replaces?.sessionId) {
+          void imageParseApi.cancel(replaces.sessionId).catch(() => undefined);
+        }
+        return key;
+        return key;
       } catch (error) {
         setShots((prev) =>
           prev.map((shot) =>
@@ -156,6 +179,7 @@ export function CaptureRecipesPage() {
               : shot
           )
         );
+        return null;
       }
     },
     [ensureBatch, shots.length]
@@ -184,14 +208,91 @@ export function CaptureRecipesPage() {
       setRejected({ verdict, blob, thumbnail });
       return;
     }
-    void upload(blob, thumbnail);
+
+    const key = await upload(blob, thumbnail);
+    // Held so the page just taken can still be cropped; the one before it is
+    // released, because a binder's worth of decoded frames would not fit.
+    setLastShot((previous) => {
+      if (previous) URL.revokeObjectURL(previous.url);
+      return key ? { key, blob, url: URL.createObjectURL(blob) } : null;
+    });
+    setCropping(false);
   }, [upload]);
 
-  /** For devices where the camera cannot be opened in the page. */
+  /**
+   * Replace the page just taken with the part of it that matters.
+   *
+   * Cropped from the frame still in memory rather than by fetching the upload
+   * back, and sent as a new page before the uncropped one is cancelled — so a
+   * failure anywhere leaves the original page standing rather than nothing.
+   */
+  const applyCrop = useCallback(
+    async (rect: CropRect) => {
+      if (!lastShot) return;
+      setSavingCrop(true);
+      try {
+        const bitmap = await createImageBitmap(lastShot.blob);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(bitmap.width * rect.width));
+        canvas.height = Math.max(1, Math.round(bitmap.height * rect.height));
+        const context = canvas.getContext('2d');
+        if (!context) return;
+        context.drawImage(
+          bitmap,
+          Math.round(bitmap.width * rect.x),
+          Math.round(bitmap.height * rect.y),
+          canvas.width,
+          canvas.height,
+          0,
+          0,
+          canvas.width,
+          canvas.height
+        );
+        bitmap.close();
+
+        const cropped = await new Promise<Blob | null>((resolve) =>
+          canvas.toBlob(resolve, 'image/jpeg', 0.92)
+        );
+        if (!cropped) return;
+
+        const existing = shots.find((shot) => shot.key === lastShot.key);
+        await upload(cropped, canvas.toDataURL('image/jpeg', 0.5), {
+          key: lastShot.key,
+          label: existing?.label ?? 'Recipe',
+          sessionId: existing?.sessionId,
+        });
+
+        URL.revokeObjectURL(lastShot.url);
+        setLastShot(null);
+        setCropping(false);
+      } catch {
+        toast({ variant: 'destructive', title: 'That crop could not be saved' });
+      } finally {
+        setSavingCrop(false);
+      }
+    },
+    [lastShot, shots, upload]
+  );
+
+  /**
+   * For devices where the camera cannot be opened in the page.
+   *
+   * The last of them is retained just as a captured page is, because a photo
+   * from the camera roll is every bit as likely to have caught the recipe
+   * next to it — and these are the devices with no other way to crop.
+   */
   const addFromDevice = useCallback(
-    (files: FileList | null) => {
-      for (const file of Array.from(files ?? [])) {
-        void upload(file, URL.createObjectURL(file));
+    async (files: FileList | null) => {
+      const chosen = Array.from(files ?? []);
+      for (const [index, file] of chosen.entries()) {
+        const key = await upload(file, URL.createObjectURL(file));
+        if (index === chosen.length - 1 && key) {
+          setLastShot((previous) => {
+            if (previous) URL.revokeObjectURL(previous.url);
+            return { key, blob: file, url: URL.createObjectURL(file) };
+          });
+          setCropping(false);
+        }
       }
     },
     [upload]
@@ -273,13 +374,37 @@ export function CaptureRecipesPage() {
         )}
       </div>
 
+      {/* Offered only for the page just taken, which is the moment anybody
+          notices the recipe next to it crept into shot. Taking the next page
+          quietly withdraws the offer. */}
+      {lastShot && !cropping && (
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setCropping(true)}>
+            <Crop className="mr-2 h-4 w-4" />
+            Crop that page
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            If another recipe crept into the shot.
+          </span>
+        </div>
+      )}
+
+      {lastShot && cropping && (
+        <CropOverlay
+          imageUrl={lastShot.url}
+          busy={savingCrop}
+          onCancel={() => setCropping(false)}
+          onConfirm={(rect) => void applyCrop(rect)}
+        />
+      )}
+
       <input
         ref={fileInputRef}
         type="file"
         accept="image/*"
         multiple
         hidden
-        onChange={(event) => addFromDevice(event.target.files)}
+        onChange={(event) => void addFromDevice(event.target.files)}
       />
 
       {/* A refused page, with the reason and the way out. */}
