@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Camera, Check, Loader2, AlertCircle, X, RotateCw, ImageUp, Crop } from 'lucide-react';
+import { Camera, Check, Loader2, AlertCircle, X, RotateCw, ImageUp, Crop, Link2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { imageParseApi, type BatchScan } from '@/api/image-parse';
 import { CropOverlay, type CropRect } from '@/components/recipes/CropOverlay';
+import { BulkImportRecipeDialog } from './BulkImportRecipeDialog';
 import { measureFrame, judgeFrame, type PhotoVerdict } from '@/lib/photo-quality';
 import { toast } from '@/hooks/useToast';
 import { cn } from '@/lib/utils';
@@ -66,6 +67,9 @@ export function CaptureRecipesPage() {
   const [lastShot, setLastShot] = useState<{ key: string; blob: Blob; url: string } | null>(null);
   const [cropping, setCropping] = useState(false);
   const [savingCrop, setSavingCrop] = useState(false);
+  /** Recipes composed out of the batch, waiting to be looked at. */
+  const [composed, setComposed] = useState<string[] | null>(null);
+  const [composing, setComposing] = useState(false);
   const [scans, setScans] = useState<BatchScan[]>([]);
 
   // ─── The camera ────────────────────────────────────────────────────────
@@ -309,7 +313,7 @@ export function CaptureRecipesPage() {
     }
   }, []);
 
-  const finish = useCallback(() => {
+  const leaveForLater = useCallback(() => {
     // The batch stays open deliberately: reviewing is a separate sitting, and
     // the parses continue whether or not anybody is watching.
     navigate('/recipes');
@@ -318,6 +322,39 @@ export function CaptureRecipesPage() {
       description: 'You can close Basis — the work carries on, and the results will be waiting.',
     });
   }, [navigate]);
+
+  /**
+   * Turn what has been photographed into recipes to look at.
+   *
+   * Pages wearing the same name become one recipe, joined in the order they
+   * were taken. The grouping is decided on the server so it is one rule
+   * rather than two.
+   */
+  const review = useCallback(async () => {
+    if (!batchId) return;
+    setComposing(true);
+    try {
+      const { recipes, unread } = await imageParseApi.composeBatch(batchId);
+      if (recipes.length === 0) {
+        toast({
+          title: 'Nothing has been read yet',
+          description: 'Give the box a moment, or check back later — it carries on without you.',
+        });
+        return;
+      }
+      if (unread > 0) {
+        toast({
+          title: `${unread} page${unread === 1 ? '' : 's'} could not be read`,
+          description: 'The rest are ready. The unreadable ones stay in this batch.',
+        });
+      }
+      setComposed(recipes.map((recipe) => recipe.text));
+    } catch (error) {
+      toast({ variant: 'destructive', title: 'Could not gather those pages', description: (error as Error).message });
+    } finally {
+      setComposing(false);
+    }
+  }, [batchId]);
 
   const statusOf = (shot: Shot) =>
     scans.find((scan) => scan.id === shot.sessionId)?.status ?? null;
@@ -336,10 +373,18 @@ export function CaptureRecipesPage() {
           </p>
         </div>
         {shots.length > 0 && (
-          <Button onClick={finish}>
-            <Check className="mr-2 h-4 w-4" />
-            Done photographing
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={leaveForLater}>
+              Leave it for later
+            </Button>
+            <Button onClick={() => void review()} disabled={composing || readyCount === 0}>
+              {composing ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Gathering</>
+              ) : (
+                <><Check className="mr-2 h-4 w-4" /> Review {readyCount || ''} read</>
+              )}
+            </Button>
+          </div>
         )}
       </div>
 
@@ -438,6 +483,25 @@ export function CaptureRecipesPage() {
         </Alert>
       )}
 
+      {/* Names already used, so grouping is a choice rather than a retype. */}
+      <datalist id="page-names">
+        {[...new Set(shots.map((shot) => shot.label))].map((name) => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
+
+      {composed && (
+        <BulkImportRecipeDialog
+          open
+          initialTextEntries={composed}
+          onOpenChange={(next) => !next && setComposed(null)}
+          onSuccess={() => {
+            setComposed(null);
+            navigate('/recipes');
+          }}
+        />
+      )}
+
       {shots.length > 0 && (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -449,7 +513,7 @@ export function CaptureRecipesPage() {
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {shots.map((shot) => {
+            {shots.map((shot, index) => {
               const status = statusOf(shot);
               return (
                 <div key={shot.key} className="flex items-center gap-3 rounded-lg border p-2">
@@ -459,12 +523,30 @@ export function CaptureRecipesPage() {
                     className="h-14 w-14 shrink-0 rounded object-cover"
                   />
                   <div className="min-w-0 flex-1 space-y-1">
-                    <Input
-                      value={shot.label}
-                      onChange={(event) => void rename(shot, event.target.value)}
-                      className="h-8"
-                      aria-label="Name this page"
-                    />
+                    <div className="flex items-center gap-1">
+                      <Input
+                        value={shot.label}
+                        onChange={(event) => void rename(shot, event.target.value)}
+                        className="h-8"
+                        aria-label="Name this page"
+                        list="page-names"
+                      />
+                      {/* Two pages of one recipe is the common case — the back
+                          of a card — and retyping a name exactly is a poor way
+                          to ask for it. */}
+                      {index > 0 && shots[index - 1].label !== shot.label && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="shrink-0 px-2 text-xs"
+                          title={`Group with "${shots[index - 1].label}"`}
+                          onClick={() => void rename(shot, shots[index - 1].label)}
+                        >
+                          <Link2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       {shot.state === 'uploading' && (
                         <span className="flex items-center gap-1">

@@ -204,3 +204,55 @@ describe('parseRecipeTextWithConfidence: explicit headings still win', () => {
     expect(result.recipe.instructions.join(' ')).toContain('Assemble in a bowl');
   });
 });
+
+describe('parseRecipeTextWithConfidence: a reader that writes markdown', () => {
+  /**
+   * The vlm-llm sidecar hands back markdown rather than plain transcription,
+   * and judged literally none of it was recognisable: "**Ingredients:**" is
+   * not a heading because of the asterisks, and "- 2 eggs" is not quantity-led
+   * because of the bullet. A complete recipe parsed to nothing at all — no
+   * title, no ingredients, no method — with nothing anywhere reporting a
+   * problem.
+   */
+  const MARKDOWN = [
+    '**Title:**',
+    'Spoon Bread - Donna James',
+    '',
+    '**Ingredients:**',
+    '- 2 eggs',
+    '- 1 can (8 oz) cream style corn',
+    '- 1/2 c. sour cream',
+    '',
+    '**Instructions:**',
+    'Beat eggs in medium bowl.',
+  ].join('\n');
+
+  const result = parseRecipeTextWithConfidence(MARKDOWN);
+
+  it('reads the title from beneath its label', () => {
+    // "**Title:**" is a label for the line under it, not a name.
+    expect(result.recipe.title).toBe('Spoon Bread - Donna James');
+  });
+
+  it('sees bulleted lines as the ingredients they are', () => {
+    expect(result.recipe.ingredients.map((i) => i.name)).toEqual([
+      '2 eggs',
+      '1 can (8 oz) cream style corn',
+      '1/2 c. sour cream',
+    ]);
+  });
+
+  it('finds the method under a decorated heading', () => {
+    expect(result.recipe.instructions).toEqual(['Beat eggs in medium bowl.']);
+  });
+
+  it('reads a plain transcription exactly as before', () => {
+    // The decoration is stripped only to judge a line; nothing else changes.
+    const plain = parseRecipeTextWithConfidence(
+      ['Pancakes', 'Ingredients', '2 cups flour', 'Instructions', 'Fry until golden.'].join('\n')
+    );
+    expect(plain.recipe.title).toBe('Pancakes');
+    expect(plain.recipe.ingredients.map((i) => i.name)).toEqual(['2 cups flour']);
+    expect(plain.recipe.instructions).toEqual(['Fry until golden.']);
+  });
+});

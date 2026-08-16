@@ -202,9 +202,18 @@ than anything else here.
       plain label rather than a group table because grouping is the same fact:
       two pages of one recipe are two scans wearing the same name — which is
       what 1.4 will set.
-- [ ] **1.4 — Multi-page grouping.** Assign a new photo to an existing name, so
-      "Spoon Bread" can be two photos. The person holding the binder knows this;
-      the parser never will.
+- [x] **1.4 — Multi-page grouping.** *Done 2026-08-16.* Pages wearing the same
+      name are one recipe, joined in the order they were taken — the back of a
+      card continues the front, often mid-sentence. A page offers to take the
+      previous page's name in one tap, and names already used are suggested,
+      because retyping a name exactly is a poor way to ask for this.
+      The grouping is applied on the server (`/batches/:id/compose`) so it is
+      one rule rather than two, and an unnamed page is a recipe of its own
+      because nothing said otherwise. Pages that were replaced or could not be
+      read are left out and counted, not silently dropped.
+      This also closed the gap that made grouping meaningless: a batch now has
+      a way to become recipes at all, handing its composed text to the existing
+      review, matching and reconciliation.
 - [x] **1.5 — Crop.** *Done 2026-08-16.* Offered for the page just taken —
       which is the moment anybody notices the recipe next to it crept into
       shot — and drawn by dragging one corner to the other, with everything
@@ -340,7 +349,7 @@ Applies to every phase; not optional.
 | Phase | Status | Notes |
 | --- | --- | --- |
 | 0 — Walking away | In progress | 0.1, 0.2, 0.3, 0.7 done. Remaining: 0.4 resume in the UI, 0.5 ambient progress, 0.6 notify. |
-| 1 — Capture | In progress | 1.1, 1.2, 1.3, 1.5 done. Next: 1.4 grouping, then 1.6 rectangles. |
+| 1 — Capture | In progress | 1.1–1.5 done. Remaining: 1.6 rectangles, 1.7 bad signal. |
 | 2 — Background parsing | Not started | Mostly already true; needs surfacing. |
 | 3 — Prioritised review | Not started | |
 | 4 — Recipe duplicates | Not started | |

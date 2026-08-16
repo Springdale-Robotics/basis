@@ -261,3 +261,72 @@ describe('tenancy', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('composing a batch into recipes', () => {
+  /** A scan that has been read, with text and a name. */
+  async function seedRead(
+    batchId: string,
+    label: string | null,
+    rawText: string | null,
+    status: 'review' | 'failed' | 'cancelled' = 'review'
+  ) {
+    const [row] = await db
+      .insert(imageParseSessions)
+      .values({ householdId, userId: user.id, status, batchId, label, rawText })
+      .returning({ id: imageParseSessions.id });
+    return row.id;
+  }
+
+  it('joins pages sharing a name into one recipe, in the order taken', async () => {
+    // Naming two pages alike is the only way anybody could know the back of a
+    // card continues the front — nothing downstream can work it out.
+    const batch = await createBatch(user, 'Card');
+    await seedRead(batch.id, 'Spoon Bread', 'Spoon Bread\n2 eggs');
+    await seedRead(batch.id, 'Spoon Bread', 'Beat eggs in a bowl.');
+
+    const { data } = await json(await user.fetch(`/api/v1/image-parse/batches/${batch.id}/compose`));
+
+    expect(data.recipes).toHaveLength(1);
+    expect(data.recipes[0]).toMatchObject({ label: 'Spoon Bread', pageCount: 2 });
+    expect(data.recipes[0].text).toBe('Spoon Bread\n2 eggs\n\nBeat eggs in a bowl.');
+  });
+
+  it('keeps differently named pages apart', async () => {
+    const batch = await createBatch(user, 'Two recipes');
+    await seedRead(batch.id, 'Pancakes', 'Pancakes\n2 cups flour');
+    await seedRead(batch.id, 'Soup', 'Soup\n1 onion');
+
+    const { data } = await json(await user.fetch(`/api/v1/image-parse/batches/${batch.id}/compose`));
+    expect(data.recipes.map((r: { label: string }) => r.label)).toEqual(['Pancakes', 'Soup']);
+  });
+
+  it('gives an unnamed page a recipe of its own', async () => {
+    // Nothing said it belonged with anything else.
+    const batch = await createBatch(user, 'Unnamed');
+    await seedRead(batch.id, null, 'First page');
+    await seedRead(batch.id, null, 'Second page');
+
+    const { data } = await json(await user.fetch(`/api/v1/image-parse/batches/${batch.id}/compose`));
+    expect(data.recipes).toHaveLength(2);
+  });
+
+  it('leaves out pages that were replaced or could not be read', async () => {
+    const batch = await createBatch(user, 'Leftovers');
+    await seedRead(batch.id, 'Good', 'A readable page');
+    await seedRead(batch.id, 'Cropped away', 'the uncropped original', 'cancelled');
+    await seedRead(batch.id, 'Unreadable', null, 'review');
+    await seedRead(batch.id, 'Broken', null, 'failed');
+
+    const { data } = await json(await user.fetch(`/api/v1/image-parse/batches/${batch.id}/compose`));
+
+    expect(data.recipes.map((r: { label: string }) => r.label)).toEqual(['Good']);
+    // Said plainly rather than silently dropped — two pages went nowhere.
+    expect(data.unread).toBe(2);
+  });
+
+  it("will not compose another household's batch", async () => {
+    const theirs = await createBatch(neighbour, 'Private');
+    const res = await user.fetch(`/api/v1/image-parse/batches/${theirs.id}/compose`);
+    expect(res.status).toBe(404);
+  });
+});
