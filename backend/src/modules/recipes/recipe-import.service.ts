@@ -135,6 +135,8 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
   let ingredientsStart = -1;
   let ingredientsEnd = -1;
   let instructionsStart = -1;
+  /** Whether a heading announced the ingredients, or they were inferred. */
+  let ingredientsFromHeading = false;
 
   // Look for section markers
   for (let i = 0; i < lines.length; i++) {
@@ -150,6 +152,7 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
     // Find ingredients section
     if (matchesSectionHeader(line, SECTION_HEADERS.ingredients) && ingredientsStart === -1) {
       ingredientsStart = i + 1;
+      ingredientsFromHeading = true;
     }
 
     // Find instructions/directions section
@@ -210,7 +213,10 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
       const kind = classifyRecipeLine(line, {
         inIngredientsSection: false,
         inInstructionsSection: false,
-        seenIngredient: i > ingredientsStart,
+        // A heading has already said these are ingredients, so the first line
+        // under one needs no quantity to qualify — "lettuce" on its own was
+        // being read as the start of the method.
+        seenIngredient: ingredientsFromHeading || i > ingredientsStart,
       });
       if (kind === 'instruction') {
         ingredientsEnd = i;
