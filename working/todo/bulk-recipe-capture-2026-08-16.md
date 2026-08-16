@@ -129,10 +129,10 @@ assume it.
       harvested scan is now marked `consumed_by_recipe_id` and its photograph
       exists elsewhere. Best-effort throughout — a recipe that saved correctly
       is never undone by a failed file copy, and nothing is deleted here.
-      **Follow-up:** bulk image mode doesn't thread scan ids yet (only the
-      single/multi-photo dialog does), so a batch-imported photo is still
-      unattached. And `attachSourcePhotos` runs per recipe; retention can start
-      collecting consumed scans once that has been true for a while.
+      Bulk image mode threads its scan ids too, so a batch-imported photo is
+      kept the same way.
+      **Follow-up:** retention can start collecting scans marked
+      `consumed_by_recipe_id` once that has been true for long enough to trust.
 
 **Phase 0 is done when:** photograph ten pages, close the browser entirely,
 reopen an hour later, and the parses are finished and waiting.

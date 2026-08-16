@@ -263,3 +263,56 @@ describe('tenancy', () => {
     }
   });
 });
+
+describe('the batch path keeps photographs too', () => {
+  it('gives each recipe in a batch the scan it was read from', async () => {
+    const first = await seedScan(householdId, FRONT, 'batch-a');
+    const second = await seedScan(householdId, BACK, 'batch-b');
+
+    const started = await user.fetch('/api/v1/recipes/import/start-batch', {
+      method: 'POST',
+      body: JSON.stringify({
+        entries: [
+          { sourceType: 'text', sourceData: RECIPE_TEXT, rawText: RECIPE_TEXT, imageSessionIds: [first] },
+          { sourceType: 'text', sourceData: RECIPE_TEXT, rawText: RECIPE_TEXT, imageSessionIds: [second] },
+        ],
+      }),
+    });
+    const { data } = await json(started);
+    expect(data.sessionIds).toHaveLength(2);
+
+    // Each entry keeps its own scan — not the first one twice.
+    const [a, b] = await Promise.all(
+      data.sessionIds.map((id: string) =>
+        db.query.recipeImportSessions.findFirst({ where: eq(recipeImportSessions.id, id) })
+      )
+    );
+    expect(a?.imageSessionIds).toEqual([first]);
+    expect(b?.imageSessionIds).toEqual([second]);
+  });
+
+  it('drops a foreign scan from a batch entry', async () => {
+    const theirs = await seedScan(neighbourHouseholdId, BACK, 'batch-neighbour');
+    const mine = await seedScan(householdId, FRONT, 'batch-mine');
+
+    const started = await user.fetch('/api/v1/recipes/import/start-batch', {
+      method: 'POST',
+      body: JSON.stringify({
+        entries: [
+          {
+            sourceType: 'text',
+            sourceData: RECIPE_TEXT,
+            rawText: RECIPE_TEXT,
+            imageSessionIds: [mine, theirs],
+          },
+        ],
+      }),
+    });
+    const { data } = await json(started);
+
+    const session = await db.query.recipeImportSessions.findFirst({
+      where: eq(recipeImportSessions.id, data.sessionIds[0]),
+    });
+    expect(session?.imageSessionIds).toEqual([mine]);
+  });
+});
