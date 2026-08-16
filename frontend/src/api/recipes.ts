@@ -320,7 +320,7 @@ export const recipesApi = {
   parseText: (text: string) =>
     apiPost<ParseTextResponse>('/recipes/import/parse-text', { text }),
 
-  startImport: (data: { sourceType: 'url' | 'image' | 'pdf' | 'text'; sourceData: string; rawText?: string }) =>
+  startImport: (data: { sourceType: 'url' | 'image' | 'pdf' | 'text'; sourceData: string; rawText?: string; imageSessionIds?: string[] }) =>
     apiPost<{ sessionId: string }>('/recipes/import/start', data),
 
   getImportSession: (sessionId: string) =>

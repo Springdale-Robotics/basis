@@ -11,6 +11,12 @@ import {
   pgEnum,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
+
+/** A photograph a recipe was read from, kept on disk beside the recipe. */
+export interface RecipePhoto {
+  path: string;
+  mimeType: string;
+}
 import { households } from './households.js';
 import { users } from './users.js';
 import { devices } from './devices.js';
@@ -35,6 +41,12 @@ export const recipes = pgTable('recipes', {
   servings: integer('servings'),
   imageUrl: text('image_url'),
   imageData: text('image_data'),                              // Base64-encoded image
+  /**
+   * Photographs this recipe was read from, copied out of the scan so the
+   * recipe owns them. Served from disk — `imageData` is base64 in the row and
+   * a phone photo does not belong there.
+   */
+  photoPaths: jsonb('photo_paths').$type<RecipePhoto[]>(),
   imageMimeType: varchar('image_mime_type', { length: 50 }),  // e.g., 'image/webp'
   imageWidth: integer('image_width'),
   imageHeight: integer('image_height'),
@@ -145,6 +157,8 @@ export const recipeImportSessions = pgTable('recipe_import_sessions', {
     .references(() => users.id, { onDelete: 'cascade' }),
   sourceType: importSourceTypeEnum('source_type').notNull(),
   sourceData: text('source_data').notNull(),
+  /** Scans this import was built from, so their photographs can be kept. */
+  imageSessionIds: jsonb('image_session_ids').$type<string[]>(),
   parsedRecipe: jsonb('parsed_recipe').$type<ParsedRecipe>(),
   ingredientMatches: jsonb('ingredient_matches').$type<IngredientMatch[]>().default([]),
   status: importStatusEnum('status').notNull().default('parsing'),

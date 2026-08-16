@@ -74,6 +74,13 @@ export const imageParseSessions = pgTable('image_parse_sessions', {
   processingTimeMs: decimal('processing_time_ms', { precision: 10, scale: 2 }),
 
   // Timestamps
+  /**
+   * Set once a recipe has been built from this scan and taken a copy of its
+   * photograph. Explicit rather than a status change, because several
+   * operations require `review` and would break if it moved.
+   */
+  consumedByRecipeId: uuid('consumed_by_recipe_id'),
+
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
   /**
