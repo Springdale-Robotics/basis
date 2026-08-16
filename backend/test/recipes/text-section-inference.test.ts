@@ -175,6 +175,25 @@ describe('parseRecipeTextWithConfidence: explicit headings still win', () => {
     expect(result.recipe.instructions.join(' ')).toContain('Fry until golden');
   });
 
+  it('keeps a bare ingredient under a heading out of the method', () => {
+    // With an Ingredients heading but no Instructions heading, the boundary is
+    // still inferred — and "lettuce" was being read as the first step, because
+    // it carries no quantity. The heading has already said what it is.
+    const result = parseRecipeTextWithConfidence(['Salad', 'Ingredients', 'lettuce'].join('\n'));
+
+    expect(result.recipe.ingredients.map((i) => i.name)).toEqual(['lettuce']);
+    expect(result.recipe.instructions).toEqual([]);
+  });
+
+  it('still finds where the method starts under an ingredients heading', () => {
+    const result = parseRecipeTextWithConfidence(
+      ['Cake', 'Ingredients', '2 cups flour', 'a pinch of salt', 'Bake until risen.'].join('\n')
+    );
+
+    expect(result.recipe.ingredients.map((i) => i.name)).toEqual(['2 cups flour', 'a pinch of salt']);
+    expect(result.recipe.instructions).toEqual(['Bake until risen.']);
+  });
+
   it('does not end the ingredients on a group header', () => {
     // "To serve:" contains a cooking verb but introduces more ingredients.
     const result = parseRecipeTextWithConfidence(
