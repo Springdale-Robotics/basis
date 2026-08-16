@@ -147,13 +147,22 @@ reopen an hour later, and the parses are finished and waiting.
 The binder-open stage. Speed and not-having-to-come-back-to-this matter more
 than anything else here.
 
-- [ ] **1.1 — Capture screen.** Take a photo, it uploads immediately, a thumbnail
-      joins a strip, camera stays ready for the next. No per-photo dialogs.
+- [x] **1.1 — Capture screen.** *Done 2026-08-16.* `/recipes/capture`, reached
+      from a Photograph button on the recipes page. A live in-page camera that
+      stays open, so a binder is a run of taps rather than hundreds of trips
+      through the OS camera — which is what produced "it didn't let me take
+      multiple pictures". Falls back to the file picker where no camera can be
+      opened. Each page uploads immediately into a batch.
 - [ ] **1.2 — Quality check before it counts.** Run on-device where possible so
       the verdict is instant. Blur, too-small, too-dark, no-text-found → refuse
       the photo with the reason and offer **Retake** (primary) or **Use anyway**.
       *Bias deliberately toward flagging: a false "blurry" costs seconds; a
       missed blur costs a whole second session with the binder.*
+      *Shipped 2026-08-16 in `frontend/src/lib/photo-quality.ts`: brightness
+      and sharpness measured on the captured frame before it uploads, refused
+      with the reason and a Retake, with "keep it anyway" always available
+      because the photographer can see the page and we cannot.*
+
       **Trialled 2026-08-16 — the obvious heuristic is necessary but not
       sufficient.** Variance of the Laplacian on a downscaled greyscale copy,
       measured against a real recipe-card photo (sharp = 1685):
@@ -188,8 +197,11 @@ than anything else here.
       Practical reading: gate only on egregious cases at first, report the
       *reason* from whichever measure fired, and expect to tune against real
       photographs rather than synthetic ones.
-- [ ] **1.3 — Naming.** Each image gets a name; default to something ordinal so
-      nobody is forced to type. Renaming is cheap and always available.
+- [x] **1.3 — Naming.** *Done 2026-08-16, migration `0017`.* A `label` on the
+      scan, defaulted to an ordinal at capture and editable in the strip. A
+      plain label rather than a group table because grouping is the same fact:
+      two pages of one recipe are two scans wearing the same name — which is
+      what 1.4 will set.
 - [ ] **1.4 — Multi-page grouping.** Assign a new photo to an existing name, so
       "Spoon Bread" can be two photos. The person holding the binder knows this;
       the parser never will.
@@ -320,7 +332,7 @@ Applies to every phase; not optional.
 | Phase | Status | Notes |
 | --- | --- | --- |
 | 0 — Walking away | In progress | 0.1, 0.2, 0.3, 0.7 done. Remaining: 0.4 resume in the UI, 0.5 ambient progress, 0.6 notify. |
-| 1 — Capture | Not started | 1.2 quality check and 1.5 crop matter most. |
+| 1 — Capture | In progress | 1.1, 1.2, 1.3 done. Next: 1.5 crop, then 1.4 grouping, then 1.6 rectangles. |
 | 2 — Background parsing | Not started | Mostly already true; needs surfacing. |
 | 3 — Prioritised review | Not started | |
 | 4 — Recipe duplicates | Not started | |

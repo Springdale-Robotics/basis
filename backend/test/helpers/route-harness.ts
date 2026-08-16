@@ -94,7 +94,13 @@ export async function setupRouteTest(): Promise<RouteTestContext> {
           headers: {
             cookie: `session=${sessionId}; csrf-token=${CSRF_TOKEN}`,
             'x-csrf-token': CSRF_TOKEN,
-            ...(init.body ? { 'content-type': 'application/json' } : {}),
+            // FormData carries its own content-type with the multipart
+            // boundary; forcing JSON here made every upload fail while parsing
+            // the boundary, which read as a 500 and quietly passed any test
+            // that only asserted "not 2xx".
+            ...(init.body && !(init.body instanceof FormData)
+              ? { 'content-type': 'application/json' }
+              : {}),
             ...(init.headers || {}),
           },
         }),

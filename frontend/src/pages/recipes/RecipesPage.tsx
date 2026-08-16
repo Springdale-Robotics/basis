@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Grid, List, Clock, Users, Upload, ChefHat } from 'lucide-react';
+import { Plus, Grid, List, Clock, Users, Upload, ChefHat, Camera } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -109,6 +109,14 @@ export function RecipesPage() {
         description="Your recipe collection"
         actions={
           <div className="flex gap-2">
+            {/* A binder is a different job from importing one recipe: the
+                camera stays open and the reading happens later. */}
+            <Button variant="outline" asChild>
+              <Link to="/recipes/capture">
+                <Camera className="mr-2 h-4 w-4" />
+                Photograph
+              </Link>
+            </Button>
             <Button variant="outline" onClick={() => { setImportDefaultTab(undefined); setImportOpen(true); }}>
               <Upload className="mr-2 h-4 w-4" />
               Import
