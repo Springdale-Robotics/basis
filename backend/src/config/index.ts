@@ -126,7 +126,6 @@ const envSchema = z.object({
   // vision model off a cold disk can take a couple of minutes to come up.
   IMAGE_PARSE_TIMEOUT_MS: z.coerce.number().default(180000), // 3 minutes for CPU processing
   IMAGE_PARSE_MAX_SIZE_MB: z.coerce.number().default(10),
-  IMAGE_PARSE_SESSION_TTL_HOURS: z.coerce.number().default(24),
   IMAGE_PARSE_REQUIRE_AI: z.coerce.boolean().default(false),
 
   // Receipt OCR / inventory import (Tesseract transcription + LLM structuring)

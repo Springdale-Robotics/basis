@@ -126,7 +126,7 @@ export interface NotificationJobData {
 }
 
 export interface CleanupJobData {
-  type: 'expired_sessions' | 'old_notifications' | 'old_audit_logs' | 'orphaned_files' | 'old_leftovers' | 'old_receipt_scans' | 'old_import_sessions';
+  type: 'expired_sessions' | 'old_notifications' | 'old_audit_logs' | 'orphaned_files' | 'old_leftovers' | 'old_receipt_scans' | 'old_import_sessions' | 'abandoned_image_scans';
   householdId?: string;
 }
 
@@ -398,6 +398,18 @@ export async function scheduleRecurringJobs(): Promise<void> {
   // Sweep finished and expired recipe import sessions daily. Each row holds
   // its full source — for a PDF import that is a multi-megabyte base64 blob —
   // and nothing had ever deleted them.
+  // Scans that failed, were cancelled, or died mid-upload. Deliberately not
+  // review/confirmed ones — for a photographed recipe card that file is the
+  // only copy of the photograph.
+  await cleanupQueue.add(
+    'abandoned_image_scans',
+    { type: 'abandoned_image_scans' },
+    {
+      repeat: { pattern: '0 6 * * *' }, // Daily at 6 AM
+      jobId: 'cleanup:abandoned_image_scans',
+    }
+  );
+
   await cleanupQueue.add(
     'old_import_sessions',
     { type: 'old_import_sessions' },

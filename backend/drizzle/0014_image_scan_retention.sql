@@ -1,0 +1,18 @@
+-- Image parse sessions never actually expired.
+--
+-- `expires_at` was written as creation + IMAGE_PARSE_SESSION_TTL_HOURS (24),
+-- and nothing ever read it: the only function that queried it was exported and
+-- never called. Seventeen-day-old scans were still on the production box.
+--
+-- That accident is load-bearing. The recipe photo import harvests the text at
+-- `review` and creates the recipe through the ordinary text import, so the
+-- session is never confirmed — a photographed recipe card sits in `review`
+-- forever with its recipe already saved, and the image file is the only copy
+-- of that photograph. Anything that had honoured this column would have
+-- deleted family recipe cards a day after they were scanned.
+--
+-- So the column stops being written rather than starting to be obeyed.
+-- Retention now depends on what a session IS (see cleanupAbandonedImageScans),
+-- not on a clock started when it was created. Kept nullable rather than
+-- dropped so the change is reversible.
+ALTER TABLE "image_parse_sessions" ALTER COLUMN "expires_at" DROP NOT NULL;

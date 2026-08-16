@@ -25,17 +25,27 @@ than it looks:
   (`backend/src/jobs/index.ts`, `concurrency: 1`). Closing the browser does not
   stop a parse. The blocking is entirely client-side: `useBatchImageProcessing`
   polls with the dialog open.
-- **`IMAGE_PARSE_SESSION_TTL_HOURS` is 24** (`backend/src/config/index.ts`).
-  Walk away, come back on Monday, and the work has been cleaned up. This single
-  constant would quietly destroy the whole premise.
+- **~~`IMAGE_PARSE_SESSION_TTL_HOURS` is 24, so walking away loses the work.~~**
+  **Wrong — corrected 2026-08-16.** The constant existed and was written into an
+  `expires_at` column, but *nothing enforced it*: the only function that read
+  the column was exported and never called. Seventeen-day-old scans were sitting
+  on the production box. Walking away already worked, by accident.
+  The real risks were the reverse — unbounded growth, and the standing trap that
+  anyone "fixing" the dead function would have started deleting recipe-card
+  photographs a day after they were taken. Resolved; see phase 0.2.
+  *Lesson worth keeping: I checked that the constant existed, not that anything
+  acted on it. Same masking shape as a tenancy test that passes because RLS is
+  doing the work.*
 - **Throughput is one image at a time** on an 8GB card, ~5–12s warm. 200 photos
   ≈ 20–40 minutes, longer with cold model loads. Fine for walking away; not
   something to watch.
 - **Ingredient-level reconciliation already exists** (v0.1.29): `plan-items`
   proposes merges before anything is written, and never decides on its own.
 - **Originals are kept on disk** at `${STORAGE_PATH}/image-parse`. 200 photos at
-  ~3MB is ~600MB per binder session, and nothing deletes them after a successful
-  import.
+  ~3MB is ~600MB per binder session. Abandoned scans are now swept (phase 0.2);
+  scans behind real recipes are deliberately kept, because **nothing copies the
+  photograph onto the recipe** — for a handwritten card that file is the only
+  copy in the account.
 
 ## Decisions taken
 
@@ -87,13 +97,16 @@ assume it.
       *Hand-author the migration + journal + snapshot — `drizzle-kit generate`
       is broken here. Household-scoped, so it needs an RLS policy following
       `drizzle/0008_rls_all_tables.sql` and a check in `backend/test/rls/`.*
-- [ ] **0.2 — Retention follows the batch, not the clock.** A session in an open
-      batch must not be cleaned up at 24h. Introduce batch-scoped retention
-      (proposed: 30 days from last activity) and keep the short TTL only for
-      orphaned one-off sessions. Touches `IMAGE_PARSE_SESSION_TTL_HOURS` and the
-      `expired_sessions` cleanup job.
-      **Acceptance:** a batch created, left alone for 48h, still opens with every
-      photo intact. Test with a back-dated `created_at` rather than waiting.
+- [x] **0.2 — Retention depends on what a session is, not how old it is.**
+      *Done 2026-08-16.* The fake `expires_at` is no longer written (migration
+      `0014` makes it nullable) and `IMAGE_PARSE_SESSION_TTL_HOURS` is gone.
+      `cleanupAbandonedImageScans` sweeps only `failed`, `cancelled`, and
+      `uploading`/`processing` older than 7 days, daily.
+      **`review` and `confirmed` are never collected, at any age** — a
+      photographed card sits in `review` with its recipe already saved, and the
+      image is the only copy. Revisit only after 0.7.
+      Batch-awareness hook goes here once `batch_id` exists: an open batch must
+      also never be swept, whatever its sessions' statuses say.
 - [ ] **0.3 — Batch status endpoint.** One call returns counts by state for the
       batch. Replaces per-session polling.
       *Tenancy test required (new route).*
@@ -104,6 +117,12 @@ assume it.
       not tied to the import dialog, showing an in-flight batch and its progress.
 - [ ] **0.6 — Tell them when it is done.** Use the existing notification module
       so the answer to "is it finished?" doesn't require checking.
+- [ ] **0.7 — The photograph becomes part of the recipe.** On import, copy the
+      original into recipe storage and set `imageUrl` if empty. Small, and it
+      delivers something real on its own: the recipe *shows* the handwritten
+      card it came from. It is also the gate on any further retention — until
+      it exists, cleanup and preservation are the same lever, and every
+      photographed card must be kept forever to avoid losing it.
 
 **Phase 0 is done when:** photograph ten pages, close the browser entirely,
 reopen an hour later, and the parses are finished and waiting.
@@ -227,14 +246,14 @@ Applies to every phase; not optional.
 | Blur detection quality | Unproven. Needs a trial against real bad photos before it gates uploads. |
 | Review burden at 200 recipes | Unmeasured, and it decides whether the whole workflow is usable. Phase 5.1 exists to find out early — consider moving it earlier. |
 | GPU contention | A long import competes with everything else the box does. |
-| Storage growth | ~600MB per session, currently forever. |
+| Storage growth | ~600MB per session. Abandoned scans now swept; everything behind a real recipe is kept forever until 0.7 attaches photos to recipes. |
 | Scope | This is months of work. Phase 0 alone delivers most of the felt benefit and should ship on its own. |
 
 ## Progress
 
 | Phase | Status | Notes |
 | --- | --- | --- |
-| 0 — Walking away | Not started | Highest value, lowest cost. Start here. |
+| 0 — Walking away | In progress | 0.2 done. Highest value, lowest cost. |
 | 1 — Capture | Not started | 1.2 quality check and 1.5 crop matter most. |
 | 2 — Background parsing | Not started | Mostly already true; needs surfacing. |
 | 3 — Prioritised review | Not started | |

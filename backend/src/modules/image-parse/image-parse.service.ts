@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { eq, and, lt } from 'drizzle-orm';
+import { eq, and, lt, inArray } from 'drizzle-orm';
 import { mkdir, writeFile, readFile, unlink } from 'fs/promises';
 import { join } from 'path';
 import { db } from '../../config/database.js';
@@ -56,8 +56,6 @@ export async function createSession(
   extractionMode: ExtractionMode = 'accurate'
 ): Promise<string> {
   const sessionId = randomUUID();
-  const expiresAt = new Date(Date.now() + config.IMAGE_PARSE_SESSION_TTL_HOURS * 60 * 60 * 1000);
-
   await db.insert(imageParseSessions).values({
     id: sessionId,
     householdId,
@@ -65,7 +63,6 @@ export async function createSession(
     status: 'uploading',
     selectedType: targetType,
     extractionMode,
-    expiresAt,
   });
 
   return sessionId;
@@ -600,32 +597,58 @@ export async function cancelSession(sessionId: string, householdId: string): Pro
 }
 
 /**
- * Clean up expired sessions and their image files
+ * Remove scans that were never going to become anything.
+ *
+ * What this deliberately does NOT touch is the point of it. A photographed
+ * recipe card ends up in `review` and stays there: the import harvests the
+ * text and creates the recipe through the ordinary text path, so the image
+ * session is never confirmed. The photograph is then the only copy — nothing
+ * copies it onto the recipe — and for a handwritten card that image may be the
+ * most valuable thing in the household's account. Neither `review` nor
+ * `confirmed` is collected here at any age.
+ *
+ * What is left over is genuinely dead: scans that failed, scans the user
+ * cancelled, and uploads that never got anywhere because a process died
+ * mid-flight. A job still claiming to be `processing` a week later is not
+ * processing.
+ *
+ * The predecessor deleted on `expires_at < now`, where expires_at was creation
+ * plus a day, regardless of status. It was exported and never called, which is
+ * the only reason it never destroyed anyone's recipe cards.
  */
-export async function cleanupExpiredSessions(): Promise<number> {
-  const expired = await db.query.imageParseSessions.findMany({
-    where: lt(imageParseSessions.expiresAt, new Date()),
+const ABANDONED_AFTER_DAYS = 7;
+
+export async function cleanupAbandonedImageScans(): Promise<number> {
+  const cutoff = new Date(Date.now() - ABANDONED_AFTER_DAYS * 24 * 60 * 60 * 1000);
+
+  const abandoned = await db.query.imageParseSessions.findMany({
+    where: and(
+      inArray(imageParseSessions.status, ['failed', 'cancelled', 'uploading', 'processing']),
+      lt(imageParseSessions.updatedAt, cutoff)
+    ),
   });
 
-  for (const session of expired) {
+  if (abandoned.length === 0) return 0;
+
+  for (const session of abandoned) {
     if (session.originalImagePath) {
       try {
         await unlink(session.originalImagePath);
       } catch {
-        // File may already be deleted
+        // Already gone, which is the outcome we wanted anyway.
       }
     }
   }
 
-  if (expired.length > 0) {
-    await db
-      .delete(imageParseSessions)
-      .where(lt(imageParseSessions.expiresAt, new Date()));
+  await db.delete(imageParseSessions).where(
+    inArray(
+      imageParseSessions.id,
+      abandoned.map((session) => session.id)
+    )
+  );
 
-    logger.info({ count: expired.length }, 'Cleaned up expired image parse sessions');
-  }
-
-  return expired.length;
+  logger.info({ count: abandoned.length }, 'Cleaned up abandoned image scans');
+  return abandoned.length;
 }
 
 /**
