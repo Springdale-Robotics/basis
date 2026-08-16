@@ -77,7 +77,8 @@ export interface ImageParseSession {
   parseWarnings: string[];
   hasImage: boolean;
   createdAt: string;
-  expiresAt: string;
+  /** Vestigial: no longer written, and nothing ever enforced it. */
+  expiresAt?: string | null;
 }
 
 export interface AIStatus {

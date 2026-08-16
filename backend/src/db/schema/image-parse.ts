@@ -76,7 +76,12 @@ export const imageParseSessions = pgTable('image_parse_sessions', {
   // Timestamps
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
-  expiresAt: timestamp('expires_at').notNull(),
+  /**
+   * Vestigial. Was creation + 24h and never enforced anywhere; retention now
+   * depends on a session's status, not its age. Nullable and unwritten — kept
+   * only so the change stays reversible.
+   */
+  expiresAt: timestamp('expires_at'),
 });
 
 // Parsed content types

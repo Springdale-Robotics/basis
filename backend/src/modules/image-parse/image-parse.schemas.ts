@@ -146,5 +146,6 @@ export const sessionResponseSchema = z.object({
   parsedContent: z.unknown().nullable(),
   parseWarnings: z.array(z.string()),
   createdAt: z.string(),
-  expiresAt: z.string(),
+  /** Vestigial: no longer written, and nothing ever enforced it. */
+  expiresAt: z.string().nullable().optional(),
 });

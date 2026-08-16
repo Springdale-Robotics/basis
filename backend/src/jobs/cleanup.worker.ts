@@ -37,6 +37,13 @@ export async function processCleanupJob(job: Job<CleanupJobData>): Promise<void>
       case 'old_import_sessions':
         await cleanupOldImportSessions();
         break;
+      case 'abandoned_image_scans': {
+        const { cleanupAbandonedImageScans } = await import(
+          '../modules/image-parse/image-parse.service.js'
+        );
+        await cleanupAbandonedImageScans();
+        break;
+      }
     }
 
     log.info('Cleanup job completed');
