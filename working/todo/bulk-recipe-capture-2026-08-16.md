@@ -154,9 +154,40 @@ than anything else here.
       the photo with the reason and offer **Retake** (primary) or **Use anyway**.
       *Bias deliberately toward flagging: a false "blurry" costs seconds; a
       missed blur costs a whole second session with the binder.*
-      **Open question:** what actually detects blur well enough — variance of
-      Laplacian on a downscaled greyscale copy is the usual answer and is cheap
-      in canvas. Needs a real trial against genuinely bad photos.
+      **Trialled 2026-08-16 — the obvious heuristic is necessary but not
+      sufficient.** Variance of the Laplacian on a downscaled greyscale copy,
+      measured against a real recipe-card photo (sharp = 1685):
+
+      | variant | score | vs sharp |
+      | --- | --- | --- |
+      | as taken | 1685 | 100% |
+      | gaussian blur σ=3 | 491 | 29% |
+      | gaussian blur σ=5 | 125 | 7% |
+      | very dark, in focus | 74 | **4%** |
+      | too far away / low detail | 1671 | **99%** |
+
+      Three things follow, and they change what this task can promise:
+
+      1. **It separates defocus blur well.** That much works.
+      2. **It cannot tell dark from blurry** — an in-focus but underexposed
+         photo scores *below* a badly blurred one. So brightness must be
+         measured separately, or the app will tell someone to hold still when
+         they need to turn a light on. Wrong advice is worse than none.
+      3. **It does not notice a photo taken from too far away**, which scores
+         99% of sharp while being just as unreadable. A separate signal is
+         needed — probably the size of the text region rather than the whole
+         frame.
+
+      Also unresolved: the absolute number is content-dependent (a dense
+      printed page will not score like a sparse handwritten card), so a single
+      global threshold is unsafe without calibrating across many real photos.
+      And an attempt to approximate camera shake failed — it scored 98% of
+      sharp, meaning it never actually blurred anything, so **real motion blur
+      remains untested** and it is the most likely cause in practice.
+
+      Practical reading: gate only on egregious cases at first, report the
+      *reason* from whichever measure fired, and expect to tune against real
+      photographs rather than synthetic ones.
 - [ ] **1.3 — Naming.** Each image gets a name; default to something ordinal so
       nobody is forced to type. Renaming is cheap and always available.
 - [ ] **1.4 — Multi-page grouping.** Assign a new photo to an existing name, so
@@ -223,9 +254,31 @@ Completes the reconciliation work one level up from ingredients.
 
 ## Phase 5 — Final data quality
 
-- [ ] **5.1 — Measure the review burden.** How many decisions does a 200-recipe
-      import actually demand? This is the number that decides whether any of
-      this is usable, and it is currently unknown.
+- [x] **5.1 — Measure the review burden.** *Measured 2026-08-16, and it found
+      two defects in the shipped reconciliation.*
+
+      The encouraging part: the burden scales with the **vocabulary**, not the
+      recipe count. Identity dedupe collapsed 1400 ingredient mentions from 200
+      recipes into ~100 distinct decisions, of which ~20% were raised as
+      look-alikes. Reviewing a collection is therefore a question of how varied
+      a kitchen is, not how many recipes were photographed — which is what
+      makes the whole workflow plausible.
+
+      Two things only visible at that size, both now fixed:
+
+      - **Clustering ran away.** Groups are built by transitive closure, so a
+        chain of near-identical names drags everything in. A thousand
+        ingredients collapsed into *two* clusters covering 1003 of them — a
+        dialogue asking "are these 1003 the same?" is worse than offering
+        nothing. Capped at 8 per group.
+      - **Cost is quadratic and it showed.** 141ms at 120 ingredients, but
+        **9 seconds** at a thousand. Comparison is now bounded; names past the
+        ceiling are still created, just without suggestions. A thousand
+        ingredients now plans in under a second.
+
+      Still unmeasured: how long a person actually takes over those ~20 groups
+      and ~100 confirmations. That needs a real collection, not a generated
+      one.
 - [ ] **5.2 — Ingredient reconciliation at batch scale.** v0.1.29 handles it;
       whether it holds up across hundreds of ingredients at once is untested.
 - [ ] **5.3 — Storage.** ~600MB per binder session accumulates and nothing
@@ -256,8 +309,8 @@ Applies to every phase; not optional.
 | Risk | Notes |
 | --- | --- |
 | Rectangle UI on a phone | The hardest thing here. Ship crop (1.5) first and learn whether 1.6 is needed. |
-| Blur detection quality | Unproven. Needs a trial against real bad photos before it gates uploads. |
-| Review burden at 200 recipes | Unmeasured, and it decides whether the whole workflow is usable. Phase 5.1 exists to find out early — consider moving it earlier. |
+| Blur detection quality | Partly answered (see 1.2). Defocus is detectable; darkness is confusable with blur; distance is invisible to it; motion blur still untested. Needs real bad photographs, not synthetic ones. |
+| Review burden at 200 recipes | Measured (5.1): ~100 decisions for 200 recipes, because it scales with vocabulary rather than recipe count. Two defects found and fixed. The human time over those decisions is still unmeasured. |
 | GPU contention | A long import competes with everything else the box does. |
 | Storage growth | ~600MB per session. Abandoned scans swept. 0.7 now copies photographs onto recipes, so consumed scans are collectable — but that sweep is not yet written, and the copy temporarily doubles the bytes. |
 | Scope | This is months of work. Phase 0 alone delivers most of the felt benefit and should ship on its own. |
@@ -271,4 +324,4 @@ Applies to every phase; not optional.
 | 2 — Background parsing | Not started | Mostly already true; needs surfacing. |
 | 3 — Prioritised review | Not started | |
 | 4 — Recipe duplicates | Not started | |
-| 5 — Data quality | Not started | 5.1 may deserve to come early. |
+| 5 — Data quality | In progress | 5.1 measured; found and fixed two defects in shipped reconciliation. |
