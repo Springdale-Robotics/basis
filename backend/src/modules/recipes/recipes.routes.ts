@@ -386,6 +386,79 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
   // existing items are reused, and ingredients that reduce to the same item
   // share it.
   /**
+   * Read a filled-in recipe template into text the ordinary import can take.
+   *
+   * Writes nothing and creates no sessions: the caller sends what comes back
+   * to /import/start-batch, so a spreadsheet joins the same review, matching
+   * and reconciliation as every other source rather than growing a second
+   * path of its own.
+   */
+  app.post(
+    '/import/spreadsheet',
+    { preHandler: [authMiddleware, requireMember(), importRateLimiter] },
+    async (request) => {
+      const contentType = request.headers['content-type'] || '';
+      if (!contentType.includes('multipart/form-data')) {
+        throw Errors.validation('Expected multipart/form-data');
+      }
+
+      // A workbook is a zip, so a small upload can unpack into a very large
+      // sheet. The row cap inside the parser is the other half of this.
+      const maxBytes = 5 * 1024 * 1024;
+      if (Number(request.headers['content-length'] || 0) > maxBytes) {
+        throw Errors.validation('Spreadsheet size exceeds maximum of 5MB');
+      }
+
+      const uploaded = await request.file();
+      if (!uploaded) throw Errors.validation('No file uploaded');
+
+      const filename = uploaded.filename || '';
+      if (!/\.(xlsx|xls|csv)$/i.test(filename)) {
+        throw Errors.validation('Upload a .xlsx, .xls or .csv file.');
+      }
+
+      const buffer = await uploaded.toBuffer();
+      if (buffer.length > maxBytes) {
+        throw Errors.validation('Spreadsheet size exceeds maximum of 5MB');
+      }
+
+      const { readSpreadsheet, rowsToRecipes, toCanonicalText } = await import(
+        './recipe-spreadsheet.js'
+      );
+
+      let rows: string[][];
+      try {
+        rows = await readSpreadsheet(buffer, filename);
+      } catch {
+        throw Errors.validation('That file could not be read as a spreadsheet.');
+      }
+
+      // A bad template is the user's mistake to correct, not a server fault.
+      let parsed: ReturnType<typeof rowsToRecipes>;
+      try {
+        parsed = rowsToRecipes(rows);
+      } catch (error) {
+        throw Errors.validation(
+          error instanceof Error ? error.message : 'That file could not be read.'
+        );
+      }
+
+      return {
+        success: true,
+        data: {
+          recipes: parsed.recipes.map((recipe) => ({
+            title: recipe.title,
+            rowNumber: recipe.rowNumber,
+            text: toCanonicalText(recipe),
+          })),
+          skipped: parsed.skipped,
+          warnings: parsed.warnings,
+        },
+      };
+    }
+  );
+
+  /**
    * What creating items from these ingredients would do — without doing it.
    *
    * Its sibling below inserts first and reports near-matches afterwards, which

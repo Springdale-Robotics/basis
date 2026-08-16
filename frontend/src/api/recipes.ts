@@ -397,6 +397,20 @@ export const recipesApi = {
    * the household already had.
    */
   /**
+   * Read a filled-in recipe template into text the ordinary import can take.
+   *
+   * Creates nothing: the recipes come back as text and go through
+   * startBatchImport like any other source, so a spreadsheet gets the same
+   * review, matching and reconciliation rather than a path of its own.
+   */
+  importSpreadsheet: (file: File) =>
+    apiUpload<{
+      recipes: Array<{ title: string; rowNumber: number; text: string }>;
+      skipped: Array<{ rowNumber: number; reason: string }>;
+      warnings: string[];
+    }>('/recipes/import/spreadsheet', file),
+
+  /**
    * What creating items from these ingredients would do — without doing it.
    *
    * Writes nothing, so it can be asked before the household has decided

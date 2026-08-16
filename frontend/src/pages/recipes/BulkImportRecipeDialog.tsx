@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
 import {
   Camera, Link, FileText, FileUp, Upload, Loader2, AlertCircle, Check, X,
-  ChevronRight, ChevronLeft, ChevronDown, RotateCw,
+  ChevronRight, ChevronLeft, ChevronDown, RotateCw, Table, Download,
 } from 'lucide-react';
 import {
   Dialog,
@@ -31,7 +31,7 @@ import { toast } from '@/hooks/useToast';
 import { BulkIngredientActions } from './BulkIngredientActions';
 import { IngredientMatchRow } from './IngredientMatchRow';
 
-type BulkMode = 'image' | 'url' | 'text' | 'file';
+type BulkMode = 'image' | 'url' | 'text' | 'file' | 'spreadsheet';
 type BulkStep = 'mode' | 'input' | 'processing' | 'ocr-review' | 'recipe-review' | 'catalog' | 'confirm';
 
 // Per-recipe batch item. The image/upload/polling lifecycle is owned by
@@ -77,6 +77,10 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
   const [textEntries, setTextEntries] = useState<string[]>(['']);
   // Shared source picker for both image and .recipe file modes.
   const [filePickerOpen, setFilePickerOpen] = useState(false);
+  // Rows the template gave us that couldn't be used, kept so they can be
+  // named rather than silently dropped.
+  const [spreadsheetSkipped, setSpreadsheetSkipped] = useState<Array<{ rowNumber: number; reason: string }>>([]);
+  const [spreadsheetBusy, setSpreadsheetBusy] = useState(false);
   const queryClient = useQueryClient();
 
   const activeItems = items.filter(i => !i.excluded);
@@ -338,6 +342,15 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
     if (!open || !initialFiles?.length) return;
     if (items.length > 0) return; // Don't double-load if user reopens
     const firstFile = initialFiles[0];
+    // A spreadsheet is a whole collection in one file, so it is read on the
+    // server and goes straight to parsing — there is no per-file step and
+    // nothing to review as text.
+    if (/\.(xlsx|xls|csv)$/i.test(firstFile.name)) {
+      setMode('spreadsheet');
+      setStep('input');
+      void handleSpreadsheet([firstFile]);
+      return;
+    }
     const isImage = firstFile.type.startsWith('image/');
     if (isImage) {
       const dt = new DataTransfer();
@@ -375,6 +388,53 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
       ocrText: text,
     })));
   }, [textEntries]);
+
+  /**
+   * Read a filled-in template into the same items every other source produces.
+   *
+   * The server turns each row into recipe text and creates nothing, so from
+   * here on a spreadsheet is indistinguishable from pasted text — same review,
+   * same ingredient matching, same reconciliation before anything is saved.
+   */
+  const handleSpreadsheet = useCallback(async (files: FileList | File[] | null) => {
+    const file = files?.[0];
+    if (!file) return;
+
+    setSpreadsheetBusy(true);
+    setSpreadsheetSkipped([]);
+    try {
+      const { recipes, skipped, warnings } = await recipesApi.importSpreadsheet(file);
+      setSpreadsheetSkipped(skipped);
+      for (const warning of warnings) toast({ title: warning });
+
+      if (recipes.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'No recipes in that file',
+          description: skipped[0]?.reason ?? 'Every row was empty or missing a title.',
+        });
+        return;
+      }
+
+      setItems(recipes.map((recipe, i) => ({
+        id: `sheet-${i}-${recipe.rowNumber}`,
+        label: recipe.title,
+        status: 'ready' as const,
+        ocrText: recipe.text,
+      })));
+      // Row text needs no OCR review — it is exactly what was typed.
+      setStep('processing');
+      parseAllMutation.mutate();
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'Could not read that spreadsheet',
+        description: (e as Error).message,
+      });
+    } finally {
+      setSpreadsheetBusy(false);
+    }
+  }, [setItems, parseAllMutation]);
 
   // Get the currently viewed recipe in review step
   const activeImportSession = (() => {
@@ -443,6 +503,7 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
                 { mode: 'url' as BulkMode, icon: Link, label: 'From URLs', desc: 'Paste recipe URLs, one per line' },
                 { mode: 'text' as BulkMode, icon: FileText, label: 'Paste Recipes', desc: 'Paste recipe text directly' },
                 { mode: 'file' as BulkMode, icon: FileUp, label: 'Upload Files', desc: 'Upload .recipe files' },
+                { mode: 'spreadsheet' as BulkMode, icon: Table, label: 'Spreadsheet', desc: 'Fill in our template and upload it' },
               ]).map(opt => (
                 <Card
                   key={opt.mode}
@@ -536,6 +597,60 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
                 </div>
               )}
 
+              {mode === 'spreadsheet' && (
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <Label>Start from the template</Label>
+                    <p className="text-sm text-muted-foreground">
+                      One recipe per row. Put each ingredient and each step on its own line
+                      inside the cell — in Excel and Google Sheets that&apos;s Alt+Enter.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button asChild type="button" variant="outline" size="sm">
+                      <a href="/basis-recipes-template.xlsx" download>
+                        <Download className="mr-2 h-4 w-4" />
+                        Excel template
+                      </a>
+                    </Button>
+                    <Button asChild type="button" variant="outline" size="sm">
+                      <a href="/basis-recipes-template.csv" download>
+                        <Download className="mr-2 h-4 w-4" />
+                        CSV template
+                      </a>
+                    </Button>
+                  </div>
+
+                  <Button
+                    type="button"
+                    className="w-full"
+                    disabled={spreadsheetBusy}
+                    onClick={() => setFilePickerOpen(true)}
+                  >
+                    {spreadsheetBusy ? (
+                      <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Reading…</>
+                    ) : (
+                      <><Table className="mr-2 h-4 w-4" /> Upload filled-in template</>
+                    )}
+                  </Button>
+
+                  {spreadsheetSkipped.length > 0 && (
+                    <Alert>
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription className="space-y-1">
+                        <p>{spreadsheetSkipped.length} row{spreadsheetSkipped.length === 1 ? '' : 's'} couldn&apos;t be used:</p>
+                        <ul className="text-xs">
+                          {spreadsheetSkipped.slice(0, 6).map(s => (
+                            <li key={s.rowNumber}>Row {s.rowNumber} — {s.reason}</li>
+                          ))}
+                        </ul>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+              )}
+
               {mode === 'file' && (
                 <div className="space-y-2">
                   <Label>Select .recipe files</Label>
@@ -566,6 +681,9 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
                 <Button variant="outline" onClick={() => { setStep('mode'); setMode(null); setItems([]); }}>
                   <ChevronLeft className="mr-2 h-4 w-4" /> Back
                 </Button>
+                {/* A spreadsheet starts as soon as it is uploaded — there is
+                    nothing further to choose, so no second button to press. */}
+                {mode !== 'spreadsheet' && (
                 <Button
                   onClick={() => {
                     if (mode === 'url') prepareUrlItems();
@@ -582,6 +700,7 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
                   Start Processing
                   <ChevronRight className="ml-2 h-4 w-4" />
                 </Button>
+                )}
               </div>
             </div>
           )}
@@ -910,15 +1029,29 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
           open={filePickerOpen}
           onOpenChange={setFilePickerOpen}
           onSelect={(files) => {
-            if (mode === 'file') {
+            if (mode === 'spreadsheet') {
+              void handleSpreadsheet(files);
+            } else if (mode === 'file') {
               handleRecipeFiles(files);
             } else {
               handleImageFiles(files);
             }
           }}
-          accept={mode === 'file' ? '.recipe' : 'image/jpeg,image/png,image/gif,image/webp,image/heic'}
-          multiple
-          title={mode === 'file' ? 'Add .recipe files' : 'Add recipe images'}
+          accept={
+            mode === 'spreadsheet'
+              ? '.xlsx,.xls,.csv'
+              : mode === 'file'
+                ? '.recipe'
+                : 'image/jpeg,image/png,image/gif,image/webp,image/heic'
+          }
+          multiple={mode !== 'spreadsheet'}
+          title={
+            mode === 'spreadsheet'
+              ? 'Upload your filled-in template'
+              : mode === 'file'
+                ? 'Add .recipe files'
+                : 'Add recipe images'
+          }
         />
 
         {reconciliation.dialogProps && (

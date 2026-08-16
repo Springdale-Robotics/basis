@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query';
-import { Upload, Link, FileText, Check, X, ChevronRight, Loader2, AlertCircle, AlertTriangle, Info, FileUp, Camera, RefreshCw } from 'lucide-react';
+import { Upload, Link, FileText, Check, X, ChevronRight, Loader2, AlertCircle, AlertTriangle, Info, FileUp, Camera, RefreshCw, Table, Download } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -99,7 +99,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     setBatchMode(true);
   };
 
-  const [sourceType, setSourceType] = useState<'url' | 'pdf' | 'text' | 'file' | 'image'>(defaultTab || 'text');
+  const [sourceType, setSourceType] = useState<'url' | 'pdf' | 'text' | 'file' | 'image' | 'spreadsheet'>(defaultTab || 'text');
 
   // Sync tab when dialog opens
   useEffect(() => {
@@ -122,6 +122,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
    * and only the user knows which, so we ask rather than guess.
    */
   const [pendingPhotos, setPendingPhotos] = useState<File[]>([]);
+  const [spreadsheetPickerOpen, setSpreadsheetPickerOpen] = useState(false);
   const [imagePageProgress, setImagePageProgress] = useState<{ done: number; total: number } | null>(null);
   const [pdfFileName, setPdfFileName] = useState<string | null>(null);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
@@ -217,8 +218,10 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
         });
       }
       const sourceData = sourceType === 'url' ? sourceUrl : rawText;
+      // A spreadsheet never reaches here — picking one hands straight over to
+      // the bulk flow — but the source enum has no room for it either way.
       return recipesApi.startImport({
-        sourceType: sourceType === 'file' ? 'text' : sourceType,
+        sourceType: sourceType === 'file' || sourceType === 'spreadsheet' ? 'text' : sourceType,
         sourceData,
         rawText: sourceType === 'text' ? rawText : undefined,
       });
@@ -719,7 +722,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                 setImageError(null);
                 setImageRawText(null);
               }}>
-                <TabsList className="grid w-full grid-cols-5">
+                <TabsList className="grid w-full grid-cols-6">
                   <TabsTrigger value="text">
                     <FileText className="mr-2 h-4 w-4" />
                     Paste Text
@@ -740,7 +743,61 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                     <Upload className="mr-2 h-4 w-4" />
                     Upload PDF
                   </TabsTrigger>
+                  <TabsTrigger value="spreadsheet">
+                    <Table className="mr-2 h-4 w-4" />
+                    Spreadsheet
+                  </TabsTrigger>
                 </TabsList>
+
+                {/* A whole collection at once. The file is handed to the bulk
+                    flow, which is where reviewing many recipes already lives —
+                    there is nothing single-recipe about a spreadsheet. */}
+                <TabsContent value="spreadsheet" className="mt-4">
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <Label>Import a whole collection</Label>
+                      <p className="text-sm text-muted-foreground">
+                        One recipe per row. Put each ingredient and each step on its own line
+                        inside the cell — in Excel and Google Sheets that&apos;s Alt+Enter.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button asChild type="button" variant="outline" size="sm">
+                        <a href="/basis-recipes-template.xlsx" download>
+                          <Download className="mr-2 h-4 w-4" />
+                          Excel template
+                        </a>
+                      </Button>
+                      <Button asChild type="button" variant="outline" size="sm">
+                        <a href="/basis-recipes-template.csv" download>
+                          <Download className="mr-2 h-4 w-4" />
+                          CSV template
+                        </a>
+                      </Button>
+                    </div>
+
+                    <Button
+                      type="button"
+                      className="w-full"
+                      onClick={() => setSpreadsheetPickerOpen(true)}
+                    >
+                      <Table className="mr-2 h-4 w-4" />
+                      Upload filled-in template
+                    </Button>
+
+                    <FileSourcePicker
+                      open={spreadsheetPickerOpen}
+                      onOpenChange={setSpreadsheetPickerOpen}
+                      onSelect={(files) => {
+                        if (files.length > 0) enterBatchMode(files);
+                      }}
+                      accept=".xlsx,.xls,.csv"
+                      title="Upload your filled-in template"
+                      description="One recipe per row, using the Basis template."
+                    />
+                  </div>
+                </TabsContent>
 
                 <TabsContent value="text" className="mt-4">
                   <div className="space-y-2">
