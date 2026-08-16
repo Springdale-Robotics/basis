@@ -205,8 +205,16 @@ than anything else here.
 - [ ] **1.4 — Multi-page grouping.** Assign a new photo to an existing name, so
       "Spoon Bread" can be two photos. The person holding the binder knows this;
       the parser never will.
-- [ ] **1.5 — Crop.** Trim a photo to one recipe. The minimum viable form of the
-      next item, and on its own solves most of the stray-text problem.
+- [x] **1.5 — Crop.** *Done 2026-08-16.* Offered for the page just taken —
+      which is the moment anybody notices the recipe next to it crept into
+      shot — and drawn by dragging one corner to the other, with everything
+      outside the box dimmed. No resize handles: they need precision a thumb
+      does not have, and redrawing is faster than nudging.
+      Only the last frame is held, because a binder's worth of decoded images
+      would not fit in a phone. The crop is uploaded as a new page and the
+      uncropped one cancelled only once it is safely up, so a failure anywhere
+      leaves the original standing. A cancelled scan is one the retention sweep
+      already collects.
 - [ ] **1.6 — Rectangle regions.** Draw more than one rectangle on a single
       photo, each becoming its own recipe with its own name. Hardest UI in the
       project: touch, pinch-zoom, undo, small screens.
@@ -332,7 +340,7 @@ Applies to every phase; not optional.
 | Phase | Status | Notes |
 | --- | --- | --- |
 | 0 — Walking away | In progress | 0.1, 0.2, 0.3, 0.7 done. Remaining: 0.4 resume in the UI, 0.5 ambient progress, 0.6 notify. |
-| 1 — Capture | In progress | 1.1, 1.2, 1.3 done. Next: 1.5 crop, then 1.4 grouping, then 1.6 rectangles. |
+| 1 — Capture | In progress | 1.1, 1.2, 1.3, 1.5 done. Next: 1.4 grouping, then 1.6 rectangles. |
 | 2 — Background parsing | Not started | Mostly already true; needs surfacing. |
 | 3 — Prioritised review | Not started | |
 | 4 — Recipe duplicates | Not started | |
