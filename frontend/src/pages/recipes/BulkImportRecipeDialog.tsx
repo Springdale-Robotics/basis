@@ -51,6 +51,12 @@ interface BulkImportRecipeDialogProps {
    */
   initialFiles?: File[];
   /**
+   * Recipes already read out of photographs, one string each, arriving from a
+   * capture session. They skip straight to the text review — the reading has
+   * happened, but nobody has looked at it yet.
+   */
+  initialTextEntries?: string[];
+  /**
    * Render without the outer <Dialog> wrapper — useful when this flow is
    * embedded inside another dialog (e.g., the unified ImportRecipeDialog
    * mounts this body when the user uploads multiple files).
@@ -58,7 +64,7 @@ interface BulkImportRecipeDialogProps {
   embedded?: boolean;
 }
 
-export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialFiles, embedded = false }: BulkImportRecipeDialogProps) {
+export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialFiles, initialTextEntries, embedded = false }: BulkImportRecipeDialogProps) {
   const [mode, setMode] = useState<BulkMode | null>(null);
   const [step, setStep] = useState<BulkStep>('mode');
   const {
@@ -341,6 +347,23 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
   // detected inside the single-recipe dialog), skip the mode picker and
   // start processing immediately. Image files → image mode; .recipe JSON
   // files → file mode.
+  // Recipes read from a photographing session: already text, not yet looked at.
+  useEffect(() => {
+    if (!open || !initialTextEntries?.length) return;
+    if (items.length > 0) return;
+    setMode('text');
+    setItems(
+      initialTextEntries.map((text, i) => ({
+        id: `captured-${i}`,
+        label: text.split('\n')[0]?.slice(0, 40) || `Recipe ${i + 1}`,
+        status: 'ready' as const,
+        ocrText: text,
+      }))
+    );
+    setStep('ocr-review');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialTextEntries]);
+
   useEffect(() => {
     if (!open || !initialFiles?.length) return;
     if (items.length > 0) return; // Don't double-load if user reopens

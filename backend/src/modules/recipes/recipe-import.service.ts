@@ -6,7 +6,7 @@ import { copyFile, mkdir } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { config } from '../../config/index.js';
 import { logger } from '../../lib/logger.js';
-import { classifyRecipeLine, splitIntoSteps } from './recipe-line-classifier.js';
+import { classifyRecipeLine, splitIntoSteps, stripDecoration } from './recipe-line-classifier.js';
 import { matchIngredients } from './ingredient-matching.service.js';
 import { normalizeIngredientName } from './ingredient-matching.service.js';
 import { Errors } from '../../lib/errors.js';
@@ -76,6 +76,9 @@ function isIngredientGroupHeader(line: string): string | null {
   return null;
 }
 
+/** A bare field label, as some readers emit before the value itself. */
+const FIELD_LABEL = /^(title|name|recipe|serves|servings|prep|cook|yield)$/i;
+
 // Enhanced section header patterns
 const SECTION_HEADERS = {
   ingredients: [
@@ -108,7 +111,9 @@ const SECTION_HEADERS = {
  * Check if a line matches a section header pattern
  */
 function matchesSectionHeader(line: string, patterns: RegExp[]): boolean {
-  const trimmed = line.trim().replace(/[:;]$/, '');
+  // Some readers write headings as markdown — "**Ingredients:**" — and judged
+  // literally that is not a heading at all, which cost a whole recipe.
+  const trimmed = stripDecoration(line).replace(/[:;]$/, '');
   return patterns.some(p => p.test(trimmed));
 }
 
@@ -146,11 +151,16 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Title is usually first line (if not a section header)
-    if (i === 0 && line.length < 100 &&
+    // "**Title:**" on its own is a label for the line beneath it, not a name.
+    if (FIELD_LABEL.test(stripDecoration(line))) continue;
+
+    // Usually the first line — but not always literally the first, since some
+    // readers put a "**Title:**" label above it, and that label is skipped
+    // just above. The first usable line wins, and only once.
+    if (title === 'Untitled Recipe' && line.length < 100 &&
         !matchesSectionHeader(line, SECTION_HEADERS.ingredients) &&
         !matchesSectionHeader(line, SECTION_HEADERS.instructions)) {
-      title = line;
+      title = stripDecoration(line);
     }
 
     // Find ingredients section

@@ -162,6 +162,89 @@ export async function imageParseRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
+  /**
+   * The batch as recipes rather than as photographs.
+   *
+   * Pages wearing the same name are one recipe — that is what naming two
+   * pages alike means, and the person holding the binder is the only one who
+   * could have known it. Their text is joined in the order they were taken,
+   * because the back of a card continues the front and often mid-sentence.
+   *
+   * Composed here rather than in the browser so the grouping is one testable
+   * rule, and so a page that failed to read is left out by the same rule
+   * everywhere.
+   */
+  app.get<{ Params: { batchId: string } }>(
+    '/batches/:batchId/compose',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const batch = await db.query.recipeImportBatches.findFirst({
+        where: and(
+          eq(recipeImportBatches.id, request.params.batchId),
+          eq(recipeImportBatches.householdId, request.user!.householdId)
+        ),
+      });
+      if (!batch) throw Errors.notFound('Import batch', request.params.batchId);
+
+      const scans = await db
+        .select({
+          id: imageParseSessions.id,
+          label: imageParseSessions.label,
+          rawText: imageParseSessions.rawText,
+          status: imageParseSessions.status,
+          createdAt: imageParseSessions.createdAt,
+        })
+        .from(imageParseSessions)
+        .where(
+          and(
+            eq(imageParseSessions.batchId, batch.id),
+            eq(imageParseSessions.householdId, request.user!.householdId)
+          )
+        )
+        .orderBy(asc(imageParseSessions.createdAt));
+
+      const groups = new Map<string, { label: string; sessionIds: string[]; parts: string[] }>();
+      let unread = 0;
+
+      for (const scan of scans) {
+        // Cancelled pages were replaced (by a crop, say) and failed ones have
+        // nothing to contribute.
+        if (scan.status === 'cancelled') continue;
+        if (!scan.rawText?.trim()) {
+          unread++;
+          continue;
+        }
+
+        // An unnamed page is its own recipe: nothing said otherwise.
+        const key = scan.label?.trim() || `#${scan.id}`;
+        const group = groups.get(key);
+        if (group) {
+          group.sessionIds.push(scan.id);
+          group.parts.push(scan.rawText.trim());
+        } else {
+          groups.set(key, {
+            label: scan.label?.trim() || 'Untitled page',
+            sessionIds: [scan.id],
+            parts: [scan.rawText.trim()],
+          });
+        }
+      }
+
+      return {
+        success: true,
+        data: {
+          recipes: [...groups.values()].map((group) => ({
+            label: group.label,
+            sessionIds: group.sessionIds,
+            pageCount: group.parts.length,
+            text: group.parts.join('\n\n'),
+          })),
+          unread,
+        },
+      };
+    }
+  );
+
   app.patch<{ Params: { batchId: string } }>(
     '/batches/:batchId',
     { preHandler: [authMiddleware, requireMember()] },

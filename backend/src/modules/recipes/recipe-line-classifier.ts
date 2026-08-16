@@ -39,6 +39,29 @@
  * and keyword evidence is reasonable there — see `type-detector.ts`.)
  */
 
+/**
+ * Strip the decoration a line is wearing, for the purpose of judging it.
+ *
+ * Some readers hand back markdown rather than plain transcription — the
+ * vlm-llm sidecar writes "**Ingredients:**" and "- 2 eggs" — and judged
+ * literally none of it is recognisable: the heading is not a heading because
+ * of the asterisks, and the ingredient is not quantity-led because of the
+ * bullet. A whole recipe parsed to nothing at all.
+ *
+ * Only the judging uses this. What gets stored keeps its own cleaning, so
+ * nothing is silently rewritten on the way through.
+ */
+export function stripDecoration(line: string): string {
+  return line
+    .trim()
+    .replace(/^#{1,6}\s*/, '')        // markdown heading
+    .replace(/^[-*•]\s+/, '')          // list bullet
+    .replace(/^\*\*(.*?)\*\*$/, '$1') // **bold**
+    .replace(/^__(.*?)__$/, '$1')     // __bold__
+    .replace(/\s*:\s*$/, '')          // trailing label colon
+    .trim();
+}
+
 /** A line that IS a section heading, not a line that happens to say the word. */
 export const INGREDIENTS_HEADER = /^\s*ingredients?\b[^A-Za-z]*$/i;
 export const INSTRUCTIONS_HEADER = /^\s*(instructions?|directions?|method|steps?)\b[^A-Za-z]*$/i;
@@ -111,14 +134,16 @@ export function isIngredientShaped(line: string, seenIngredient = false): boolea
   // "1. Preheat the oven" opens with a digit but is a step, not two ovens.
   if (NUMBERED_STEP.test(line)) return false;
 
-  if (QUANTITY_LED.test(line)) return true;
+  // "- 2 eggs" is quantity-led once the bullet is out of the way.
+  const bare = stripDecoration(line);
+  if (QUANTITY_LED.test(line) || QUANTITY_LED.test(bare)) return true;
   if (BULLETED.test(line) && UNIT.test(line)) return true;
 
   // Bare tails once the quantities have started — "salt", "pepper",
   // "Salt and pepper to taste". Short, and not a sentence.
   if (seenIngredient) {
-    const words = line.trim().split(/\s+/).length;
-    if (words <= MAX_BARE_INGREDIENT_WORDS && !/[.!?]$/.test(line.trim())) return true;
+    const words = bare.split(/\s+/).length;
+    if (words <= MAX_BARE_INGREDIENT_WORDS && !/[.!?]$/.test(bare)) return true;
   }
 
   return false;

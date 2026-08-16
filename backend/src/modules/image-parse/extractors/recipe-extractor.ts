@@ -5,6 +5,7 @@ import {
   INSTRUCTIONS_HEADER,
   classifyRecipeLine,
   splitIntoSteps,
+  stripDecoration,
 } from '../../recipes/recipe-line-classifier.js';
 
 interface RawRecipeData {
@@ -176,13 +177,13 @@ export function parseRecipeFromText(rawText: string): ParsedRecipeContent {
     // treating it as a header moved the rest of the recipe into the wrong
     // list. Trailing punctuation and a parenthetical ("Ingredients (sauce):")
     // are still headers.
-    if (INGREDIENTS_HEADER.test(line)) {
+    if (INGREDIENTS_HEADER.test(stripDecoration(line))) {
       inIngredientsSection = true;
       inInstructionsSection = false;
       continue;
     }
 
-    if (INSTRUCTIONS_HEADER.test(line)) {
+    if (INSTRUCTIONS_HEADER.test(stripDecoration(line))) {
       inInstructionsSection = true;
       inIngredientsSection = false;
       continue;

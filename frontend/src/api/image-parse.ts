@@ -297,6 +297,13 @@ export const imageParseApi = {
   closeBatch: (batchId: string) =>
     apiPatch<{ batch: ImportBatch }>(`/image-parse/batches/${batchId}`, { status: 'closed' }),
 
+  /** The batch as recipes: pages sharing a name joined in capture order. */
+  composeBatch: (batchId: string) =>
+    apiGet<{
+      recipes: Array<{ label: string; sessionIds: string[]; pageCount: number; text: string }>;
+      unread: number;
+    }>(`/image-parse/batches/${batchId}/compose`),
+
   renameScan: (sessionId: string, label: string) =>
     apiPatch<{ scan: { id: string; label: string | null } }>(
       `/image-parse/${sessionId}/label`,
