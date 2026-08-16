@@ -66,6 +66,29 @@ export interface ItemPlan {
   needingReview: number;
 }
 
+/**
+ * Ceilings, both learned by running this at collection scale rather than
+ * guessed at.
+ *
+ * Comparing every new name with every other is quadratic, and it shows: about
+ * 140ms at 120 ingredients, but nine seconds at a thousand. A household
+ * importing a binder can genuinely reach a thousand distinct ingredients once
+ * the long tail is counted, so the comparison stops rather than making them
+ * wait — the names past the ceiling are still created, just without
+ * suggestions.
+ */
+const MAX_COMPARED = 400;
+
+/**
+ * A cluster is a question, and a question about eighty things is not one
+ * anybody can answer. Clusters are built by transitive closure, so a chain —
+ * "chicken breast" resembling "chicken breasts" resembling "chicken thigh" —
+ * can drag half a pantry into one group. Measured at scale this collapsed a
+ * thousand ingredients into two clusters covering all of them, which is worse
+ * than offering nothing.
+ */
+const MAX_CLUSTER = 8;
+
 export interface PlanInput {
   /** Incoming ingredient names paired with their canonical (CRF-tidied) form. */
   incoming: Array<{ name: string; canonicalName: string }>;
@@ -127,11 +150,13 @@ export function planIngredientItems(input: PlanInput): ItemPlan {
   }
 
   // And against each other — compared once per pair and recorded on both, so
-  // whichever one the user is looking at shows the same suggestion.
-  for (let i = 0; i < creating.length; i++) {
-    for (let j = i + 1; j < creating.length; j++) {
-      const a = creating[i];
-      const b = creating[j];
+  // whichever one the user is looking at shows the same suggestion. Bounded
+  // because this is quadratic; see MAX_COMPARED.
+  const compared = creating.slice(0, MAX_COMPARED);
+  for (let i = 0; i < compared.length; i++) {
+    for (let j = i + 1; j < compared.length; j++) {
+      const a = compared[i];
+      const b = compared[j];
       const { score, reason } = calculateSimilarityWithReason(a.canonicalName, b.canonicalName);
       if (score > suggestionThreshold) {
         a.similarPlanned.push({ canonicalName: b.canonicalName, score, reason });
@@ -139,13 +164,13 @@ export function planIngredientItems(input: PlanInput): ItemPlan {
       }
     }
   }
-  for (const plan of creating) {
+  for (const plan of compared) {
     plan.similarPlanned.sort((x, y) => y.score - x.score);
   }
 
   return {
     items: plans,
-    clusters: buildClusters(creating),
+    clusters: buildClusters(compared),
     needingReview: plans.filter(
       (p) => p.similarPlanned.length > 0 || p.similarExisting.length > 0
     ).length,
@@ -165,10 +190,11 @@ function buildClusters(creating: PlannedItem[]): PlannedCluster[] {
     const members: string[] = [start];
     let topScore = 0;
     const queue = [start];
-    while (queue.length > 0) {
+    while (queue.length > 0 && members.length < MAX_CLUSTER) {
       const name = queue.shift()!;
       for (const neighbour of byName.get(name)?.similarPlanned ?? []) {
         topScore = Math.max(topScore, neighbour.score);
+        if (members.length >= MAX_CLUSTER) break;
         if (unvisited.delete(neighbour.canonicalName)) {
           members.push(neighbour.canonicalName);
           queue.push(neighbour.canonicalName);

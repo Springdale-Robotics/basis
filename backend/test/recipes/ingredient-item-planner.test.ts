@@ -146,3 +146,43 @@ describe('planIngredientItems: clusters for review', () => {
     expect(sizes).toEqual([2, 2]);
   });
 });
+
+describe('planIngredientItems: at collection scale', () => {
+  /**
+   * Both ceilings here were learned by running the planner over a whole
+   * collection rather than reasoned about, and both surfaced problems that
+   * only exist at that size.
+   */
+  it('never asks a question about more things than anyone can answer', () => {
+    // Clusters are transitive, so a chain of near-identical names drags
+    // everything into one group. Measured at scale this collapsed a thousand
+    // ingredients into two clusters covering all of them — worse than
+    // offering nothing.
+    const chain = Array.from({ length: 60 }, (_, i) => `tail ingredient ${i}`);
+    const result = plan(chain);
+
+    for (const cluster of result.clusters) {
+      expect(cluster.canonicalNames.length).toBeLessThanOrEqual(8);
+    }
+  });
+
+  it('still finds the ordinary pairs', () => {
+    // The ceiling must not cost the everyday case.
+    const result = plan(['salt', 'table salt', 'flour', 'cinnamon', 'cinamon']);
+    expect(result.clusters).toHaveLength(2);
+  });
+
+  it('stays quick enough for a whole binder', () => {
+    // Comparing every name with every other is quadratic: about 140ms at 120
+    // ingredients, nine seconds at a thousand. Past the ceiling names are
+    // still created, just without suggestions.
+    const many = Array.from({ length: 1200 }, (_, i) => `ingredient number ${i}`);
+
+    const started = Date.now();
+    const result = plan(many);
+    const elapsed = Date.now() - started;
+
+    expect(result.items).toHaveLength(1200); // nothing is dropped
+    expect(elapsed).toBeLessThan(3000);
+  });
+});
