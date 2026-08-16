@@ -1,7 +1,11 @@
 import { db } from '../../config/database.js';
-import { recipes, recipeIngredients, recipeImportSessions, ingredientAliases, inventoryItems } from '../../db/schema/index.js';
-import { eq, and, inArray } from 'drizzle-orm';
-import type { ParsedRecipe, ParsedIngredient, IngredientMatch, RecipeInstruction, IngredientGroup } from '../../db/schema/recipes.js';
+import { recipes, recipeIngredients, recipeImportSessions, ingredientAliases, inventoryItems, imageParseSessions } from '../../db/schema/index.js';
+import { eq, and, inArray, sql } from 'drizzle-orm';
+import type { ParsedRecipe, ParsedIngredient, IngredientMatch, RecipeInstruction, IngredientGroup, RecipePhoto } from '../../db/schema/recipes.js';
+import { copyFile, mkdir } from 'node:fs/promises';
+import { join, extname } from 'node:path';
+import { config } from '../../config/index.js';
+import { logger } from '../../lib/logger.js';
 import { classifyRecipeLine, splitIntoSteps } from './recipe-line-classifier.js';
 import { matchIngredients } from './ingredient-matching.service.js';
 import { normalizeIngredientName } from './ingredient-matching.service.js';
@@ -462,7 +466,9 @@ export async function createImportSession(
   householdId: string,
   userId: string,
   sourceType: 'url' | 'image' | 'pdf' | 'text',
-  sourceData: string
+  sourceData: string,
+  /** Scans this text came from, already checked against the household. */
+  imageSessionIds: string[] = []
 ): Promise<string> {
   // Reviewing a batch of imported recipes is an evening's work that often
   // finishes the next day. At 24 hours a user who started after dinner and
@@ -480,10 +486,105 @@ export async function createImportSession(
       sourceData,
       status: 'parsing',
       expiresAt,
+      imageSessionIds: imageSessionIds.length > 0 ? imageSessionIds : null,
     })
     .returning();
 
   return session.id;
+}
+
+/**
+ * Give the recipe its own copy of the photographs it was read from.
+ *
+ * A photographed card is read for its text and then forgotten — the import
+ * creates the recipe through the text path, so nothing connected the two. The
+ * image survived only because image-parse retention deliberately never sweeps
+ * a scan in `review`, and for a handwritten card that file is the only copy in
+ * the account. Copying rather than pointing at the scan means retention can
+ * eventually collect harvested scans without taking recipe photographs too.
+ *
+ * Both sides of a card are kept, in the order they were captured: the back
+ * usually holds the method, and losing it would defeat the point.
+ *
+ * Best-effort throughout. A recipe that saved correctly is not undone because
+ * a file copy failed, and a scan is only marked as harvested once its
+ * photograph is actually somewhere else.
+ */
+export const RECIPE_PHOTO_DIR = join(config.STORAGE_PATH, 'recipe-photos');
+
+async function attachSourcePhotos(
+  recipeId: string,
+  householdId: string,
+  imageSessionIds: string[]
+): Promise<void> {
+  if (imageSessionIds.length === 0) return;
+
+  try {
+    const scans = await db
+      .select({
+        id: imageParseSessions.id,
+        path: imageParseSessions.originalImagePath,
+        mimeType: imageParseSessions.imageMimeType,
+      })
+      .from(imageParseSessions)
+      .where(
+        and(
+          eq(imageParseSessions.householdId, householdId),
+          inArray(imageParseSessions.id, imageSessionIds)
+        )
+      );
+
+    // Capture order is the page order; the query has none of its own.
+    const byId = new Map(scans.map((scan) => [scan.id, scan]));
+    const ordered = imageSessionIds.map((id) => byId.get(id)).filter((scan) => !!scan);
+
+    await mkdir(RECIPE_PHOTO_DIR, { recursive: true });
+
+    const photos: RecipePhoto[] = [];
+    const copied: string[] = [];
+    for (const [index, scan] of ordered.entries()) {
+      if (!scan.path) continue;
+      const extension = extname(scan.path) || '.jpg';
+      const destination = join(RECIPE_PHOTO_DIR, `${recipeId}-${index}${extension}`);
+      try {
+        await copyFile(scan.path, destination);
+        photos.push({ path: destination, mimeType: scan.mimeType ?? 'image/jpeg' });
+        copied.push(scan.id);
+      } catch (error) {
+        logger.warn(
+          { recipeId, scanId: scan.id, error: error instanceof Error ? error.message : error },
+          'Could not copy a source photo onto its recipe'
+        );
+      }
+    }
+
+    if (photos.length === 0) return;
+
+    await db
+      .update(recipes)
+      .set({
+        photoPaths: photos,
+        // Recipe cards and the detail page already render imageUrl, and the
+        // route below serves these bytes, so the recipe shows the card it came
+        // from without anything else changing. An imported web recipe keeps
+        // whatever picture it arrived with.
+        imageUrl: sql`COALESCE(${recipes.imageUrl}, ${`/api/v1/recipes/${recipeId}/photo/0`})`,
+      })
+      .where(eq(recipes.id, recipeId));
+
+    // Only now is the scan genuinely spare: its photograph exists elsewhere.
+    await db
+      .update(imageParseSessions)
+      .set({ consumedByRecipeId: recipeId })
+      .where(inArray(imageParseSessions.id, copied));
+
+    logger.info({ recipeId, count: photos.length }, 'Kept the photographs a recipe was read from');
+  } catch (error) {
+    logger.warn(
+      { recipeId, error: error instanceof Error ? error.message : error },
+      'Could not keep the source photographs; the recipe itself is unaffected'
+    );
+  }
 }
 
 /**
@@ -1159,6 +1260,10 @@ export async function confirmImportSession(
 
     return created;
   });
+
+  // Outside the transaction and deliberately best-effort: a recipe that saved
+  // correctly must not be undone because a file copy failed.
+  await attachSourcePhotos(recipe.id, householdId, session.imageSessionIds ?? []);
 
   return recipe.id;
 }

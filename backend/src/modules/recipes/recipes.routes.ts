@@ -12,10 +12,11 @@ import {
   shoppingList,
   households,
   files,
+  imageParseSessions,
 } from '../../db/schema/index.js';
 import { promises as fs } from 'fs';
 import { randomBytes } from 'crypto';
-import { eq, and, sql, gt, gte, lte, asc, isNotNull } from 'drizzle-orm';
+import { eq, and, sql, gt, gte, lte, asc, isNotNull, inArray } from 'drizzle-orm';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
 import { requireRecipesAccess, requireMealPlanAccess, requireInventoryAccess } from '../../middleware/permission.middleware.js';
 import { createRateLimiter } from '../../middleware/rate-limit.middleware.js';
@@ -1425,6 +1426,42 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
   );
 
   // Start import session
+  /**
+   * The photograph a recipe was read from.
+   *
+   * Same shape as the receipt-scan image route: household-scoped lookup,
+   * stored mime type, and a 404 rather than a stack trace when the file has
+   * gone. Recipes are rendered from `imageUrl`, which points here, so this is
+   * what makes a handwritten card visible on its own recipe.
+   */
+  app.get<{ Params: { id: string; index: string } }>(
+    '/:id/photo/:index',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request, reply) => {
+      const recipe = await db.query.recipes.findFirst({
+        where: and(
+          eq(recipes.id, request.params.id),
+          eq(recipes.householdId, request.user!.householdId)
+        ),
+      });
+      if (!recipe) throw Errors.notFound('Recipe', request.params.id);
+
+      const index = Number.parseInt(request.params.index, 10);
+      const photo = Number.isInteger(index) ? recipe.photoPaths?.[index] : undefined;
+      if (!photo) throw Errors.notFound('Recipe photo', request.params.id);
+
+      try {
+        const buffer = await fs.readFile(photo.path);
+        return reply
+          .header('Content-Type', photo.mimeType || 'image/jpeg')
+          .header('Cache-Control', 'private, max-age=3600')
+          .send(buffer);
+      } catch {
+        throw Errors.notFound('Recipe photo', request.params.id);
+      }
+    }
+  );
+
   app.post(
     '/import/start',
     // Does everything /import/parse-url does and more — an outbound fetch,
@@ -1436,15 +1473,39 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         sourceType: z.enum(['url', 'image', 'pdf', 'text']),
         sourceData: z.string(), // URL or base64 encoded content or text
         rawText: z.string().optional(), // For pre-extracted text (legacy)
+        /**
+         * Scans this text was read from, so the recipe can keep their
+         * photographs. Capped because a recipe spans a page or two, not ten.
+         */
+        imageSessionIds: z.array(z.string().uuid()).max(10).optional(),
       });
 
-      const { sourceType, sourceData, rawText } = schema.parse(request.body);
+      const { sourceType, sourceData, rawText, imageSessionIds } = schema.parse(request.body);
+
+      // Ids supplied by the caller, crossing a module boundary. Anything not
+      // belonging to this household is dropped here rather than trusted as far
+      // as the copy — the same shape as the defaultAreaId leak.
+      let ownedImageSessionIds: string[] = [];
+      if (imageSessionIds?.length) {
+        const owned = await db
+          .select({ id: imageParseSessions.id })
+          .from(imageParseSessions)
+          .where(
+            and(
+              eq(imageParseSessions.householdId, request.user!.householdId),
+              inArray(imageParseSessions.id, imageSessionIds)
+            )
+          );
+        const ownedIds = new Set(owned.map((row) => row.id));
+        ownedImageSessionIds = imageSessionIds.filter((id) => ownedIds.has(id));
+      }
 
       const sessionId = await createImportSession(
         request.user!.householdId,
         request.user!.id,
         sourceType,
-        sourceData
+        sourceData,
+        ownedImageSessionIds
       );
 
       // Parsing failures are ordinary — a page that isn't a recipe, a scanned

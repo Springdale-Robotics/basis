@@ -117,12 +117,22 @@ assume it.
       not tied to the import dialog, showing an in-flight batch and its progress.
 - [ ] **0.6 — Tell them when it is done.** Use the existing notification module
       so the answer to "is it finished?" doesn't require checking.
-- [ ] **0.7 — The photograph becomes part of the recipe.** On import, copy the
-      original into recipe storage and set `imageUrl` if empty. Small, and it
-      delivers something real on its own: the recipe *shows* the handwritten
-      card it came from. It is also the gate on any further retention — until
-      it exists, cleanup and preservation are the same lever, and every
-      photographed card must be kept forever to avoid losing it.
+- [x] **0.7 — The photograph becomes part of the recipe.** *Done 2026-08-16.*
+      Migration `0015`: `recipes.photo_paths`,
+      `recipe_import_sessions.image_session_ids`, and
+      `image_parse_sessions.consumed_by_recipe_id`. The import carries the scan
+      ids through, and after the recipe saves it takes its own copy of the
+      photographs — both sides of a card, in capture order — served from
+      `GET /recipes/:id/photo/:index` and pointed at by `imageUrl`, so the
+      recipe *shows* the card it came from.
+      Copies rather than references, which is what unblocks retention: a
+      harvested scan is now marked `consumed_by_recipe_id` and its photograph
+      exists elsewhere. Best-effort throughout — a recipe that saved correctly
+      is never undone by a failed file copy, and nothing is deleted here.
+      **Follow-up:** bulk image mode doesn't thread scan ids yet (only the
+      single/multi-photo dialog does), so a batch-imported photo is still
+      unattached. And `attachSourcePhotos` runs per recipe; retention can start
+      collecting consumed scans once that has been true for a while.
 
 **Phase 0 is done when:** photograph ten pages, close the browser entirely,
 reopen an hour later, and the parses are finished and waiting.
@@ -246,7 +256,7 @@ Applies to every phase; not optional.
 | Blur detection quality | Unproven. Needs a trial against real bad photos before it gates uploads. |
 | Review burden at 200 recipes | Unmeasured, and it decides whether the whole workflow is usable. Phase 5.1 exists to find out early — consider moving it earlier. |
 | GPU contention | A long import competes with everything else the box does. |
-| Storage growth | ~600MB per session. Abandoned scans now swept; everything behind a real recipe is kept forever until 0.7 attaches photos to recipes. |
+| Storage growth | ~600MB per session. Abandoned scans swept. 0.7 now copies photographs onto recipes, so consumed scans are collectable — but that sweep is not yet written, and the copy temporarily doubles the bytes. |
 | Scope | This is months of work. Phase 0 alone delivers most of the felt benefit and should ship on its own. |
 
 ## Progress

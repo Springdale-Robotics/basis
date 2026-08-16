@@ -112,6 +112,12 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
   const [sessionId, setSessionId] = useState<string | null>(null);
   // Image scan state
   const [imageParseSessionId, setImageParseSessionId] = useState<string | null>(null);
+  /**
+   * Every scan behind the text in the review box, in the order captured.
+   * The single id above is overwritten per photo, so the back of a card would
+   * otherwise be forgotten — and the back is where the method usually is.
+   */
+  const [imageParseSessionIds, setImageParseSessionIds] = useState<string[]>([]);
   const [imageProcessing, setImageProcessing] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [imageRawText, setImageRawText] = useState<string | null>(null);
@@ -190,6 +196,9 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
           sourceType: 'text',
           sourceData: imageRawText,
           rawText: imageRawText,
+          // So the recipe keeps the photographs it was read from — for a
+          // handwritten card they are the only copy.
+          imageSessionIds: imageParseSessionIds,
         });
       }
       if (sourceType === 'file' && previewRecipe) {
@@ -299,6 +308,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     setParseConfidence(undefined);
     setParseWarnings([]);
     setImageParseSessionId(null);
+    setImageParseSessionIds([]);
     setImageProcessing(false);
     setImageError(null);
     setImageRawText(null);
@@ -436,6 +446,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
   const ocrOnePhoto = useCallback(async (file: File) => {
     const { sessionId: imgSessionId } = await imageParseApi.uploadImage(file, 'recipe', undefined, 'accurate');
     setImageParseSessionId(imgSessionId);
+    setImageParseSessionIds(prev => [...prev, imgSessionId]);
 
     // Generous because a cold model load dominates: Ollama evicts after five
     // idle minutes and reloading a 5.5GB vision model off disk takes about
@@ -486,6 +497,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
     setImageProcessing(true);
     setImageError(null);
     setImageRawText(null);
+    setImageParseSessionIds([]);
     setImagePageProgress(files.length > 1 ? { done: 0, total: files.length } : null);
 
     try {
