@@ -361,7 +361,7 @@ export const recipesApi = {
    * unreadable URL in a paste of forty used to lose every entry after it,
    * along with any record of which ones had worked.
    */
-  startBatchImport: (entries: Array<{ sourceType: 'url' | 'text'; sourceData: string; rawText?: string }>) =>
+  startBatchImport: (entries: Array<{ sourceType: 'url' | 'text'; sourceData: string; rawText?: string; imageSessionIds?: string[] }>) =>
     apiPost<{
       results: Array<{ sessionId: string | null; status: 'pending_review' | 'failed'; error?: string }>;
       sessionIds: string[];

@@ -163,6 +163,9 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
         sourceType: 'text' as const,
         sourceData: item.ocrText || '',
         rawText: item.ocrText || '',
+        // So each recipe keeps the photograph it was read from. Absent for
+        // pasted text and URLs, which have no photograph.
+        imageSessionIds: item.imageSessionId ? [item.imageSessionId] : undefined,
       }));
       return recipesApi.startBatchImport(entries);
     },

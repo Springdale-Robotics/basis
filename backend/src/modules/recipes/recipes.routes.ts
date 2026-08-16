@@ -1718,10 +1718,29 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
           sourceType: z.enum(['url', 'text']),
           sourceData: z.string(),
           rawText: z.string().optional(),
+          /** Scans this entry was read from, so its recipe keeps them. */
+          imageSessionIds: z.array(z.string().uuid()).max(10).optional(),
         })).min(1).max(25),
       });
 
       const { entries } = schema.parse(request.body);
+
+      // Caller-supplied ids crossing a module boundary, so they are checked
+      // against the household once for the whole batch rather than trusted.
+      const claimed = [...new Set(entries.flatMap((entry) => entry.imageSessionIds ?? []))];
+      let ownedScanIds = new Set<string>();
+      if (claimed.length > 0) {
+        const owned = await db
+          .select({ id: imageParseSessions.id })
+          .from(imageParseSessions)
+          .where(
+            and(
+              eq(imageParseSessions.householdId, request.user!.householdId),
+              inArray(imageParseSessions.id, claimed)
+            )
+          );
+        ownedScanIds = new Set(owned.map((row) => row.id));
+      }
 
       // One bad URL in a paste of forty used to throw out of the loop, losing
       // both the entries after it and any record of which ones had worked.
@@ -1738,7 +1757,8 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
             request.user!.householdId,
             request.user!.id,
             entry.sourceType,
-            entry.sourceData
+            entry.sourceData,
+            (entry.imageSessionIds ?? []).filter((id) => ownedScanIds.has(id))
           );
 
           if (entry.sourceType === 'url') {
