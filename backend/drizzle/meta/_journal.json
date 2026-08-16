@@ -113,6 +113,13 @@
       "when": 1786672800000,
       "tag": "0015_recipe_source_photos",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1786759200000,
+      "tag": "0016_recipe_import_batches",
+      "breakpoints": true
     }
   ]
 }

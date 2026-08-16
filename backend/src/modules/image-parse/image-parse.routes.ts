@@ -2,6 +2,10 @@ import { FastifyInstance } from 'fastify';
 import { authMiddleware, requireMember } from '../../middleware/auth.middleware.js';
 import { Errors } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
+import { z } from 'zod';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { db } from '../../config/database.js';
+import { imageParseSessions, recipeImportBatches } from '../../db/schema/index.js';
 import {
   createSession,
   processUploadedImage,
@@ -28,6 +32,140 @@ import type {
 } from '../../db/schema/image-parse.js';
 
 export async function imageParseRoutes(app: FastifyInstance): Promise<void> {
+  /**
+   * Photographing sessions you can walk away from.
+   *
+   * Parsing has always run in a worker, so closing the browser never stopped
+   * it — but nothing recorded that a group of scans belonged together, so
+   * there was nothing to come back to. These routes are that thread:
+   * photograph a binder, close the laptop, find the work again from a phone.
+   */
+  app.post(
+    '/batches',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const { name } = z
+        .object({ name: z.string().max(200).optional() })
+        .parse(request.body ?? {});
+
+      const [batch] = await db
+        .insert(recipeImportBatches)
+        .values({
+          householdId: request.user!.householdId,
+          createdBy: request.user!.id,
+          name: name?.trim() || null,
+        })
+        .returning();
+
+      return { success: true, data: { batch } };
+    }
+  );
+
+  /**
+   * Batches with their progress counted from the scans themselves, so the
+   * numbers cannot drift from what actually happened.
+   */
+  app.get<{ Querystring: { status?: string } }>(
+    '/batches',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const status = request.query.status === 'closed' ? 'closed' : 'open';
+
+      const batches = await db
+        .select({
+          id: recipeImportBatches.id,
+          name: recipeImportBatches.name,
+          status: recipeImportBatches.status,
+          createdAt: recipeImportBatches.createdAt,
+          updatedAt: recipeImportBatches.updatedAt,
+          total: sql<number>`count(${imageParseSessions.id})::int`,
+          // 'review' is where a scan waits to be used, so it is the count that
+          // answers "is it finished?".
+          ready: sql<number>`count(*) filter (where ${imageParseSessions.status} = 'review')::int`,
+          working: sql<number>`count(*) filter (where ${imageParseSessions.status} in ('uploading', 'processing'))::int`,
+          failed: sql<number>`count(*) filter (where ${imageParseSessions.status} = 'failed')::int`,
+        })
+        .from(recipeImportBatches)
+        .leftJoin(imageParseSessions, eq(imageParseSessions.batchId, recipeImportBatches.id))
+        .where(
+          and(
+            eq(recipeImportBatches.householdId, request.user!.householdId),
+            eq(recipeImportBatches.status, status)
+          )
+        )
+        .groupBy(recipeImportBatches.id)
+        .orderBy(desc(recipeImportBatches.updatedAt));
+
+      return { success: true, data: { batches } };
+    }
+  );
+
+  app.get<{ Params: { batchId: string } }>(
+    '/batches/:batchId',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const batch = await db.query.recipeImportBatches.findFirst({
+        where: and(
+          eq(recipeImportBatches.id, request.params.batchId),
+          eq(recipeImportBatches.householdId, request.user!.householdId)
+        ),
+      });
+      if (!batch) throw Errors.notFound('Import batch', request.params.batchId);
+
+      const scans = await db
+        .select({
+          id: imageParseSessions.id,
+          status: imageParseSessions.status,
+          processingStage: imageParseSessions.processingStage,
+          detectedType: imageParseSessions.detectedType,
+          parseWarnings: imageParseSessions.parseWarnings,
+          consumedByRecipeId: imageParseSessions.consumedByRecipeId,
+          createdAt: imageParseSessions.createdAt,
+        })
+        .from(imageParseSessions)
+        .where(
+          and(
+            eq(imageParseSessions.batchId, batch.id),
+            eq(imageParseSessions.householdId, request.user!.householdId)
+          )
+        )
+        .orderBy(asc(imageParseSessions.createdAt));
+
+      return { success: true, data: { batch, scans } };
+    }
+  );
+
+  app.patch<{ Params: { batchId: string } }>(
+    '/batches/:batchId',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request) => {
+      const { name, status } = z
+        .object({
+          name: z.string().max(200).optional(),
+          status: z.enum(['open', 'closed']).optional(),
+        })
+        .parse(request.body ?? {});
+
+      const [updated] = await db
+        .update(recipeImportBatches)
+        .set({
+          ...(name !== undefined ? { name: name.trim() || null } : {}),
+          ...(status !== undefined ? { status } : {}),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(recipeImportBatches.id, request.params.batchId),
+            eq(recipeImportBatches.householdId, request.user!.householdId)
+          )
+        )
+        .returning();
+
+      if (!updated) throw Errors.notFound('Import batch', request.params.batchId);
+      return { success: true, data: { batch: updated } };
+    }
+  );
+
   // Get AI service status
   app.get(
     '/status',
@@ -74,6 +212,22 @@ export async function imageParseRoutes(app: FastifyInstance): Promise<void> {
         const targetType = fields?.targetType?.value as ParsedContentType | undefined;
         const extractionMode = (fields?.extractionMode?.value || 'accurate') as ExtractionMode;
 
+        // A batch id arrives from the client, so it is checked before a scan
+        // is filed under it — otherwise a photograph could be dropped into
+        // another household's session.
+        const requestedBatchId = fields?.batchId?.value;
+        let batchId: string | undefined;
+        if (requestedBatchId) {
+          const batch = await db.query.recipeImportBatches.findFirst({
+            where: and(
+              eq(recipeImportBatches.id, requestedBatchId),
+              eq(recipeImportBatches.householdId, request.user!.householdId)
+            ),
+          });
+          if (!batch) throw Errors.validation('That import batch does not exist.');
+          batchId = batch.id;
+        }
+
         logger.info({ targetType, extractionMode }, 'Creating session');
 
         // Create session
@@ -81,7 +235,8 @@ export async function imageParseRoutes(app: FastifyInstance): Promise<void> {
           request.user!.householdId,
           request.user!.id,
           targetType,
-          extractionMode
+          extractionMode,
+          batchId
         );
 
         logger.info({ sessionId }, 'Session created, processing image');

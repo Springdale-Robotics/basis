@@ -1,0 +1,184 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { eq } from 'drizzle-orm';
+import {
+  setupRouteTest,
+  json,
+  type RouteTestContext,
+  type TestUser,
+} from '../helpers/route-harness.js';
+import { db } from '../../src/config/database.js';
+import { imageParseSessions, recipeImportBatches } from '../../src/db/schema/index.js';
+
+/**
+ * A photographing session you can walk away from.
+ *
+ * Parsing has always run in a worker, so closing the browser never stopped it
+ * — but nothing recorded that a group of scans belonged together, so there was
+ * nothing to come back to. Progress is counted from the scans rather than
+ * stored on the batch, because two records of the same thing drift.
+ */
+
+let ctx: RouteTestContext;
+let user: TestUser;
+let householdId: string;
+
+let neighbour: TestUser;
+let neighbourHouseholdId: string;
+
+beforeAll(async () => {
+  ctx = await setupRouteTest();
+  householdId = await ctx.createHousehold('Batches');
+  user = await ctx.createUser(householdId, 'admin');
+
+  neighbourHouseholdId = await ctx.createHousehold('Next Door');
+  neighbour = await ctx.createUser(neighbourHouseholdId, 'admin');
+}, 60000);
+
+afterAll(async () => {
+  await ctx?.close();
+});
+
+const createBatch = async (as: TestUser, name?: string) => {
+  const res = await as.fetch('/api/v1/image-parse/batches', {
+    method: 'POST',
+    body: JSON.stringify(name ? { name } : {}),
+  });
+  const { data } = await json(res);
+  return data.batch;
+};
+
+/** A scan in a given state, filed under a batch. */
+async function seedScan(
+  batchId: string | null,
+  status: 'uploading' | 'processing' | 'review' | 'failed',
+  owner = householdId,
+  ownerUser = user
+) {
+  const [row] = await db
+    .insert(imageParseSessions)
+    .values({ householdId: owner, userId: ownerUser.id, status, batchId })
+    .returning({ id: imageParseSessions.id });
+  return row.id;
+}
+
+describe('creating and finding a batch', () => {
+  it('starts open, and can be named', async () => {
+    const batch = await createBatch(user, 'Grandma binder');
+    expect(batch.name).toBe('Grandma binder');
+    expect(batch.status).toBe('open');
+  });
+
+  it('is findable again after the client has gone', async () => {
+    const batch = await createBatch(user, 'Left open');
+
+    // Nothing is held in the page — this is a fresh request, as it would be
+    // from a phone the next morning.
+    const res = await user.fetch('/api/v1/image-parse/batches');
+    const { data } = await json(res);
+
+    expect(data.batches.map((b: { id: string }) => b.id)).toContain(batch.id);
+  });
+
+  it('counts progress from the scans themselves', async () => {
+    const batch = await createBatch(user, 'Counting');
+    await seedScan(batch.id, 'review');
+    await seedScan(batch.id, 'review');
+    await seedScan(batch.id, 'processing');
+    await seedScan(batch.id, 'failed');
+
+    const res = await user.fetch('/api/v1/image-parse/batches');
+    const { data } = await json(res);
+    const found = data.batches.find((b: { id: string }) => b.id === batch.id);
+
+    expect(found).toMatchObject({ total: 4, ready: 2, working: 1, failed: 1 });
+  });
+
+  it('reports an empty batch as empty rather than omitting it', async () => {
+    // A binder photographed but not yet uploaded still has to be findable.
+    const batch = await createBatch(user, 'Nothing yet');
+
+    const res = await user.fetch('/api/v1/image-parse/batches');
+    const { data } = await json(res);
+    const found = data.batches.find((b: { id: string }) => b.id === batch.id);
+
+    expect(found).toMatchObject({ total: 0, ready: 0 });
+  });
+
+  it('lists its scans in the order they were captured', async () => {
+    const batch = await createBatch(user, 'Ordered');
+    const first = await seedScan(batch.id, 'review');
+    const second = await seedScan(batch.id, 'review');
+
+    const res = await user.fetch(`/api/v1/image-parse/batches/${batch.id}`);
+    const { data } = await json(res);
+
+    expect(data.scans.map((s: { id: string }) => s.id)).toEqual([first, second]);
+  });
+});
+
+describe('closing a batch', () => {
+  it('takes it out of the open list without deleting anything', async () => {
+    const batch = await createBatch(user, 'Finished');
+    const scanId = await seedScan(batch.id, 'review');
+
+    await user.fetch(`/api/v1/image-parse/batches/${batch.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'closed' }),
+    });
+
+    const open = await json(await user.fetch('/api/v1/image-parse/batches'));
+    expect(open.data.batches.map((b: { id: string }) => b.id)).not.toContain(batch.id);
+
+    const closed = await json(await user.fetch('/api/v1/image-parse/batches?status=closed'));
+    expect(closed.data.batches.map((b: { id: string }) => b.id)).toContain(batch.id);
+
+    // The photographs are not collateral.
+    const scan = await db.query.imageParseSessions.findFirst({
+      where: eq(imageParseSessions.id, scanId),
+    });
+    expect(scan).toBeTruthy();
+  });
+});
+
+describe('tenancy', () => {
+  it("does not list another household's batches", async () => {
+    const theirs = await createBatch(neighbour, 'Not yours');
+
+    const res = await user.fetch('/api/v1/image-parse/batches');
+    const { data } = await json(res);
+
+    expect(data.batches.map((b: { id: string }) => b.id)).not.toContain(theirs.id);
+  });
+
+  it("will not open another household's batch", async () => {
+    const theirs = await createBatch(neighbour, 'Private');
+    const res = await user.fetch(`/api/v1/image-parse/batches/${theirs.id}`);
+    expect(res.status).toBe(404);
+  });
+
+  it("will not close another household's batch", async () => {
+    const theirs = await createBatch(neighbour, 'Untouchable');
+
+    const res = await user.fetch(`/api/v1/image-parse/batches/${theirs.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'closed' }),
+    });
+    expect(res.status).toBe(404);
+
+    const still = await db.query.recipeImportBatches.findFirst({
+      where: eq(recipeImportBatches.id, theirs.id),
+    });
+    expect(still?.status).toBe('open');
+  });
+
+  it('refuses to file a scan under a batch that is not the household\'s', async () => {
+    const theirs = await createBatch(neighbour, 'Foreign batch');
+
+    const form = new FormData();
+    form.append('file', new Blob([Buffer.from('nope')], { type: 'image/jpeg' }), 'x.jpg');
+    form.append('batchId', theirs.id);
+
+    const res = await user.fetch('/api/v1/image-parse/upload', { method: 'POST', body: form });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+});

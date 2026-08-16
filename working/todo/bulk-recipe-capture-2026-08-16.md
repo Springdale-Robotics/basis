@@ -91,12 +91,15 @@ from a phone. Everything else hangs off it.
 The unblock. Mostly wiring work that already runs to a UI that does not yet
 assume it.
 
-- [ ] **0.1 — Batch entity.** Migration `0014`: `recipe_import_batches`
-      (household, created_by, name, status, counts, timestamps) and a
-      `batch_id` on `image_parse_sessions`.
-      *Hand-author the migration + journal + snapshot — `drizzle-kit generate`
-      is broken here. Household-scoped, so it needs an RLS policy following
-      `drizzle/0008_rls_all_tables.sql` and a check in `backend/test/rls/`.*
+- [x] **0.1 — Batch entity.** *Done 2026-08-16, migration `0016`.*
+      `recipe_import_batches` (household, created_by, name, open/closed,
+      timestamps) with its RLS policy, and a nullable `batch_id` on
+      `image_parse_sessions` so nothing existing had to change.
+      Routes: create, list-with-progress, detail, close. A scan can name its
+      batch at upload, checked against the household first.
+      **Counts are derived from the scans, never stored on the batch** — two
+      records of the same thing drift, and a stale progress number is worse
+      than no progress number.
 - [x] **0.2 — Retention depends on what a session is, not how old it is.**
       *Done 2026-08-16.* The fake `expires_at` is no longer written (migration
       `0014` makes it nullable) and `IMAGE_PARSE_SESSION_TTL_HOURS` is gone.
@@ -107,9 +110,9 @@ assume it.
       image is the only copy. Revisit only after 0.7.
       Batch-awareness hook goes here once `batch_id` exists: an open batch must
       also never be swept, whatever its sessions' statuses say.
-- [ ] **0.3 — Batch status endpoint.** One call returns counts by state for the
-      batch. Replaces per-session polling.
-      *Tenancy test required (new route).*
+- [x] **0.3 — Batch status endpoint.** *Done 2026-08-16 as part of 0.1.*
+      `GET /image-parse/batches` returns every open batch with total / ready /
+      working / failed counted from the scans. Replaces per-session polling.
 - [ ] **0.4 — Batch survives the client.** Reload, close the tab, open on a
       phone — the batch is found and resumed. Remove the assumption that the
       dialog owns the lifecycle (`useBatchImageProcessing`).
@@ -263,7 +266,7 @@ Applies to every phase; not optional.
 
 | Phase | Status | Notes |
 | --- | --- | --- |
-| 0 — Walking away | In progress | 0.2 done. Highest value, lowest cost. |
+| 0 — Walking away | In progress | 0.1, 0.2, 0.3, 0.7 done. Remaining: 0.4 resume in the UI, 0.5 ambient progress, 0.6 notify. |
 | 1 — Capture | Not started | 1.2 quality check and 1.5 crop matter most. |
 | 2 — Background parsing | Not started | Mostly already true; needs surfacing. |
 | 3 — Prioritised review | Not started | |
