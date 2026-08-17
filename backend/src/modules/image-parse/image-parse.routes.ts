@@ -137,7 +137,40 @@ export async function imageParseRoutes(app: FastifyInstance): Promise<void> {
   );
 
   /**
-   * Rename a page. Grouping later is the same operation: two pages of one
+   * The photograph itself.
+   *
+   * Needed to come back to a photographing session: without it, pages left
+   * from earlier are anonymous tiles, and naming or grouping them means
+   * guessing which is which. Same shape as the receipt-scan image route.
+   */
+  app.get<{ Params: { sessionId: string } }>(
+    '/:sessionId/image',
+    { preHandler: [authMiddleware, requireMember()] },
+    async (request, reply) => {
+      const scan = await db.query.imageParseSessions.findFirst({
+        where: and(
+          eq(imageParseSessions.id, request.params.sessionId),
+          eq(imageParseSessions.householdId, request.user!.householdId)
+        ),
+      });
+      if (!scan?.originalImagePath) throw Errors.notFound('Scan image', request.params.sessionId);
+
+      try {
+        const { readFile } = await import('node:fs/promises');
+        const buffer = await readFile(scan.originalImagePath);
+        return reply
+          .header('Content-Type', scan.imageMimeType ?? 'image/jpeg')
+          .header('Cache-Control', 'private, max-age=3600')
+          .send(buffer);
+      } catch {
+        // Swept, or never stored.
+        throw Errors.notFound('Scan image', request.params.sessionId);
+      }
+    }
+  );
+
+  /**
+   * Rename a page. Grouping later is the same operation: two scans of one
    * recipe are two scans given the same name.
    */
   app.patch<{ Params: { sessionId: string } }>(

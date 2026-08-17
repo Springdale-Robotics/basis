@@ -20,7 +20,17 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+    // The whole address, not just the path. Recording only the pathname threw
+    // away the query string, so any link carrying one — a photographing
+    // session to resume, a calendar tab, a token — arrived stripped of the
+    // thing that made it a link to somewhere in particular.
+    return (
+      <Navigate
+        to="/login"
+        state={{ from: `${location.pathname}${location.search}${location.hash}` }}
+        replace
+      />
+    );
   }
 
   return <>{children}</>;

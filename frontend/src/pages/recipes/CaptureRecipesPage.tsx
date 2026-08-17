@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Camera, Check, Loader2, AlertCircle, X, RotateCw, ImageUp, Crop, Link2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { imageParseApi, type BatchScan } from '@/api/image-parse';
+import { imageParseApi, type BatchScan, type ImportBatchSummary } from '@/api/image-parse';
 import { CropOverlay, type CropRect } from '@/components/recipes/CropOverlay';
 import { BulkImportRecipeDialog } from './BulkImportRecipeDialog';
 import { measureFrame, judgeFrame, type PhotoVerdict } from '@/lib/photo-quality';
@@ -47,13 +47,16 @@ const POLL_MS = 4000;
 
 export function CaptureRecipesPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [batchId, setBatchId] = useState<string | null>(null);
+  const [batchId, setBatchId] = useState<string | null>(searchParams.get('batch'));
+  /** An unfinished session from earlier, offered rather than assumed. */
+  const [resumable, setResumable] = useState<ImportBatchSummary | null>(null);
   const [shots, setShots] = useState<Shot[]>([]);
   const [rejected, setRejected] = useState<{ verdict: PhotoVerdict; blob: Blob; thumbnail: string } | null>(null);
   /**
@@ -123,6 +126,61 @@ export function CaptureRecipesPage() {
     );
     setBatchId(batch.id);
     return batch.id;
+  }, [batchId]);
+
+  /**
+   * An unfinished session from earlier — offered, never assumed.
+   *
+   * Silently continuing yesterday's batch would be worse than starting a new
+   * one: a binder is finished at some point, and quietly appending the next
+   * one to it is not recoverable from.
+   */
+  useEffect(() => {
+    if (batchId) return;
+    let stopped = false;
+    void (async () => {
+      try {
+        const { batches } = await imageParseApi.listBatches('open');
+        const previous = batches.find((candidate) => candidate.total > 0);
+        if (!stopped && previous) setResumable(previous);
+      } catch {
+        // Starting fresh is a perfectly good outcome.
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+  }, [batchId]);
+
+  /** Pages already in a resumed session, so they can be named and grouped. */
+  useEffect(() => {
+    if (!batchId || shots.length > 0) return;
+    let stopped = false;
+    void (async () => {
+      try {
+        const { scans } = await imageParseApi.getBatch(batchId);
+        if (stopped) return;
+        setShots(
+          scans
+            .filter((scan) => scan.status !== 'cancelled')
+            .map((scan, index) => ({
+              key: scan.id,
+              label: scan.label ?? `Recipe ${index + 1}`,
+              // Served from the box: the frames themselves are long gone from
+              // whatever device took them.
+              thumbnail: `/api/v1/image-parse/${scan.id}/image`,
+              sessionId: scan.id,
+              state: 'sent' as const,
+            }))
+        );
+      } catch {
+        // An unreadable session is not worth blocking a new one.
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [batchId]);
 
   // Progress comes from the server, so it survives this page being closed.
@@ -387,6 +445,26 @@ export function CaptureRecipesPage() {
           </div>
         )}
       </div>
+
+      {resumable && !batchId && (
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription className="space-y-2">
+            <p>
+              You have {resumable.total} page{resumable.total === 1 ? '' : 's'} from earlier
+              {resumable.ready > 0 && `, ${resumable.ready} already read`}.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => setBatchId(resumable.id)}>
+                Carry on with those
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setResumable(null)}>
+                Start a new batch
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
 
       {cameraError && (
         <Alert>
