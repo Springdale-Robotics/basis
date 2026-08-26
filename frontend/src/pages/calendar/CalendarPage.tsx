@@ -38,6 +38,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn, hoverAction } from '@/lib/utils';
+import { prefersExpandedSidebar } from '@/lib/layout';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -62,7 +63,9 @@ export function CalendarPage() {
   const [calendarFormTab, setCalendarFormTab] = useState<'general' | 'sharing' | 'public'>('general');
   const [selectedCalendar, setSelectedCalendar] = useState<CalendarType | null>(null);
   const [visibleCalendars, setVisibleCalendars] = useState<string[]>([]);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Same rule as the nav sidebar: on a tablet the calendar list costs more
+  // screen than it earns, and the month grid is what the page is for.
+  const [sidebarOpen, setSidebarOpen] = useState(() => prefersExpandedSidebar());
   const [defaultEventDate, setDefaultEventDate] = useState<Date | undefined>(undefined);
   const [editRecurringDialogOpen, setEditRecurringDialogOpen] = useState(false);
   const [deleteRecurringDialogOpen, setDeleteRecurringDialogOpen] = useState(false);

@@ -99,7 +99,10 @@ export function WeekView({
   };
 
   return (
-    <div className="overflow-hidden rounded-xl bg-card border border-border">
+    // A 64px time gutter plus seven day columns needs room; scroll rather than
+    // squeeze when the viewport can't give it (see MonthView for the same guard).
+    <div className="overflow-x-auto">
+      <div className="min-w-[640px] overflow-hidden rounded-xl bg-card border border-border">
       {/* Day headers */}
       <div className="grid grid-cols-[var(--time-col)_repeat(7,1fr)] gap-px bg-border" style={{ ['--time-col' as string]: `${TIME_COL_WIDTH}px` }}>
         <div className="bg-card p-3" />
@@ -306,6 +309,7 @@ export function WeekView({
             );
           })}
         </div>
+      </div>
       </div>
     </div>
   );
