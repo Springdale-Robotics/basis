@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { prefersExpandedSidebar } from '@/lib/layout';
 
 interface UIState {
   sidebarOpen: boolean;
@@ -16,7 +17,10 @@ interface UIState {
 
 export const useUIStore = create<UIState>((set) => ({
   sidebarOpen: true,
-  sidebarCollapsed: false,
+  // Collapsed to the icon rail on anything narrower than a roomy desktop —
+  // an expanded 256px sidebar is a big bite out of a tablet viewport. Read
+  // once at store creation so a later resize never overrides a manual toggle.
+  sidebarCollapsed: !prefersExpandedSidebar(),
   mobileNavOpen: false,
   commandPaletteOpen: false,
 

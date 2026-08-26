@@ -185,7 +185,11 @@ export function MonthView({
   };
 
   return (
-    <div>
+    // Seven columns need real width to stay readable — the day-number circle
+    // alone is 32px. Below that, scroll the grid rather than crushing it: on a
+    // 768px tablet with both sidebars open the columns fall to ~23px.
+    <div className="overflow-x-auto">
+      <div className="min-w-[640px]">
       {/* Day-of-week headers */}
       <div className="mb-2 grid grid-cols-7 gap-2">
         {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
@@ -361,6 +365,7 @@ export function MonthView({
             </div>
           );
         })}
+      </div>
       </div>
     </div>
   );
