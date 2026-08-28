@@ -181,19 +181,34 @@ Relay logic, in a browser, against the real pages:
 - The box address appears **only** in the fragment and in the relay origin's
   `localStorage` — it is absent from the URL sent to Google. This is the security
   property the whole design exists for.
-- After the fix round: the authorization code is scrubbed from the URL and never
-  retained in history (`history.length` 13 → 14 across a full round trip; an
-  `assign` would have left 15).
+- The authorization code is scrubbed from the URL and never retained in history
+  (`history.length` 13 → 14 across a full round trip; an `assign` would have
+  left 15).
+- **The stored return address is keyed by the OAuth `state`.** With a hostile
+  entry planted at `basis.return.attackerstate`, a callback arriving as
+  `?code=…&state=victimstate456` did NOT read it: the page forwarded nowhere,
+  showed "This browser did not start the connection", and scrubbed the code.
+  The legitimate path still works — the entry is written under the state taken
+  from the auth URL, read under the state Google echoes back, and removed after
+  use. This is the poisoning attack a review raised, defeated.
 
-Caddy, running for real:
+Caddy, running for real (with the final header block and the extracted scripts):
 
 ```
 /oauth/google        → 200  <title>Returning to Basis</title>
 /oauth/google/start  → 200  <title>Connecting to Google — Basis</title>
 /lib.js              → 200
-/oauth/google/lib.js → 404      ← exactly why the absolute import was required
+/start.js            → 200
+/callback.js         → 200
+/oauth/google/lib.js → 404      ← exactly why the absolute imports were required
 /oauth/google?code=… → 200, 0 redirects (internal rewrite, query survives)
+
+Cache-Control: no-cache
+Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'unsafe-inline'
 ```
+
+The CSP does not block the extracted modules — the callback page ran its logic
+and produced its message, which is only reachable if the module loaded.
 
 Frontend ↔ relay seam, using both real implementations rather than a
 reimplementation — the relay's own `parseStartFragment` and `relayHandoffUrl`
@@ -201,4 +216,4 @@ copied byte-for-byte out of `calendars.ts`: the Google auth URL survives the
 encode/decode round trip **byte-for-byte**. That is the bug that would have
 passed every unit test on both sides and still broken every real connect.
 
-Tests: backend `test/calendars` + `test/caldav` 70/70, `cloud/server` 77/77.
+Tests: full backend suite 691 passed / 35 skipped, `cloud/server` 77/77.
