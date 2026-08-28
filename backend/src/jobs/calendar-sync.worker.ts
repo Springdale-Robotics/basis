@@ -2,7 +2,7 @@ import { Job } from 'bullmq';
 import { db } from '../config/database.js';
 import { calendars } from '../db/schema/index.js';
 import { eq, and, isNotNull } from 'drizzle-orm';
-import { syncCalendarFromGoogle } from '../modules/calendars/google-sync.service.js';
+import { syncCalendarFromGoogle, describeGoogleSyncError } from '../modules/calendars/google-sync.service.js';
 import { syncCalendarFromOutlook } from '../modules/calendars/outlook-sync.service.js';
 import { emitHouseholdEvent } from '../websocket/events.js';
 import { logger } from '../lib/logger.js';
@@ -107,7 +107,15 @@ export async function processCalendarSyncJob(job: Job<CalendarSyncJobData>): Pro
 
         calendarLog.info(syncResult, 'Calendar sync completed');
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        // Google-specific advice (the "Testing" consent screen expiry) must
+        // not leak onto an Outlook failure, which has its own unrelated
+        // invalid_grant-shaped errors.
+        const errorMessage =
+          calendar.syncProvider === 'google'
+            ? describeGoogleSyncError(error)
+            : error instanceof Error
+              ? error.message
+              : 'Unknown error';
         calendarLog.error({ error }, 'Failed to sync calendar');
 
         results.push({
