@@ -8,6 +8,7 @@ export const RESERVED_SUBDOMAINS: ReadonlySet<string> = new Set([
   'status', 'docs', 'doc', 'blog', 'help', 'support', 'contact', 'billing',
   'stripe', 'pay', 'payments', 'checkout', 'dashboard', 'account', 'accounts',
   'login', 'signin', 'signup', 'register', 'auth', 'sso', 'oauth', 'static',
+  'connect', 'connects', 'oauth-relay',
   'cdn', 'assets', 'img', 'images', 'media', 'files', 'download', 'downloads',
   'ns', 'ns1', 'ns2', 'dns', 'dev', 'staging', 'stage', 'test', 'testing',
   'demo', 'beta', 'internal', 'intranet', 'git', 'gitlab', 'github', 'basis',

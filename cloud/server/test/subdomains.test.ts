@@ -30,6 +30,13 @@ describe('validateSubdomainFormat', () => {
     }
   );
 
+  it.each(['connect', 'connects', 'oauth-relay'])(
+    'rejects %s — reserved for the OAuth relay host',
+    (name) => {
+      expect(validateSubdomainFormat(name)).toBe('reserved');
+    }
+  );
+
   it('rejects punycode prefixes', () => {
     expect(validateSubdomainFormat('xn--mnchen-3ya')).toBe('punycode');
   });
