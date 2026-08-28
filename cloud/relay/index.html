@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Returning to Basis</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 32rem;
+        margin: 4rem auto;
+        padding: 0 1.5rem;
+        line-height: 1.6;
+        color: #1f2933;
+        background: #fff;
+      }
+      @media (prefers-color-scheme: dark) {
+        body { color: #e4e7eb; background: #16181d; }
+      }
+      .error { color: #b4232c; }
+      @media (prefers-color-scheme: dark) { .error { color: #ff8a8a; } }
+    </style>
+  </head>
+  <body>
+    <h1>Returning to Basis</h1>
+    <p id="status">One moment…</p>
+    <script type="module">
+      // Absolute — see the note in start.html. Served at /oauth/google, a
+      // relative specifier would resolve to /oauth/lib.js.
+      import { buildCallbackUrl, classifyCallback } from '/lib.js';
+
+      const status = document.getElementById('status');
+      const fail = (message) => {
+        status.textContent = message;
+        status.className = 'error';
+      };
+
+      const verdict = classifyCallback(window.location.search);
+      if (verdict.kind === 'error') {
+        fail(verdict.message);
+      } else {
+        const returnUrl = window.localStorage.getItem('basis.return');
+        if (!returnUrl) {
+          // Consent finished in a different browser from the one that started
+          // it. There is deliberately no way for this page to guess the box's
+          // address — see "Why not carry the return URL in state" in the spec.
+          fail(
+            'This browser did not start the connection, so Basis cannot tell ' +
+              'which box to return you to. Open Basis on your box and start ' +
+              'the connection again from Settings → Calendars.'
+          );
+        } else {
+          try {
+            window.localStorage.removeItem('basis.return');
+            window.location.assign(buildCallbackUrl(returnUrl, window.location.search));
+          } catch (err) {
+            fail(err.message);
+          }
+        }
+      }
+    </script>
+  </body>
+</html>

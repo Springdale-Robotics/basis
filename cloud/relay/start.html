@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Connecting to Google — Basis</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 32rem;
+        margin: 4rem auto;
+        padding: 0 1.5rem;
+        line-height: 1.6;
+        color: #1f2933;
+        background: #fff;
+      }
+      @media (prefers-color-scheme: dark) {
+        body { color: #e4e7eb; background: #16181d; }
+      }
+      .error { color: #b4232c; }
+      @media (prefers-color-scheme: dark) { .error { color: #ff8a8a; } }
+    </style>
+  </head>
+  <body>
+    <h1>Connecting to Google</h1>
+    <p id="status">One moment…</p>
+    <script type="module">
+      // Absolute, not './lib.js'. Caddy serves this page at /oauth/google/start
+      // while the file sits at the relay root, so a relative specifier would
+      // resolve to /oauth/google/lib.js and 404.
+      import { parseStartFragment } from '/lib.js';
+
+      const status = document.getElementById('status');
+      try {
+        const { returnUrl, to } = parseStartFragment(window.location.hash);
+        // Stored on THIS origin, in this browser only. It is how we find our
+        // way back after Google redirects here with no memory of the box.
+        window.localStorage.setItem('basis.return', returnUrl);
+        window.location.assign(to);
+      } catch (err) {
+        status.textContent = err.message;
+        status.className = 'error';
+      }
+    </script>
+  </body>
+</html>
