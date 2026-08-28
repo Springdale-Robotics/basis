@@ -177,10 +177,18 @@ export async function buildApp(): Promise<FastifyInstance> {
     const { method, url } = request;
     const statusCode = reply.statusCode;
 
+    // Log the path only, never the query string. Query params can carry
+    // secrets — the clearest case is the Google Calendar OAuth callback
+    // (`?code=...&state=...`), but this is a general rule, not a special
+    // case for that route: any route could end up putting a secret in a
+    // query parameter later, and info-level request logs are not where it
+    // should land.
+    const path = url.split('?')[0];
+
     logger.info({
       requestId: request.requestId,
       method,
-      url,
+      url: path,
       statusCode,
       duration: `${duration.toFixed(2)}ms`,
     });
