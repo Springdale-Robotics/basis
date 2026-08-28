@@ -89,12 +89,15 @@ Then reload, and confirm over the real certificate:
 curl -sI https://connect.home-basis.com/oauth/google       # expect 200
 curl -sI https://connect.home-basis.com/oauth/google/start # expect 200
 curl -sI https://connect.home-basis.com/lib.js             # expect 200 — see note
+curl -sI https://connect.home-basis.com/start.js           # expect 200 — see note
+curl -sI https://connect.home-basis.com/callback.js        # expect 200 — see note
 ```
 
-That third one matters more than it looks. Both pages import `/lib.js` with an
-**absolute** specifier because Caddy rewrites them to nested paths while the
-file sits at the root. If `/lib.js` 404s, both pages render and silently do
-nothing.
+Those last three matter more than they look. Both pages load their glue
+script (`start.js` / `callback.js`, each importing `/lib.js`) with an
+**absolute** specifier because Caddy rewrites the pages to nested paths while
+the files sit at the root. If any of the three 404s, both pages render and
+silently do nothing.
 
 ---
 
@@ -198,4 +201,4 @@ copied byte-for-byte out of `calendars.ts`: the Google auth URL survives the
 encode/decode round trip **byte-for-byte**. That is the bug that would have
 passed every unit test on both sides and still broken every real connect.
 
-Tests: backend `test/calendars` + `test/caldav` 70/70, `cloud/server` 72/72.
+Tests: backend `test/calendars` + `test/caldav` 70/70, `cloud/server` 77/77.
