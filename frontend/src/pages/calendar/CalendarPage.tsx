@@ -39,6 +39,8 @@ import {
 } from '@/components/ui/tooltip';
 import { cn, hoverAction } from '@/lib/utils';
 import { prefersExpandedSidebar } from '@/lib/layout';
+import { useDevice } from '@/hooks/useDevice';
+import { DayPeekSheet } from '@/components/calendar/DayPeekSheet';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -72,6 +74,9 @@ export function CalendarPage() {
   const [deleteEventConfirmOpen, setDeleteEventConfirmOpen] = useState(false);
   const [pendingFormData, setPendingFormData] = useState<EventFormData | null>(null);
   const [imageParseOpen, setImageParseOpen] = useState(false);
+  // Compact month view only: the day whose overview sheet is open.
+  const [peekDay, setPeekDay] = useState<Date | null>(null);
+  const { isMobile } = useDevice();
   const queryClient = useQueryClient();
   const searchRef = useRef<CalendarSearchRef>(null);
   const { colorPalette } = useTheme();
@@ -509,6 +514,21 @@ export function CalendarPage() {
   };
 
   // Handle double-click on a day or time slot to create a new event
+  // Month and week views had no way to reach Day view for a particular date —
+  // the tab and the shortcut both just showed whatever currentDate already was.
+  const handleOpenDay = (date: Date) => {
+    setPeekDay(null);
+    setCurrentDate(date);
+    setViewMode('day');
+  };
+
+  const handleAddEventOnDay = (date: Date) => {
+    setPeekDay(null);
+    const at9 = new Date(date);
+    at9.setHours(9, 0, 0, 0);
+    handleSlotDoubleClick(at9);
+  };
+
   const handleSlotDoubleClick = (date: Date) => {
     // Round to nearest 30 minutes
     const minutes = date.getMinutes();
@@ -946,6 +966,9 @@ export function CalendarPage() {
               onEventClick={handleEventClick}
               onSlotDoubleClick={handleSlotDoubleClick}
               onEventDrop={handleEventDropDay}
+              compact={isMobile}
+              onOpenDay={handleOpenDay}
+              onDayTap={setPeekDay}
             />
           ) : viewMode === 'week' ? (
             <WeekView
@@ -956,6 +979,7 @@ export function CalendarPage() {
               onEventClick={handleEventClick}
               onSlotDoubleClick={handleSlotDoubleClick}
               onEventDrop={handleEventDropTime}
+              onOpenDay={handleOpenDay}
             />
           ) : viewMode === 'day' ? (
             <DayView
@@ -979,6 +1003,20 @@ export function CalendarPage() {
         </CardContent>
       </Card>
     </div>
+
+      <DayPeekSheet
+        day={peekDay}
+        events={filteredEvents}
+        calendars={calendars}
+        colorPalette={colorPalette}
+        onOpenChange={(open) => !open && setPeekDay(null)}
+        onEventClick={(event) => {
+          setPeekDay(null);
+          handleEventClick(event);
+        }}
+        onOpenDay={handleOpenDay}
+        onAddEvent={handleAddEventOnDay}
+      />
 
       <EventDetail
         open={detailOpen}

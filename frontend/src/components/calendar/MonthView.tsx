@@ -17,6 +17,16 @@ interface MonthViewProps {
   onEventClick: (event: CalendarEvent) => void;
   onSlotDoubleClick: (date: Date) => void;
   onEventDrop?: (event: CalendarEvent, newDay: Date) => void;
+  /**
+   * Phone layout: indicators in place of event bars, so all seven columns fit
+   * a 390px screen without scrolling sideways. Titles are traded for the whole
+   * month being visible at once; `onDayTap` is how you get them back.
+   */
+  compact?: boolean;
+  /** Open one date in Day view. */
+  onOpenDay?: (date: Date) => void;
+  /** Compact only: peek at a day without leaving the month. */
+  onDayTap?: (date: Date) => void;
 }
 
 // Single horizontal event bar (single-day or a segment of a multi-day event).
@@ -147,6 +157,9 @@ export function MonthView({
   onEventClick,
   onSlotDoubleClick,
   onEventDrop,
+  compact = false,
+  onOpenDay,
+  onDayTap,
 }: MonthViewProps) {
   const [dragOverDay, setDragOverDay] = useState<string | null>(null);
 
@@ -183,6 +196,135 @@ export function MonthView({
     (window as unknown as { __draggedEvent?: CalendarEvent }).__draggedEvent = undefined;
     setDragOverDay(null);
   };
+
+  // Phone layout. A 390px screen gives each column ~50px — enough for the date
+  // and a hint of what is on it, not for titles. Multi-day events keep a
+  // continuous bar across the row so a trip reads as one thing rather than
+  // four unrelated dots; single-day events get dots coloured by calendar.
+  if (compact) {
+    return (
+      <div>
+        <div className="mb-1 grid grid-cols-7 gap-1">
+          {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+            <div
+              key={i}
+              className="py-1 text-center text-[11px] font-semibold uppercase text-muted-foreground"
+            >
+              {d}
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-1">
+          {weeks.map((week, wi) => {
+            const segments = layoutWeekRow(week, events);
+            const laneCount = segments.reduce((m, s) => Math.max(m, s.lane + 1), 0);
+            const reservedTop = laneCount * 5;
+
+            return (
+              <div key={wi} className="relative grid grid-cols-7 gap-1">
+                {week.map((day) => {
+                  const inMonth = day.getMonth() === currentDate.getMonth();
+                  const isToday = isSameDay(day, today);
+                  const dayCol = getColForDay(week, day);
+
+                  const singleDayEvents = events.filter(
+                    (e) => !isMultiDay(e) && isSameDay(new Date(e.startTime), day),
+                  );
+                  const multiDayCount = segments.filter(
+                    (s) => s.startCol <= dayCol && s.endCol >= dayCol,
+                  ).length;
+                  const totalCount = singleDayEvents.length + multiDayCount;
+
+                  const dots = singleDayEvents.slice(0, 3);
+                  const extra = singleDayEvents.length - dots.length;
+
+                  return (
+                    <button
+                      key={day.toISOString()}
+                      type="button"
+                      onClick={() => onDayTap?.(day)}
+                      aria-label={`${format(day, 'EEEE, MMMM d')}${
+                        totalCount > 0
+                          ? `, ${totalCount} event${totalCount === 1 ? '' : 's'}`
+                          : ', no events'
+                      }`}
+                      className={cn(
+                        'flex min-h-[52px] flex-col items-center rounded-lg border p-1 transition-colors',
+                        inMonth
+                          ? 'bg-card border-border'
+                          : 'bg-muted/40 border-transparent text-muted-foreground',
+                        'hover:bg-muted/60 active:bg-muted',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium',
+                          isToday && 'bg-primary text-primary-foreground',
+                        )}
+                      >
+                        {day.getDate()}
+                      </span>
+
+                      {/* Room for the multi-day bars drawn in the overlay. */}
+                      <span style={{ height: reservedTop }} className="block w-full" />
+
+                      <span className="mt-0.5 flex items-center justify-center gap-0.5">
+                        {dots.map((event) => (
+                          <span
+                            key={event.id}
+                            className="h-1.5 w-1.5 rounded-full"
+                            style={{
+                              backgroundColor: resolveEventColor(
+                                event,
+                                calendars,
+                                colorPalette,
+                              ),
+                            }}
+                          />
+                        ))}
+                        {extra > 0 && (
+                          <span className="text-[9px] leading-none text-muted-foreground">
+                            +{extra}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+
+                {/* Multi-day bars, drawn across the row like the full view. */}
+                {laneCount > 0 && (
+                  <div className="pointer-events-none absolute inset-0">
+                    {segments.map((seg, idx) => {
+                      const color = resolveEventColor(seg.event, calendars, colorPalette);
+                      return (
+                        <div
+                          key={`${seg.event.id}-${idx}`}
+                          className="absolute px-1"
+                          style={{
+                            // 4px cell padding + 24px date circle + 2px gap.
+                            top: 30 + seg.lane * 5,
+                            left: `${(seg.startCol / 7) * 100}%`,
+                            width: `${((seg.endCol - seg.startCol + 1) / 7) * 100}%`,
+                          }}
+                        >
+                          <div
+                            className="h-[3px] rounded-full"
+                            style={{ backgroundColor: color }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
   return (
     // Seven columns need real width to stay readable — the day-number circle
@@ -273,7 +415,15 @@ export function MonthView({
                       }
                     }}
                   >
-                    <span
+                    {/* The date is the way into that day — month view had no
+                        route to Day view for a specific date before this. */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenDay?.(day);
+                      }}
+                      title={`Open ${format(day, 'EEEE, MMMM d')}`}
                       className={cn(
                         'inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium transition-colors',
                         today_
@@ -282,7 +432,7 @@ export function MonthView({
                       )}
                     >
                       {day.getDate()}
-                    </span>
+                    </button>
                     {/* Spacer for multi-day bars rendered in overlay */}
                     <div style={{ height: reservedTop }} className="mt-2" />
                     {/* Single-day events */}

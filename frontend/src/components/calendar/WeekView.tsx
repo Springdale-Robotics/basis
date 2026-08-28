@@ -17,6 +17,8 @@ interface WeekViewProps {
   onEventClick: (event: CalendarEvent) => void;
   onSlotDoubleClick: (date: Date) => void;
   onEventDrop?: (event: CalendarEvent, newStart: Date) => void;
+  /** Open one date in Day view. */
+  onOpenDay?: (date: Date) => void;
 }
 
 const HOUR_HEIGHT = 56; // px per hour — matches min-h-14 from the original
@@ -30,6 +32,7 @@ export function WeekView({
   onEventClick,
   onSlotDoubleClick,
   onEventDrop,
+  onOpenDay,
 }: WeekViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [now, setNow] = useState(new Date());
@@ -117,16 +120,20 @@ export function WeekView({
             <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
               {date.toLocaleDateString(undefined, { weekday: 'short' })}
             </div>
-            <div
+            {/* Same as month view: the date takes you into that day. */}
+            <button
+              type="button"
+              onClick={() => onOpenDay?.(date)}
+              title={`Open ${date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}`}
               className={cn(
                 'mt-1 inline-flex h-10 w-10 items-center justify-center rounded-full text-lg font-semibold transition-colors',
                 isSameDay(date, today)
                   ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-foreground',
+                  : 'text-foreground hover:bg-muted',
               )}
             >
               {date.getDate()}
-            </div>
+            </button>
           </div>
         ))}
       </div>
