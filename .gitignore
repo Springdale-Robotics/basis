@@ -99,3 +99,6 @@ backend/bin/
 # a copy in the working tree.
 *.traineddata
 *.traineddata.gz
+
+# Subagent-driven-development scratch (ledgers, briefs, review packages)
+.superpowers/
