@@ -2000,7 +2000,7 @@ describe('every write path produces outbound work', () => {
 
     const response = await ctx.app.inject({
       method: 'PUT',
-      url: `/caldav/calendars/${user.id}/${calendarId}/${uid}.ics`,
+      url: `/dav/calendars/${user.id}/${calendarId}/${uid}.ics`,
       headers: {
         authorization: user.caldavAuthHeader,
         'content-type': 'text/calendar',
@@ -2027,7 +2027,7 @@ describe('every write path produces outbound work', () => {
 
     const response = await ctx.app.inject({
       method: 'DELETE',
-      url: `/caldav/calendars/${user.id}/${calendarId}/${event.id}.ics`,
+      url: `/dav/calendars/${user.id}/${calendarId}/${event.id}.ics`,
       headers: { authorization: user.caldavAuthHeader },
     });
     expect([200, 204]).toContain(response.statusCode);
@@ -2042,6 +2042,7 @@ Read the real shapes before running this, and adjust the test to them rather tha
 
 - `backend/test/helpers/route-harness.ts` — the harness may not expose `cookies` or `caldavAuthHeader` under those names.
 - `backend/test/caldav/` — how the existing CalDAV tests authenticate. Do not add a new auth mechanism for this test.
+- The CalDAV routes are mounted at **`/dav`**, not `/caldav` (`app.ts:272`: `app.register(caldavRoutes, { prefix: '/dav' })`). The URLs above use `/dav`; confirm against `app.ts` before running.
 - `calendars.routes.ts:385` — the create route's exact payload schema (`createEventSchema`, defined at line 49). The fields above are the minimum; if it requires more, add them.
 
 The assertion is what matters here, not the request shape.
