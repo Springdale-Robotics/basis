@@ -37,9 +37,11 @@ Normal repo → deploy. Two things ride along:
 
 - `cloud/server/src/lib/reserved-subdomains.ts` — `connect`, `connects` and
   `oauth-relay` become unclaimable at checkout.
-- `cloud/relay/` — three static files (`index.html`, `start.html`, `lib.js`),
-  served straight out of the deployed checkout at
-  `/opt/basis-cloud/current/cloud/relay`. **No build step, no copy step.**
+- `cloud/relay/` — static files only (`index.html`, `start.html`, `lib.js`,
+  `start.js`, `callback.js`).
+  The release workflow now stages them into the tarball alongside the server
+  and frontend, so they ship and land at `/opt/basis-cloud/current/relay`
+  with no separate build or copy step of your own.
 
 ---
 
@@ -48,7 +50,18 @@ Normal repo → deploy. Two things ride along:
 **Validate before reloading.** A malformed Caddyfile takes down
 `home-basis.com` and the tenant tunnels along with the relay.
 
-On the cloud host, where the Cloudflare DNS plugin is built in:
+`update.sh` does not touch `/etc/caddy/Caddyfile` — only `provision.sh` installs
+it, and that only runs on first setup. A normal version deploy will otherwise
+leave the running Caddyfile without the `connect.home-basis.com` block
+entirely, and the hostname falls through to the `*.home-basis.com` frps
+wildcard instead of serving the relay. Install the new copy explicitly before
+validating:
+
+```bash
+sudo install -m 644 /opt/basis-cloud/current/deploy/Caddyfile /etc/caddy/Caddyfile
+```
+
+Then, on the cloud host, where the Cloudflare DNS plugin is built in:
 
 ```bash
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -185,4 +198,4 @@ copied byte-for-byte out of `calendars.ts`: the Google auth URL survives the
 encode/decode round trip **byte-for-byte**. That is the bug that would have
 passed every unit test on both sides and still broken every real connect.
 
-Tests: backend `test/calendars` + `test/caldav` 66/66, `cloud/server` 72/72.
+Tests: backend `test/calendars` + `test/caldav` 70/70, `cloud/server` 72/72.
