@@ -16,6 +16,7 @@ import {
   Palette,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import {
   Card,
@@ -457,6 +458,18 @@ export function CalendarSettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          <Alert className="mb-4">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Set your consent screen to &ldquo;In production&rdquo; first</AlertTitle>
+            <AlertDescription>
+              While a Google Cloud project is on &ldquo;Testing&rdquo;, Google expires access seven
+              days after you connect and your calendar quietly stops syncing. You will also need to
+              add this as an authorised redirect URI on your OAuth client:{' '}
+              <code className="rounded bg-muted px-1 py-0.5 text-xs">
+                https://connect.home-basis.com/oauth/google
+              </code>
+            </AlertDescription>
+          </Alert>
           <div className="flex flex-wrap gap-3">
             {/* Google Calendar */}
             <Button

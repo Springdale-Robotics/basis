@@ -157,6 +157,38 @@ export async function fetchGoogleEvents(
   return events;
 }
 
+/**
+ * Turn a Google API failure into something a household can act on.
+ *
+ * The case worth special-casing is `invalid_grant`. A Google Cloud project
+ * whose consent screen is still on the "Testing" publishing status expires
+ * every refresh token seven days after consent, so a calendar that connected
+ * fine simply stops a week later. The API error says nothing about why, and
+ * the household has no reason to connect the two events.
+ */
+export function describeGoogleSyncError(err: unknown): string {
+  const raw =
+    err instanceof Error
+      ? err.message
+      : typeof err === 'string'
+        ? err
+        : JSON.stringify(err);
+
+  const code =
+    (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? raw;
+
+  if (typeof code === 'string' && code.includes('invalid_grant')) {
+    return (
+      'Google rejected the saved credentials (invalid_grant). This usually means ' +
+      'the Google Cloud project is still on the "Testing" publishing status, which ' +
+      'expires access seven days after you connect. In the Google Cloud console, ' +
+      'set the consent screen to "In production", then reconnect the calendar in Basis.'
+    );
+  }
+
+  return raw;
+}
+
 export async function syncCalendarFromGoogle(
   calendarId: string,
   householdId: string
@@ -215,7 +247,7 @@ export async function syncCalendarFromGoogle(
       await db
         .update(calendars)
         .set({
-          syncError: 'Authentication expired. Please reconnect your Google account.',
+          syncError: describeGoogleSyncError(error),
           updatedAt: new Date(),
         })
         .where(eq(calendars.id, calendarId));
