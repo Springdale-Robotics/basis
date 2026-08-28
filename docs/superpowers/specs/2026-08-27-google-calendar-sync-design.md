@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-27 (amended 2026-08-28 after review)
 **Status:** Reviewed against the repo. Both sign-off items resolved by the owner
-on 2026-08-28 — see "Where the secret lives" and the spike. Not implemented.
+on 2026-08-28, and the client-secret spike has been run — see "Where the secret
+lives". Not implemented.
 **Branch:** `docs/google-calendar-sync-design`
 
 ## Problem
@@ -60,7 +61,7 @@ Everything the design depends on, with its source.
 | Redirect URIs: HTTPS only (localhost exempt), no wildcards, exact match. | [OAuth web-server guide][g-web] |
 | The authorization `code` is delivered as a **query parameter** on the redirect. | [OAuth web-server guide][g-web] |
 | Installed-app clients: loopback redirect only; custom schemes withdrawn. | [OAuth native-app guide][g-native] |
-| `client_secret` is documented as "Optional" at the token endpoint. Whether Google *enforces* it for Web application clients is not stated. | [OAuth web-server guide][g-web] — **open spike, see below** |
+| `client_secret` is documented as "Optional" at the token endpoint, but Google **enforces** it for Web application clients. A PKCE-only exchange returns `invalid_request` / "client_secret is missing." | [OAuth web-server guide][g-web]; **measured 2026-08-28**, see the spike |
 | Calendar scopes are **sensitive**, not restricted: "Examples of sensitive scopes include reading events stored in Google Calendar". Calendar does not appear on the restricted list (Gmail, Drive, Fit, Chat, Data Portability, Photos Ambient, Health). | [Sensitive-scope verification][g-sens], [Restricted scopes][g-restr] |
 | Sensitive-scope verification needs: Search Console domain ownership, a privacy policy on the same domain, a public homepage, a demo video, scope justifications. No CASA security assessment. "Typically takes 3-5 business days". | [Sensitive-scope verification][g-sens] |
 | Unverified apps requesting sensitive scopes show a warning screen and are capped at "100 new users in total". "The user cap applies over the entire lifetime of the project, and it cannot be reset or changed." | [Unverified apps][g-unver], [Verification FAQ][g-faq] |
@@ -286,29 +287,39 @@ tokens survive the *delete* step is still not stated in Google's docs; the
 spike below checks it, but with an overlap window available the answer is
 informational rather than a release blocker.
 
-Whichever way the spike lands, the new fields must be **optional** in the box's
-validation. `basis-cloud.ts` throws `ClaimError('CLOUD_ERROR')` and
+The new client-config fields must be **optional** in the box's validation. `basis-cloud.ts` throws `ClaimError('CLOUD_ERROR')` and
 `CloudUnreachableError` on any payload it considers incomplete, so an older box
 has to survive a cloud that has started sending more, and a newer box has to
 survive a cloud that has not deployed yet.
 
-**Spike — approved 2026-08-28, run it before anything else in phase 3.**
-Whether Google's token endpoint actually enforces `client_secret` for Web
-application clients. The docs mark it "Optional"; folklore says a Web client
-gets `client_secret is missing`. One throwaway client and one `curl` settles
-it.
+**Spike — run 2026-08-28. Answered: the secret is mandatory.**
 
-This spike may **moot the whole of "Where the secret lives"**: if a PKCE-only
-exchange is accepted, Option B ships a client *id* and no secret ever reaches a
-box, so decision (4) above has nothing to deliver. That is why it goes first.
+Against a throwaway Web application client, an authorization-code exchange
+carrying a valid `code_verifier` and no `client_secret` is rejected:
 
-The harness is written and the listener tested —
-`~/basis-gcal-review-2026-08-27/gcal-spike/` (bash, curl, openssl, python3; no
-netcat). It runs three exchanges — verifier + secret as a baseline, verifier
-without secret as the actual question, secret without verifier — and prints
-which succeeded. The README also covers the rotation half: complete an offline
-flow, add a second secret, delete the first, retry the refresh. Do the spike;
-do not research it further.
+```
+{ "error": "invalid_request", "error_description": "client_secret is missing." }
+```
+
+The same code shape with the secret attached succeeds and returns a refresh
+token. So the "Optional" in Google's parameter table does not describe Web
+application clients, and the folklore is right. PKCE alone will not carry
+Option B.
+
+This closes the question that could have deleted this whole section: there is
+no version of Option B where a box holds only a client id. Decision (4) above
+stands as the way the secret reaches paid boxes, and everything that follows
+from it — encryption at rest, one shared secret across the fleet, the rotation
+story — is real work rather than a contingency.
+
+The harness is at `~/basis-gcal-review-2026-08-27/gcal-spike/` if it needs
+re-running against a different client type.
+
+**Still open, now informational rather than blocking:** whether a refresh token
+issued under one secret survives that secret being deleted. Two secrets can be
+live at once, so rotation has an overlap window and the answer only matters at
+the final delete step — where it is recoverable by re-adding. The harness
+README has the procedure.
 
 **Entitlement.** B is offered when the box is in `basis_remote` mode with a
 live tunnel and has received client config on the claim channel. A stays
@@ -442,11 +453,10 @@ the local events in place, unsynced.
    deletes, `remote_updated` with both triggers taught to ignore it, conflict
    policy, tighter polling. Works for A; needs nothing from the cloud.
    Supersedes basis#101.
-3. **Option B.** The client-secret spike **first** — it may delete the rest of
-   this list's hardest part. Then: privacy policy + demo video; submit
-   verification; the on-demand client-config endpoint on the cloud and the box
-   side that calls it; connect-without-a-project UI; `watch` channels and the
-   renewal job.
+3. **Option B.** Spike done — the secret is required, so none of this is
+   contingent any more. Privacy policy + demo video; submit verification; the
+   on-demand client-config endpoint on the cloud and the box side that calls
+   it; connect-without-a-project UI; `watch` channels and the renewal job.
 
 Each phase ships on its own and is useful on its own. Phase 3 is gated on
 verification clearing, which is outside our control; phases 1 and 2 are not.
