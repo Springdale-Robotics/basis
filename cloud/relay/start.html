@@ -25,26 +25,9 @@
   <body>
     <h1>Connecting to Google</h1>
     <p id="status">One moment…</p>
-    <script type="module">
-      // Absolute, not './lib.js'. Caddy serves this page at /oauth/google/start
-      // while the file sits at the relay root, so a relative specifier would
-      // resolve to /oauth/google/lib.js and 404.
-      import { parseStartFragment } from '/lib.js';
-
-      const status = document.getElementById('status');
-      try {
-        const { returnUrl, to } = parseStartFragment(window.location.hash);
-        // Stored on THIS origin, in this browser only. It is how we find our
-        // way back after Google redirects here with no memory of the box.
-        window.localStorage.setItem('basis.return', returnUrl);
-        // replace(), not assign(): leaves no history entry holding the box
-        // address, and stops Back from Google's consent screen landing here
-        // and immediately bouncing the user forward again.
-        window.location.replace(to);
-      } catch (err) {
-        status.textContent = err.message;
-        status.className = 'error';
-      }
-    </script>
+    <!-- Absolute src, not './start.js' — see the note inside start.js. External
+         file (not an inline script) so the Content-Security-Policy in the
+         Caddyfile can omit 'unsafe-inline' from script-src. -->
+    <script type="module" src="/start.js"></script>
   </body>
 </html>

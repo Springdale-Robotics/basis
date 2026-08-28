@@ -64,6 +64,33 @@ export function parseStartFragment(fragment) {
 }
 
 /**
+ * Pull `state` off the Google auth URL the box built. `state` is the random
+ * token the box minted and is holding in Redis — it is what lets us key the
+ * stashed return address to *this* flow instead of a fixed name any page
+ * load can clobber. Throws if it's absent; a redirect URI with no state
+ * isn't one our own OAuth flow would ever produce.
+ */
+export function stateFromAuthUrl(to) {
+  const state = new URL(to).searchParams.get('state');
+  if (!state) {
+    throw new Error('This link is missing its state parameter. Start again from your Basis box.');
+  }
+  return state;
+}
+
+/**
+ * The localStorage key the return address is stashed under for a given
+ * OAuth `state`. Keying by state (instead of one fixed name) means a page
+ * load that stores a return address under a *different* state — say, an
+ * attacker's popup pointed at this origin mid-flow — can never be the entry
+ * a legitimate callback reads back, because it doesn't know the victim's
+ * state token.
+ */
+export function returnStorageKey(state) {
+  return `basis.return.${state}`;
+}
+
+/**
  * Where to send the browser once Google has redirected back to us.
  * The query string is passed through byte for byte — it carries `code` and
  * `state`, and the box validates `state` itself.

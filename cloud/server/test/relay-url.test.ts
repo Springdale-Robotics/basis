@@ -3,6 +3,8 @@ import {
   buildCallbackUrl,
   classifyCallback,
   parseStartFragment,
+  returnStorageKey,
+  stateFromAuthUrl,
 } from '../../relay/lib.js';
 
 describe('parseStartFragment', () => {
@@ -52,6 +54,36 @@ describe('buildCallbackUrl', () => {
 
   it('rejects a return URL that is not http(s)', () => {
     expect(() => buildCallbackUrl('javascript:alert(1)', '?code=a')).toThrow();
+  });
+});
+
+describe('stateFromAuthUrl', () => {
+  it('reads state off the Google auth URL', () => {
+    expect(
+      stateFromAuthUrl('https://accounts.google.com/o/oauth2/v2/auth?state=xyz&x=1')
+    ).toBe('xyz');
+  });
+
+  it('throws a readable error when state is absent', () => {
+    expect(() => stateFromAuthUrl('https://accounts.google.com/o/oauth2/v2/auth?x=1')).toThrow(
+      /state/
+    );
+  });
+
+  it('throws a readable error when state is present but empty', () => {
+    expect(() => stateFromAuthUrl('https://accounts.google.com/o/oauth2/v2/auth?state=')).toThrow(
+      /state/
+    );
+  });
+});
+
+describe('returnStorageKey', () => {
+  it('keys the storage entry by state', () => {
+    expect(returnStorageKey('xyz')).toBe('basis.return.xyz');
+  });
+
+  it('keys different states to different entries', () => {
+    expect(returnStorageKey('abc')).not.toBe(returnStorageKey('xyz'));
   });
 });
 
