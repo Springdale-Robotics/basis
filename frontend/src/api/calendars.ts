@@ -307,8 +307,18 @@ export const calendarsApi = {
  * cloud and household addresses must never reach it. So the box's own origin
  * rides in the URL fragment, which browsers never send to a server, and the
  * relay keeps it in its own localStorage for the trip to Google and back.
+ *
+ * Throws if either value is missing. That happens when this box's backend
+ * predates `relayStart` in the connect response (frontend deployed ahead of
+ * backend) — better to surface a readable error than send the browser to
+ * `undefined#return=...`.
  */
-export function relayHandoffUrl(relayStart: string, authUrl: string): string {
+export function relayHandoffUrl(relayStart: string | undefined, authUrl: string | undefined): string {
+  if (!relayStart || !authUrl) {
+    throw new Error(
+      'This box needs an update before Google Calendar can connect. Update Basis and try again.'
+    );
+  }
   const params = new URLSearchParams({
     return: window.location.origin,
     to: authUrl,
