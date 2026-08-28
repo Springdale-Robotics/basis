@@ -29,12 +29,16 @@ So the relay's logic is extracted into a pure module and tested exhaustively in 
 
 If browser tests arrive in this repo later, the Playwright case in the spec is still the right one to write.
 
+**Second: Outlook does not get the relay in this phase.** The spec says Outlook "gets the relay for free in phase 1". It does not. The relay as built here is Google-shaped in three places: the Caddy block rewrites only the two Google paths, `lib.js` refuses to forward anywhere but `accounts.google.com`, and the pre-flight bounce is wired only at the Google call sites. Moving Outlook's redirect URI to the relay without those three would land every Outlook connect on a 404 with no stored return — strictly worse than today, where the Host-derived flow at least works for a registered host.
+
+So Outlook keeps its `Host`-derived redirect for now. Giving it the relay is its own task: a `/oauth/outlook` path in the Caddy block, a provider-aware origin allowlist in `lib.js` (Microsoft's authorize host rather than Google's), and the pre-flight at the Outlook call sites.
+
 ## Out of Scope
 
 - Two-way sync. Calendars stay `isReadOnly` at the end of this phase; that is phase 2.
 - Option B (the Basis-owned Google client) and anything touching the paid tier. Phase 3.
 - **basis#101** (CalDAV write handlers ignoring `isReadOnly`). It rides its own timeline and phase 2 supersedes it. Do not fix it here, and do not add `isReadOnly` checks to the CalDAV handlers as part of this work.
-- Outlook keeps working exactly as it does today. Task 5 changes its redirect URI alongside Google's because both are broken by the same `Host`-header bug, but nothing else about Outlook changes.
+- **Outlook keeps working exactly as it does today, Host-derived redirect and all.** See the second deviation below — routing Outlook through the relay is not the free ride the spec suggests, and doing it halfway would leave it worse off than it is now.
 
 ---
 
@@ -382,7 +386,10 @@ Create `cloud/relay/start.html`:
     <h1>Connecting to Google</h1>
     <p id="status">One moment…</p>
     <script type="module">
-      import { parseStartFragment } from './lib.js';
+      // Absolute, not './lib.js'. Caddy serves this page at /oauth/google/start
+      // while the file sits at the relay root, so a relative specifier would
+      // resolve to /oauth/google/lib.js and 404.
+      import { parseStartFragment } from '/lib.js';
 
       const status = document.getElementById('status');
       try {
@@ -433,7 +440,9 @@ Create `cloud/relay/index.html`:
     <h1>Returning to Basis</h1>
     <p id="status">One moment…</p>
     <script type="module">
-      import { buildCallbackUrl, classifyCallback } from './lib.js';
+      // Absolute — see the note in start.html. Served at /oauth/google, a
+      // relative specifier would resolve to /oauth/lib.js.
+      import { buildCallbackUrl, classifyCallback } from '/lib.js';
 
       const status = document.getElementById('status');
       const fail = (message) => {
@@ -476,6 +485,8 @@ There is no browser test infrastructure in this repo, so this is a manual check.
 ```bash
 cd cloud/relay && python3 -m http.server 9099
 ```
+
+Note this server exposes the pages at `/start.html` and `/index.html`, not at the `/oauth/google...` paths Caddy rewrites to. That difference is exactly why the imports above are absolute: a relative `./lib.js` would work here and 404 in production. Task 4's [OPS] step re-checks it against the real paths.
 
 Then, in a browser:
 
@@ -572,7 +583,8 @@ By the owner, in order. **Task 1 Step 6 must have come back empty before this ru
 
 1. Deploy the cloud host from the repo and reload Caddy.
 2. Confirm `https://connect.home-basis.com/oauth/google` serves the callback page over a valid certificate, and that `https://connect.home-basis.com/oauth/google/start` serves the start page.
-3. In the Google Cloud console for *the household-facing documentation example only* — there is no Basis-owned client until phase 3 — note the URI to publish in the connect instructions:
+3. **With devtools open on both pages, confirm `/lib.js` loads (200, not 404).** The pages are rewritten to from nested paths while the module sits at the relay root, so this is the one thing the local `http.server` check cannot catch. A 404 here means the pages render but do nothing.
+4. In the Google Cloud console for *the household-facing documentation example only* — there is no Basis-owned client until phase 3 — note the URI to publish in the connect instructions:
    `https://connect.home-basis.com/oauth/google`
 
 ---
@@ -586,7 +598,7 @@ Both sites become the same constant. **They must not diverge:** Google compares 
 The connect response also gains `relayStart`, the address of the pre-flight page, so the frontend can build the bounce. Task 6 consumes it; ship both together — a frontend reading a field the backend does not send would break the connect button.
 
 **Files:**
-- Modify: `backend/src/modules/calendars/sync.routes.ts` (Google: lines ~65-70 and ~108-111; Outlook: the equivalent pair)
+- Modify: `backend/src/modules/calendars/sync.routes.ts` (Google only: lines ~65-70 and ~108-111)
 - Create: `backend/src/modules/calendars/relay.ts`
 - Test: `backend/test/calendars/relay.test.ts`
 
@@ -595,7 +607,6 @@ The connect response also gains `relayStart`, the address of the pre-flight page
 - Produces:
   - `RELAY_BASE = 'https://connect.home-basis.com'`
   - `googleRedirectUri(): string` → `https://connect.home-basis.com/oauth/google`
-  - `outlookRedirectUri(): string` → `https://connect.home-basis.com/oauth/outlook`
   - `relayStartUrl(): string` → `https://connect.home-basis.com/oauth/google/start`
   - The `POST /sync/google/connect` response body becomes `{ success: true, data: { authUrl: string, relayStart: string } }`. Task 6 reads both.
 
@@ -605,19 +616,11 @@ Create `backend/test/calendars/relay.test.ts`:
 
 ```typescript
 import { describe, expect, it } from 'vitest';
-import {
-  googleRedirectUri,
-  outlookRedirectUri,
-  relayStartUrl,
-} from '../../src/modules/calendars/relay.js';
+import { googleRedirectUri, relayStartUrl } from '../../src/modules/calendars/relay.js';
 
 describe('relay URLs', () => {
   it('uses the one registered Google redirect URI', () => {
     expect(googleRedirectUri()).toBe('https://connect.home-basis.com/oauth/google');
-  });
-
-  it('keeps Outlook on its own path', () => {
-    expect(outlookRedirectUri()).toBe('https://connect.home-basis.com/oauth/outlook');
   });
 
   it('points the pre-flight at the start page', () => {
@@ -625,11 +628,9 @@ describe('relay URLs', () => {
   });
 
   it('is HTTPS and has no query string — Google requires both', () => {
-    for (const url of [googleRedirectUri(), outlookRedirectUri()]) {
-      const parsed = new URL(url);
-      expect(parsed.protocol).toBe('https:');
-      expect(parsed.search).toBe('');
-    }
+    const parsed = new URL(googleRedirectUri());
+    expect(parsed.protocol).toBe('https:');
+    expect(parsed.search).toBe('');
   });
 });
 ```
@@ -668,9 +669,10 @@ export function googleRedirectUri(): string {
   return `${RELAY_BASE}/oauth/google`;
 }
 
-export function outlookRedirectUri(): string {
-  return `${RELAY_BASE}/oauth/outlook`;
-}
+// Outlook deliberately has no entry here. The relay is Google-shaped —
+// lib.js forwards only to accounts.google.com and the Caddy block rewrites
+// only the Google paths — so pointing Outlook at it would 404 every connect.
+// See "Deviation from the spec".
 
 /**
  * The pre-flight page. The frontend sends the browser here first, with the
@@ -694,10 +696,10 @@ In `backend/src/modules/calendars/sync.routes.ts`:
 Add the import beside the existing local imports:
 
 ```typescript
-import { googleRedirectUri, outlookRedirectUri, relayStartUrl } from './relay.js';
+import { googleRedirectUri, relayStartUrl } from './relay.js';
 ```
 
-Then replace each of the four Host-derived blocks. They currently read:
+Then replace the **two Google** Host-derived blocks. They currently read:
 
 ```typescript
       const protocol = request.headers['x-forwarded-proto'] || 'http';
@@ -705,19 +707,13 @@ Then replace each of the four Host-derived blocks. They currently read:
       const redirectUri = `${protocol}://${host}/api/v1/calendars/sync/google/callback`;
 ```
 
-Replace the Google pair (the authorize step and the token exchange) with:
+Replace both — the authorize step and the token exchange — with:
 
 ```typescript
       const redirectUri = googleRedirectUri();
 ```
 
-and the Outlook pair with:
-
-```typescript
-      const redirectUri = outlookRedirectUri();
-```
-
-Delete the now-unused `protocol`/`host` locals at each site. If nothing else in the handler reads `request.headers`, the parameter may become unused — leave the signature alone, Fastify supplies it.
+**Leave the two Outlook blocks exactly as they are.** They keep deriving from the `Host` header. Delete the now-unused `protocol`/`host` locals at the two Google sites only. If nothing else in the handler reads `request.headers`, the parameter may become unused — leave the signature alone, Fastify supplies it.
 
 In the Google connect handler, return the start URL alongside the auth URL:
 
@@ -740,12 +736,15 @@ Expected: PASS.
 
 ```bash
 git add backend/src/modules/calendars/relay.ts backend/src/modules/calendars/sync.routes.ts backend/test/calendars/relay.test.ts
-git commit -m "feat(calendars): route Google and Outlook OAuth through the relay
+git commit -m "feat(calendars): route Google OAuth through the relay
 
 The redirect URI was built from the request Host header at both the
 authorize step and the token exchange, so the flow only worked for a box
 whose address was already registered in a Google console. Both sites now
 use the one relay URI, which is the only address Google ever needs.
+
+Outlook is untouched — the relay only forwards to accounts.google.com, so
+giving Outlook the same URI would 404 every connect.
 
 The connect response gains relayStart so the frontend can pre-flight."
 ```

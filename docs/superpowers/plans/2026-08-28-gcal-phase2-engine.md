@@ -54,6 +54,7 @@ The journal also has to start carrying `external_id`. It currently records `COAL
   - `calendarEvents.remoteUpdated` → `remote_updated timestamp` (nullable)
   - `calendarChanges.externalId` → `external_id varchar(255)` (nullable)
   - `calendars.outboundCursor` → `outbound_cursor integer NOT NULL DEFAULT 0` — the highest `calendar_changes.sync_token` the outbound worker has processed for this calendar.
+  - `calendars.lastOutboundAt` → `last_outbound_at timestamp` (nullable) — when this calendar last pushed anything.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -237,6 +238,13 @@ ALTER TABLE calendar_changes ADD COLUMN IF NOT EXISTS external_id varchar(255);
 --> statement-breakpoint
 ALTER TABLE calendars ADD COLUMN IF NOT EXISTS outbound_cursor integer NOT NULL DEFAULT 0;
 --> statement-breakpoint
+-- When this calendar last had local changes pushed. Read by the five-minute
+-- tick to decide which calendars are "active". It cannot be derived from
+-- calendars.updated_at, which the sync trigger bumps for the pull's own
+-- writes too, nor from "has unpushed work", which goes false the instant the
+-- sweep succeeds — collapsing the spec's one-hour window to one sweep.
+ALTER TABLE calendars ADD COLUMN IF NOT EXISTS last_outbound_at timestamp;
+--> statement-breakpoint
 
 -- Discovery index: the outbound sweep asks each synced calendar for rows that
 -- have never been to Google, or have changed since they last were.
@@ -266,14 +274,14 @@ DECLARE
   op_type calendar_change_type;
   ext_id varchar(255);
 BEGIN
-  IF TG_OP = 'UPDATE' THEN
-    -- Everything except remote_updated identical? Then nothing a client
-    -- could observe has changed. Comparing whole rows keeps this correct
-    -- as columns are added later.
-    IF (NEW.*) IS NOT DISTINCT FROM (OLD.* #= hstore('remote_updated', NULL))
-       AND NEW.remote_updated IS DISTINCT FROM OLD.remote_updated THEN
-      RETURN NEW;
-    END IF;
+  -- A write that touches only remote_updated changes nothing a client could
+  -- observe, so it must not bump the token, reroll the ctag, or journal a
+  -- row. Comparing the rows as jsonb with that one key removed keeps this
+  -- correct as columns are added later, and needs no extension.
+  IF TG_OP = 'UPDATE'
+     AND NEW.remote_updated IS DISTINCT FROM OLD.remote_updated
+     AND (to_jsonb(NEW) - 'remote_updated') = (to_jsonb(OLD) - 'remote_updated') THEN
+    RETURN NEW;
   END IF;
 
   IF TG_OP = 'DELETE' THEN
@@ -316,11 +324,12 @@ CREATE OR REPLACE FUNCTION calendar_event_revision_bump()
   LANGUAGE plpgsql
 AS $function$
 BEGIN
-  IF NEW.remote_updated IS DISTINCT FROM OLD.remote_updated THEN
-    -- Compare the rows with remote_updated masked out on both sides.
-    IF ROW(NEW.*) IS NOT DISTINCT FROM ROW((OLD.*)) THEN
-      RETURN NEW;
-    END IF;
+  -- Same guard as the sync trigger, for the same reason: revision is what
+  -- CalDAV ETags are built from, and a bump makes every subscribed client
+  -- re-download the event.
+  IF NEW.remote_updated IS DISTINCT FROM OLD.remote_updated
+     AND (to_jsonb(NEW) - 'remote_updated') = (to_jsonb(OLD) - 'remote_updated') THEN
+    RETURN NEW;
   END IF;
 
   IF OLD.revision = NEW.revision THEN
@@ -331,27 +340,17 @@ END;
 $function$;
 ```
 
-**The two row-comparison expressions above are pseudo-SQL and will not run as written** — `hstore` is not installed and `ROW(NEW.*) IS NOT DISTINCT FROM ROW(OLD.*)` compares the rows *including* `remote_updated`, so it is never true when `remote_updated` changed. Step 4 replaces both with the working form. They are left visible here because the intent — "identical apart from `remote_updated`" — is what matters and the mechanism is a detail.
+A note on that guard, since it is the subtle part. Postgres cannot mask one column out of a whole-row comparison without an extension, so the rows are compared as `jsonb` with the key removed. Write `to_jsonb(NEW)`, **not** `to_jsonb(NEW.*)` — in PL/pgSQL, `NEW` is a record variable and the `.*` expansion is not valid in an expression there.
 
-- [ ] **Step 4: Replace the row comparison with one that works**
+Confirm it parses before going further:
 
-Postgres cannot mask a column out of a whole-row comparison without an extension. The reliable way to express "identical apart from `remote_updated`" is to compare the two rows converted to `jsonb` with that key removed. `to_jsonb(NEW.*)` works on any row type and needs no extension.
-
-In **both** functions, replace the pseudo-SQL guard with:
-
-```sql
-  IF TG_OP = 'UPDATE'
-     AND NEW.remote_updated IS DISTINCT FROM OLD.remote_updated
-     AND (to_jsonb(NEW.*) - 'remote_updated') = (to_jsonb(OLD.*) - 'remote_updated') THEN
-    RETURN NEW;
-  END IF;
+```bash
+./dev.sh db
 ```
 
-In `calendar_event_sync_trigger()` this sits at the top of the body, before the `TG_OP = 'DELETE'` branch, and returns `NEW` — skipping the token bump and the journal insert. In `calendar_event_revision_bump()` it sits at the top and returns `NEW` unchanged — skipping the revision bump. `calendar_event_revision_bump` is a `BEFORE UPDATE` trigger so `TG_OP` is always `'UPDATE'` there, but keeping the check makes the two functions read the same.
+then paste the `CREATE OR REPLACE FUNCTION calendar_event_revision_bump()` block. A syntax error surfaces immediately; a clean `CREATE FUNCTION` means the form is right. Step 7 exercises the behaviour.
 
-Remove the `ext_id` declaration's pseudo-SQL neighbours and make sure each function has exactly one guard block.
-
-- [ ] **Step 5: Register the migration in the journal**
+- [ ] **Step 4: Register the migration in the journal**
 
 Append to the `entries` array in `backend/drizzle/meta/_journal.json`, after the `0017_scan_label` entry. `when` is epoch milliseconds; use `1787106000000` (2026-08-28).
 
@@ -365,7 +364,7 @@ Append to the `entries` array in `backend/drizzle/meta/_journal.json`, after the
   }
 ```
 
-- [ ] **Step 6: Create the snapshot**
+- [ ] **Step 5: Create the snapshot**
 
 Copy `backend/drizzle/meta/0017_snapshot.json` to `backend/drizzle/meta/0018_snapshot.json`, then hand-edit it to add the three columns. Change the snapshot's own `id` to a fresh UUID and set `prevId` to the `id` value from `0017_snapshot.json`.
 
@@ -401,9 +400,15 @@ In `calendars`:
           "notNull": true,
           "default": 0
         },
+        "last_outbound_at": {
+          "name": "last_outbound_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
 ```
 
-- [ ] **Step 7: Add the columns to the Drizzle schema**
+- [ ] **Step 6: Add the columns to the Drizzle schema**
 
 In `backend/src/db/schema/calendars.ts`:
 
@@ -430,9 +435,12 @@ In `calendars`, beside `syncToken`:
 ```typescript
   // How far the outbound sweep has read this calendar's change journal.
   outboundCursor: integer('outbound_cursor').notNull().default(0),
+  // When the sweep last pushed anything for this calendar. Drives the
+  // five-minute polling tick; see shouldSyncOnActiveTick.
+  lastOutboundAt: timestamp('last_outbound_at'),
 ```
 
-- [ ] **Step 8: Run the migration and the tests**
+- [ ] **Step 7: Run the migration and the tests**
 
 ```bash
 cd backend && npm run db:migrate && npx vitest run test/calendars/outbound-triggers.test.ts
@@ -442,12 +450,12 @@ Expected: migration applies cleanly, all five tests PASS.
 
 If the `remote_updated`-only test fails with the revision still bumping, the `to_jsonb` guard is in the wrong place or the `IS DISTINCT FROM` operands are reversed. Inspect the live function with `\sf calendar_event_revision_bump` in `./dev.sh db`.
 
-- [ ] **Step 9: Verify nothing else regressed**
+- [ ] **Step 8: Verify nothing else regressed**
 
 Run: `cd backend && npx vitest run test/caldav/ test/calendars/`
 Expected: PASS. The CalDAV suite is the one that would notice a broken trigger — it asserts on ETags and sync tokens.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add backend/drizzle/0018_calendar_outbound_sync.sql backend/drizzle/meta/_journal.json backend/drizzle/meta/0018_snapshot.json backend/src/db/schema/calendars.ts backend/test/calendars/outbound-triggers.test.ts
@@ -1236,6 +1244,11 @@ export async function processCalendarOutboundJob(
   }
 
   const credentials = JSON.parse(decrypt(calendar.syncCredentials));
+  // Zero-arg is correct here — createOAuth2Client(redirectUri?) takes the
+  // client id and secret from config, and a redirect URI matters only during
+  // an authorization-code exchange, which this is not. Phase 3 changes this:
+  // a calendar connected with the Basis-owned client needs that client's
+  // credentials, not the box's config.
   const auth = createOAuth2Client();
   auth.setCredentials(credentials);
 
@@ -1254,11 +1267,17 @@ export async function processCalendarOutboundJob(
     for (const event of creates) {
       try {
         const remote = await createGoogleEvent(auth, calendar.syncCalendarId!, event);
+        // Clamped past updatedAt for the same reason as the update path: if
+        // Google's clock is behind ours, an unclamped stamp leaves the row
+        // satisfying `updated_at > remote_updated` and it gets a pointless
+        // update push on the next pass before it self-heals.
+        const created = remote.updated ? new Date(remote.updated) : new Date();
         await db
           .update(calendarEvents)
           .set({
             externalId: remote.id,
-            remoteUpdated: remote.updated ? new Date(remote.updated) : new Date(),
+            remoteUpdated:
+              created > event.updatedAt ? created : new Date(event.updatedAt.getTime() + 1),
           })
           .where(eq(calendarEvents.id, event.id));
         result.created += 1;
@@ -1319,6 +1338,16 @@ export async function processCalendarOutboundJob(
         .set({ outboundCursor: cursor })
         .where(eq(calendars.id, calendarId));
       calendar.outboundCursor = cursor;
+    }
+
+    if (result.created + result.updated + result.deleted > 0) {
+      // Marks the calendar "active" for the five-minute tick. Recorded here
+      // rather than inferred from outstanding work, which goes false the
+      // moment this sweep succeeds.
+      await db
+        .update(calendars)
+        .set({ lastOutboundAt: new Date() })
+        .where(eq(calendars.id, calendarId));
     }
   }
 
@@ -1754,9 +1783,9 @@ The hourly pull is the floor for everyone. A calendar someone is actively editin
 - Test: `backend/test/calendars/sync-cadence.test.ts`
 
 **Interfaces:**
-- Consumes: nothing from earlier tasks.
+- Consumes: `calendars.lastOutboundAt` (Task 1), stamped by the sweep (Task 4).
 - Produces, both from `calendar-sync.worker.ts`:
-  - `shouldSyncOnActiveTick(calendar: { lastLocalEditAt: Date | null }, now: Date): boolean`
+  - `shouldSyncOnActiveTick(calendar: { lastOutboundAt: Date | null }, now: Date): boolean`
   - `'sync_active'` added to the `CalendarSyncJobData['type']` union.
 
 - [ ] **Step 1: Write the failing test**
@@ -1770,20 +1799,28 @@ import { shouldSyncOnActiveTick } from '../../src/jobs/calendar-sync.worker.js';
 const now = new Date('2026-08-28T12:00:00Z');
 
 describe('shouldSyncOnActiveTick', () => {
-  it('includes a calendar edited in the last hour', () => {
+  it('includes a calendar that pushed in the last hour', () => {
     expect(
-      shouldSyncOnActiveTick({ lastLocalEditAt: new Date('2026-08-28T11:30:00Z') } as never, now)
+      shouldSyncOnActiveTick({ lastOutboundAt: new Date('2026-08-28T11:30:00Z') } as never, now)
     ).toBe(true);
   });
 
-  it('excludes one last edited two hours ago', () => {
+  it('excludes one that last pushed two hours ago', () => {
     expect(
-      shouldSyncOnActiveTick({ lastLocalEditAt: new Date('2026-08-28T10:00:00Z') } as never, now)
+      shouldSyncOnActiveTick({ lastOutboundAt: new Date('2026-08-28T10:00:00Z') } as never, now)
     ).toBe(false);
   });
 
-  it('excludes one never edited locally', () => {
-    expect(shouldSyncOnActiveTick({ lastLocalEditAt: null } as never, now)).toBe(false);
+  it('excludes one that has never pushed', () => {
+    expect(shouldSyncOnActiveTick({ lastOutboundAt: null } as never, now)).toBe(false);
+  });
+
+  it('stays active for the full hour after a push, not just until the work clears', () => {
+    // The window is a recorded timestamp, not "has outstanding work" — a
+    // calendar whose sweep has already succeeded is still worth polling.
+    expect(
+      shouldSyncOnActiveTick({ lastOutboundAt: new Date('2026-08-28T11:59:00Z') } as never, now)
+    ).toBe(true);
   });
 });
 ```
@@ -1795,7 +1832,9 @@ Expected: FAIL — not exported.
 
 - [ ] **Step 3: Implement**
 
-`calendars.updatedAt` is bumped by the sync trigger on every event change, which includes changes the pull itself made — so it is not a "was this edited locally" signal. Use the outbound queue's own evidence instead: a calendar has been touched locally if it has any event where `updated_at > remote_updated`, which is exactly `findUpdates`, or any row with a null `external_id`, which is `findCreates`.
+Read `calendars.lastOutboundAt`, the column Task 1 added and Task 4's worker stamps.
+
+Two nearby signals are wrong, and it is worth knowing why. `calendars.updatedAt` is bumped by the sync trigger on *every* event change, including ones the pull itself made, so it cannot distinguish local from remote. And "has outstanding outbound work" — a `findCreates`/`findUpdates` count — goes false the instant the sweep succeeds, which would collapse the spec's one-hour active window to a single sweep. A recorded timestamp is the only one of the three that means what the spec asks for.
 
 Add to `backend/src/jobs/calendar-sync.worker.ts`:
 
@@ -1810,15 +1849,13 @@ const ACTIVE_WINDOW_MS = 60 * 60 * 1000;
  * twelve is not free.
  */
 export function shouldSyncOnActiveTick(
-  calendar: { lastLocalEditAt: Date | null },
+  calendar: { lastOutboundAt: Date | null },
   now: Date
 ): boolean {
-  if (!calendar.lastLocalEditAt) return false;
-  return now.getTime() - calendar.lastLocalEditAt.getTime() < ACTIVE_WINDOW_MS;
+  if (!calendar.lastOutboundAt) return false;
+  return now.getTime() - calendar.lastOutboundAt.getTime() < ACTIVE_WINDOW_MS;
 }
 ```
-
-`lastLocalEditAt` is derived, not stored: in the worker, compute it per calendar as the newest `updated_at` among events where `updated_at > remote_updated` or `external_id IS NULL`. A calendar with no such events returns `null`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1931,10 +1968,11 @@ describe('every write path produces outbound work', () => {
   it('REST create', async () => {
     const response = await ctx.app.inject({
       method: 'POST',
-      url: '/api/v1/calendars/events',
+      // Events are created under their calendar: app.post('/:calendarId/events')
+      // at calendars.routes.ts:385, mounted at /api/v1/calendars.
+      url: `/api/v1/calendars/${calendarId}/events`,
       cookies: user.cookies,
       payload: {
-        calendarId,
         title: 'Made over REST',
         startTime: '2026-09-02T10:00:00.000Z',
         endTime: '2026-09-02T11:00:00.000Z',
@@ -2000,7 +2038,13 @@ describe('every write path produces outbound work', () => {
 });
 ```
 
-The harness may not expose `caldavAuthHeader` or `cookies` under those names — read `backend/test/helpers/route-harness.ts` and use whatever it provides, and check `backend/test/caldav/` for how existing CalDAV tests authenticate. Do not add a new auth mechanism for the test.
+Read the real shapes before running this, and adjust the test to them rather than the other way round:
+
+- `backend/test/helpers/route-harness.ts` — the harness may not expose `cookies` or `caldavAuthHeader` under those names.
+- `backend/test/caldav/` — how the existing CalDAV tests authenticate. Do not add a new auth mechanism for this test.
+- `calendars.routes.ts:385` — the create route's exact payload schema (`createEventSchema`, defined at line 49). The fields above are the minimum; if it requires more, add them.
+
+The assertion is what matters here, not the request shape.
 
 - [ ] **Step 2: Run it**
 
