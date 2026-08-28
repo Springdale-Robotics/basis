@@ -43,7 +43,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { calendarsApi } from '@/api/calendars';
+import { calendarsApi, relayHandoffUrl } from '@/api/calendars';
 import type { Calendar } from '@/types/models';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from '@/hooks/useToast';
@@ -134,7 +134,7 @@ export function CalendarSettingsPage() {
   const connectGoogleMutation = useMutation({
     mutationFn: calendarsApi.startGoogleConnect,
     onSuccess: (data) => {
-      window.location.href = data.authUrl;
+      window.location.href = relayHandoffUrl(data.relayStart, data.authUrl);
     },
     onError: () => {
       toast({

@@ -201,7 +201,7 @@ export const calendarsApi = {
     apiGet<{ configured: boolean }>('/calendars/sync/google/status'),
 
   startGoogleConnect: () =>
-    apiPost<{ authUrl: string }>('/calendars/sync/google/connect'),
+    apiPost<{ authUrl: string; relayStart: string }>('/calendars/sync/google/connect'),
 
   getGoogleCalendars: () =>
     apiGet<{ calendars: Array<{
@@ -298,6 +298,23 @@ export const calendarsApi = {
   deleteAccessRule: (calendarId: string, ruleId: string) =>
     apiDelete<{ message: string }>(`/calendars/${calendarId}/access/${ruleId}`),
 };
+
+/**
+ * Send the browser to the OAuth relay rather than straight to Google.
+ *
+ * The relay is the one redirect URI Google will accept, and it has no way to
+ * know where this box lives — nor should it, since it is hosted on the Basis
+ * cloud and household addresses must never reach it. So the box's own origin
+ * rides in the URL fragment, which browsers never send to a server, and the
+ * relay keeps it in its own localStorage for the trip to Google and back.
+ */
+export function relayHandoffUrl(relayStart: string, authUrl: string): string {
+  const params = new URLSearchParams({
+    return: window.location.origin,
+    to: authUrl,
+  });
+  return `${relayStart}#${params.toString()}`;
+}
 
 export interface CalendarAccessRule {
   id: string;

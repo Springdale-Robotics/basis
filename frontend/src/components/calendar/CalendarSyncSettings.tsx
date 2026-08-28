@@ -37,7 +37,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { calendarsApi } from '@/api/calendars';
+import { calendarsApi, relayHandoffUrl } from '@/api/calendars';
 import type { Calendar } from '@/types/models';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from '@/hooks/useToast';
@@ -82,7 +82,7 @@ export function CalendarSyncSettings({ calendars }: CalendarSyncSettingsProps) {
     mutationFn: calendarsApi.startGoogleConnect,
     onSuccess: (data) => {
       // Redirect to Google OAuth
-      window.location.href = data.authUrl;
+      window.location.href = relayHandoffUrl(data.relayStart, data.authUrl);
     },
     onError: () => {
       toast({
