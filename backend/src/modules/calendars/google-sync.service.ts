@@ -158,9 +158,11 @@ export async function fetchGoogleEvents(
 }
 
 // Raw-error fallback cap. This text can end up unmediated in a text column
-// and a websocket payload (CalendarSettingsPage renders calendar.syncError
-// verbatim, no truncation), so an unrecognised, non-Error, non-string throw
-// gets a bounded slice rather than an arbitrarily large JSON blob.
+// and a websocket payload. Every renderer of calendar.syncError splits on
+// `|count:` before display, but the half before that split is still this
+// raw text with no length limit of its own, so an unrecognised, non-Error,
+// non-string throw gets a bounded slice rather than an arbitrarily large
+// JSON blob.
 const MAX_RAW_ERROR_LENGTH = 500;
 
 /**
