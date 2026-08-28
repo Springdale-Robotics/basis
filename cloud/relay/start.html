@@ -37,7 +37,10 @@
         // Stored on THIS origin, in this browser only. It is how we find our
         // way back after Google redirects here with no memory of the box.
         window.localStorage.setItem('basis.return', returnUrl);
-        window.location.assign(to);
+        // replace(), not assign(): leaves no history entry holding the box
+        // address, and stops Back from Google's consent screen landing here
+        // and immediately bouncing the user forward again.
+        window.location.replace(to);
       } catch (err) {
         status.textContent = err.message;
         status.className = 'error';
