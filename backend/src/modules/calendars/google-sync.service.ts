@@ -157,6 +157,37 @@ export async function fetchGoogleEvents(
   return events;
 }
 
+// Raw-error fallback cap. This text can end up unmediated in a text column
+// and a websocket payload (CalendarSettingsPage renders calendar.syncError
+// verbatim, no truncation), so an unrecognised, non-Error, non-string throw
+// gets a bounded slice rather than an arbitrarily large JSON blob.
+const MAX_RAW_ERROR_LENGTH = 500;
+
+/**
+ * Render whatever was thrown as a string, for the cases describeGoogleSyncError
+ * doesn't recognise. `JSON.stringify` is typed as always returning `string`,
+ * but it actually returns the *value* `undefined` for `undefined` input and
+ * throws on a circular structure or a BigInt — either would otherwise violate
+ * this module's `: string` contract silently, since TypeScript doesn't check
+ * JSON.stringify's real runtime behaviour against its declared type.
+ */
+function stringifyUnknownError(err: unknown): string {
+  let json: unknown;
+  try {
+    json = JSON.stringify(err);
+  } catch {
+    json = undefined;
+  }
+
+  if (typeof json !== 'string') {
+    return 'An unrecognised Google Calendar sync error occurred.';
+  }
+
+  return json.length > MAX_RAW_ERROR_LENGTH
+    ? `${json.slice(0, MAX_RAW_ERROR_LENGTH)}… (truncated)`
+    : json;
+}
+
 /**
  * Turn a Google API failure into something a household can act on.
  *
@@ -172,7 +203,7 @@ export function describeGoogleSyncError(err: unknown): string {
       ? err.message
       : typeof err === 'string'
         ? err
-        : JSON.stringify(err);
+        : stringifyUnknownError(err);
 
   const code =
     (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? raw;
@@ -251,7 +282,7 @@ export async function syncCalendarFromGoogle(
           updatedAt: new Date(),
         })
         .where(eq(calendars.id, calendarId));
-      throw new Error('Failed to refresh access token');
+      throw error;
     }
   }
 
