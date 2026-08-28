@@ -99,6 +99,17 @@ export async function buildApp(): Promise<FastifyInstance> {
             'connect-src': ["'self'", 'https://cloudflareinsights.com'],
           },
         },
+    // Pinned, not left to the default. The Google Calendar OAuth relay at
+    // connect.home-basis.com relies on this box's address never reaching the
+    // cloud host — it travels only in a URL fragment, which browsers never
+    // send as a Referer, PROVIDED no Referer is sent at all. @fastify/helmet
+    // already defaults here, but that default is exactly the kind of thing
+    // that changes across a major version; if it ever became
+    // 'strict-origin-when-cross-origin', the HTTP→HTTPS navigation to the
+    // relay would leak this box's LAN address to Cloudflare/DNS as a plain
+    // Referer header (HTTP→HTTPS is an upgrade, not a downgrade, so the
+    // origin IS sent). Do not relax this.
+    referrerPolicy: { policy: 'no-referrer' },
   });
 
   // CORS for API routes. strictPreflight: false lets non-browser OPTIONS
