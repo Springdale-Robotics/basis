@@ -397,7 +397,10 @@ Create `cloud/relay/start.html`:
         // Stored on THIS origin, in this browser only. It is how we find our
         // way back after Google redirects here with no memory of the box.
         window.localStorage.setItem('basis.return', returnUrl);
-        window.location.assign(to);
+        // replace(), not assign(): leaves no history entry holding the box
+        // address, and stops Back from Google's consent screen landing here
+        // and immediately bouncing the user forward again.
+        window.location.replace(to);
       } catch (err) {
         status.textContent = err.message;
         status.className = 'error';
@@ -445,32 +448,48 @@ Create `cloud/relay/index.html`:
       import { buildCallbackUrl, classifyCallback } from '/lib.js';
 
       const status = document.getElementById('status');
+
+      // Google delivered the authorization code in this page's URL. Read it
+      // once, then take it out of the address bar and the history entry. It
+      // is single-use, short-lived and useless without the client secret,
+      // but there is no reason to leave it sitting in a browser's history.
+      const search = window.location.search;
+
       const fail = (message) => {
+        try {
+          window.history.replaceState(null, '', window.location.pathname);
+        } catch {
+          // Best effort — an unscrubbed URL is not worth failing over.
+        }
         status.textContent = message;
         status.className = 'error';
       };
 
-      const verdict = classifyCallback(window.location.search);
+      const verdict = classifyCallback(search);
       if (verdict.kind === 'error') {
         fail(verdict.message);
       } else {
-        const returnUrl = window.localStorage.getItem('basis.return');
-        if (!returnUrl) {
-          // Consent finished in a different browser from the one that started
-          // it. There is deliberately no way for this page to guess the box's
-          // address — see "Why not carry the return URL in state" in the spec.
-          fail(
-            'This browser did not start the connection, so Basis cannot tell ' +
-              'which box to return you to. Open Basis on your box and start ' +
-              'the connection again from Settings → Calendars.'
-          );
-        } else {
-          try {
+        try {
+          // Inside the try: where site storage is blocked, the accessor
+          // itself throws, and the page must say so rather than hang.
+          const returnUrl = window.localStorage.getItem('basis.return');
+          if (!returnUrl) {
+            // Consent finished in a different browser from the one that
+            // started it. There is deliberately no way for this page to guess
+            // the box's address — see "Why not carry the return URL in state"
+            // in the spec.
+            fail(
+              'This browser did not start the connection, so Basis cannot tell ' +
+                'which box to return you to. Open Basis on your box and start ' +
+                'the connection again from Settings → Calendars.'
+            );
+          } else {
             window.localStorage.removeItem('basis.return');
-            window.location.assign(buildCallbackUrl(returnUrl, window.location.search));
-          } catch (err) {
-            fail(err.message);
+            // replace(), not assign(): the code must not survive in history.
+            window.location.replace(buildCallbackUrl(returnUrl, search));
           }
+        } catch (err) {
+          fail(err.message);
         }
       }
     </script>
