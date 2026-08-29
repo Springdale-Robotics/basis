@@ -23,6 +23,19 @@ SELECT id, subdomain, status FROM tenants
 WHERE subdomain IN ('connect', 'connects', 'oauth-relay');
 ```
 
+**Run 2026-08-28 — CLEAR.** `ssh basis-relay`, then
+`sudo -u postgres psql -d basis_cloud`. No tenant holds any of the three names;
+the whole `tenants` table is one row, `shelden | active`. This gate is passed
+and does not need re-running unless a new tenant signs up before deploy.
+
+A correction to the framing below, worth knowing if this ever needs re-running:
+the Caddy block for `connect.home-basis.com` is a literal hostname, and Caddy
+prefers it over the `*.home-basis.com` wildcard. So once Step 3 is deployed,
+that hostname serves the relay whoever owns the tenant row — meaning the real
+risk is **silently taking a paying customer's hostname and breaking their box**,
+not codes being stolen. Codes only go astray if Step 4 runs before Step 3, which
+is why the steps are ordered as they are.
+
 - **Zero rows** → proceed to Step 2.
 - **Any rows** → **stop**. Do not continue to Step 3. The relay hostname has to
   change, and that string appears in the Caddy block, `backend/src/modules/calendars/relay.ts`,
