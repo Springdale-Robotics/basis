@@ -37,7 +37,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { calendarsApi } from '@/api/calendars';
+import { calendarsApi, relayHandoffUrl } from '@/api/calendars';
 import type { Calendar } from '@/types/models';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from '@/hooks/useToast';
@@ -81,8 +81,16 @@ export function CalendarSyncSettings({ calendars }: CalendarSyncSettingsProps) {
   const connectMutation = useMutation({
     mutationFn: calendarsApi.startGoogleConnect,
     onSuccess: (data) => {
-      // Redirect to Google OAuth
-      window.location.href = data.authUrl;
+      try {
+        // Redirect to Google OAuth
+        window.location.href = relayHandoffUrl(data.relayStart, data.authUrl);
+      } catch (err) {
+        toast({
+          title: 'Connection Failed',
+          description: err instanceof Error ? err.message : 'Could not start Google Calendar connection.',
+          variant: 'destructive',
+        });
+      }
     },
     onError: () => {
       toast({
@@ -275,7 +283,7 @@ export function CalendarSyncSettings({ calendars }: CalendarSyncSettingsProps) {
                             {calendar.syncError && (
                               <div className="text-xs text-destructive flex items-center gap-1 mt-1">
                                 <AlertCircle className="h-3 w-3" />
-                                {calendar.syncError}
+                                {calendar.syncError.split('|count:')[0]}
                               </div>
                             )}
                           </div>

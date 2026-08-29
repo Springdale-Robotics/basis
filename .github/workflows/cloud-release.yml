@@ -129,7 +129,8 @@ jobs:
           # Layout is what cloud/deploy/update.sh expects: the compiled server
           # (dist/ is a tsc emit, NOT a bundle — package.json + lockfile ship
           # so the host runs `npm ci --omit=dev` for runtime deps), the drizzle
-          # migrations, the built frontend, and the deploy scripts themselves.
+          # migrations, the built frontend, the deploy scripts themselves, and
+          # the OAuth relay's static files (no build step — served as-is).
           STAGE=staging/basis-cloud-${{ steps.version.outputs.version }}
           mkdir -p "$STAGE/server" "$STAGE/frontend"
           echo "${{ steps.version.outputs.version }}" > "$STAGE/VERSION"
@@ -139,6 +140,7 @@ jobs:
           cp -r cloud/server/drizzle           "$STAGE/server/drizzle"
           cp -r cloud/frontend/dist            "$STAGE/frontend/dist"
           cp -r cloud/deploy                   "$STAGE/deploy"
+          cp -r cloud/relay                    "$STAGE/relay"
 
       - name: Pack tarball
         run: |

@@ -22,6 +22,7 @@ import {
   listOutlookCalendars,
   syncCalendarFromOutlook,
 } from './outlook-sync.service.js';
+import { googleRedirectUri, relayStartUrl } from './relay.js';
 
 const OAUTH_STATE_TTL = 600; // 10 minutes
 
@@ -62,17 +63,14 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
         JSON.stringify(stateData)
       );
 
-      // Get the redirect URI from the request
-      const protocol = request.headers['x-forwarded-proto'] || 'http';
-      const host = request.headers['x-forwarded-host'] || request.headers.host;
-      const redirectUri = `${protocol}://${host}/api/v1/calendars/sync/google/callback`;
+      const redirectUri = googleRedirectUri();
 
       const oauth2Client = createOAuth2Client(redirectUri);
       const authUrl = getAuthUrl(oauth2Client, state);
 
       return {
         success: true,
-        data: { authUrl },
+        data: { authUrl, relayStart: relayStartUrl() },
       };
     }
   );
@@ -105,10 +103,7 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
         householdId: string;
       };
 
-      // Get the redirect URI
-      const protocol = request.headers['x-forwarded-proto'] || 'http';
-      const host = request.headers['x-forwarded-host'] || request.headers.host;
-      const redirectUri = `${protocol}://${host}/api/v1/calendars/sync/google/callback`;
+      const redirectUri = googleRedirectUri();
 
       try {
         const oauth2Client = createOAuth2Client(redirectUri);

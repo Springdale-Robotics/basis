@@ -16,6 +16,7 @@ import {
   Palette,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import {
   Card,
@@ -43,7 +44,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { calendarsApi } from '@/api/calendars';
+import { calendarsApi, relayHandoffUrl } from '@/api/calendars';
 import type { Calendar } from '@/types/models';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from '@/hooks/useToast';
@@ -134,7 +135,15 @@ export function CalendarSettingsPage() {
   const connectGoogleMutation = useMutation({
     mutationFn: calendarsApi.startGoogleConnect,
     onSuccess: (data) => {
-      window.location.href = data.authUrl;
+      try {
+        window.location.href = relayHandoffUrl(data.relayStart, data.authUrl);
+      } catch (err) {
+        toast({
+          title: 'Connection Failed',
+          description: err instanceof Error ? err.message : 'Could not start Google Calendar connection.',
+          variant: 'destructive',
+        });
+      }
     },
     onError: () => {
       toast({
@@ -457,6 +466,24 @@ export function CalendarSettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Only relevant once Google is actually configured — otherwise a
+              household importing an ICS file or connecting Outlook sees
+              Google Cloud console advice for an integration it can't even
+              use yet. */}
+          {isGoogleConfigured && (
+            <Alert className="mb-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Set your consent screen to &ldquo;In production&rdquo; first</AlertTitle>
+              <AlertDescription>
+                While a Google Cloud project is on &ldquo;Testing&rdquo;, Google expires access seven
+                days after you connect and your calendar quietly stops syncing. You will also need to
+                add this as an authorised redirect URI on your OAuth client:{' '}
+                <code className="rounded bg-muted px-1 py-0.5 text-xs">
+                  https://connect.home-basis.com/oauth/google
+                </code>
+              </AlertDescription>
+            </Alert>
+          )}
           <div className="flex flex-wrap gap-3">
             {/* Google Calendar */}
             <Button

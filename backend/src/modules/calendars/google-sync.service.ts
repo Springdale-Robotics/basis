@@ -157,6 +157,71 @@ export async function fetchGoogleEvents(
   return events;
 }
 
+// Raw-error fallback cap. This text can end up unmediated in a text column
+// and a websocket payload. Every renderer of calendar.syncError splits on
+// `|count:` before display, but the half before that split is still this
+// raw text with no length limit of its own, so an unrecognised, non-Error,
+// non-string throw gets a bounded slice rather than an arbitrarily large
+// JSON blob.
+const MAX_RAW_ERROR_LENGTH = 500;
+
+/**
+ * Render whatever was thrown as a string, for the cases describeGoogleSyncError
+ * doesn't recognise. `JSON.stringify` is typed as always returning `string`,
+ * but it actually returns the *value* `undefined` for `undefined` input and
+ * throws on a circular structure or a BigInt — either would otherwise violate
+ * this module's `: string` contract silently, since TypeScript doesn't check
+ * JSON.stringify's real runtime behaviour against its declared type.
+ */
+function stringifyUnknownError(err: unknown): string {
+  let json: unknown;
+  try {
+    json = JSON.stringify(err);
+  } catch {
+    json = undefined;
+  }
+
+  if (typeof json !== 'string') {
+    return 'An unrecognised Google Calendar sync error occurred.';
+  }
+
+  return json.length > MAX_RAW_ERROR_LENGTH
+    ? `${json.slice(0, MAX_RAW_ERROR_LENGTH)}… (truncated)`
+    : json;
+}
+
+/**
+ * Turn a Google API failure into something a household can act on.
+ *
+ * The case worth special-casing is `invalid_grant`. A Google Cloud project
+ * whose consent screen is still on the "Testing" publishing status expires
+ * every refresh token seven days after consent, so a calendar that connected
+ * fine simply stops a week later. The API error says nothing about why, and
+ * the household has no reason to connect the two events.
+ */
+export function describeGoogleSyncError(err: unknown): string {
+  const raw =
+    err instanceof Error
+      ? err.message
+      : typeof err === 'string'
+        ? err
+        : stringifyUnknownError(err);
+
+  const code =
+    (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? raw;
+
+  if (typeof code === 'string' && code.includes('invalid_grant')) {
+    return (
+      'Google rejected the saved credentials (invalid_grant). This usually means ' +
+      'the Google Cloud project is still on the "Testing" publishing status, which ' +
+      'expires access seven days after you connect. In the Google Cloud console, ' +
+      'set the consent screen to "In production", then reconnect the calendar in Basis.'
+    );
+  }
+
+  return raw;
+}
+
 export async function syncCalendarFromGoogle(
   calendarId: string,
   householdId: string
@@ -215,11 +280,11 @@ export async function syncCalendarFromGoogle(
       await db
         .update(calendars)
         .set({
-          syncError: 'Authentication expired. Please reconnect your Google account.',
+          syncError: describeGoogleSyncError(error),
           updatedAt: new Date(),
         })
         .where(eq(calendars.id, calendarId));
-      throw new Error('Failed to refresh access token');
+      throw error;
     }
   }
 

@@ -1,6 +1,6 @@
 # Caddyfile — Basis Remote (home-basis.com).
 #
-# Installed to /etc/caddy/Caddyfile by provision.sh. All three sites use
+# Installed to /etc/caddy/Caddyfile by provision.sh. All four sites use
 # ACME DNS-01 via the Cloudflare DNS plugin (caddy add-package
 # github.com/caddy-dns/cloudflare) so the wildcard cert can be issued.
 # CLOUDFLARE_API_TOKEN comes from /etc/caddy/env (chmod 600), wired in via a
@@ -30,6 +30,37 @@ www.home-basis.com {
 		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
 	}
 	redir https://home-basis.com{uri} permanent
+}
+
+# OAuth relay. The single redirect URI registered on every household's own
+# Google client under Option A — there is no Basis-owned client until phase
+# 3. Static files only — no server, no storage, no cookies.
+#
+# Do NOT add an access log to this site, and if one is ever added globally,
+# exclude /oauth/*. Google delivers the authorization `code` as a query
+# parameter, and household material must never land on the cloud host.
+connect.home-basis.com {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+
+	root * /opt/basis-cloud/current/relay
+
+	# no-cache, not a long max-age: lib.js/start.js/callback.js will change
+	# again in phase 3, and a stale cached copy of OAuth glue would be hard
+	# to reason about. CSP: two pages, each loading one same-origin module
+	# (script-src 'self') with an inline <style> block (style-src
+	# 'unsafe-inline'); nothing else runs here, so default-src 'none'.
+	header {
+		Cache-Control "no-cache"
+		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'"
+	}
+
+	# /oauth/google → index.html (Google's redirect target)
+	# /oauth/google/start → start.html (the pre-flight bounce)
+	rewrite /oauth/google/start /start.html
+	rewrite /oauth/google /index.html
+	file_server
 }
 
 # Tenant tunnels: *.home-basis.com → frps HTTP vhost router (loopback).

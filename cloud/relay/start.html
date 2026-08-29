@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Connecting to Google — Basis</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 32rem;
+        margin: 4rem auto;
+        padding: 0 1.5rem;
+        line-height: 1.6;
+        color: #1f2933;
+        background: #fff;
+      }
+      @media (prefers-color-scheme: dark) {
+        body { color: #e4e7eb; background: #16181d; }
+      }
+      .error { color: #b4232c; }
+      @media (prefers-color-scheme: dark) { .error { color: #ff8a8a; } }
+    </style>
+  </head>
+  <body>
+    <h1>Connecting to Google</h1>
+    <p id="status">One moment…</p>
+    <!-- Absolute src, not './start.js' — see the note inside start.js. External
+         file (not an inline script) so the Content-Security-Policy in the
+         Caddyfile can omit 'unsafe-inline' from script-src. -->
+    <script type="module" src="/start.js"></script>
+  </body>
+</html>
