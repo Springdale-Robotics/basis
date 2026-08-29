@@ -23,7 +23,8 @@ SELECT id, subdomain, status FROM tenants
 WHERE subdomain IN ('connect', 'connects', 'oauth-relay');
 ```
 
-**Run 2026-08-28 — CLEAR.** `ssh basis-relay`, then
+**Run 2026-08-28 — CLEAR.** *(Step 2 also complete: cloud-v0.1.3 live, relay
+files landed, all services healthy. Steps 3-5 remain.)* `ssh basis-relay`, then
 `sudo -u postgres psql -d basis_cloud`. No tenant holds any of the three names;
 the whole `tenants` table is one row, `shelden | active`. This gate is passed
 and does not need re-running unless a new tenant signs up before deploy.
@@ -64,6 +65,22 @@ In order:
    ```bash
    sudo bash /opt/basis-cloud/current/deploy/update.sh --version cloud-v0.1.3
    ```
+
+   **If that fails, re-run it with the NEW release's script.** `current` points
+   at the *previous* version, so `current/deploy/update.sh` is the previous
+   release's copy — and any release that changes `update.sh` itself will not be
+   using the fixed version. This bit on the 0.1.3 deploy: 0.1.2's script
+   bash-sources the whole `.env`, and `EMAIL_FROM=Basis Remote <noreply@…>` is a
+   bash syntax error, so migrations aborted. It failed safely — the symlink was
+   not swapped and 0.1.2 kept serving — and the staged new version was already
+   on disk, so the fix was simply:
+
+   ```bash
+   sudo bash /opt/basis-cloud/versions/0.1.3/deploy/update.sh --version cloud-v0.1.3
+   ```
+
+   The staged directory exists because the script downloads and unpacks before
+   it migrates. Substitute the version you are deploying.
 
 Then confirm the relay actually landed, before touching Caddy:
 
