@@ -152,8 +152,18 @@ ok "Service users present (basis-cloud, frps)"
 
 # ─── directory layout ─────────────────────────────────────────────────────
 log "Creating directory layout"
-install -d -o basis-cloud -g basis-cloud -m 750 "$APP_ROOT"
-install -d -o basis-cloud -g basis-cloud -m 750 "$APP_ROOT/versions"
+# 751, not 750: Caddy serves the OAuth relay's static files straight out of
+# the release directory ($APP_ROOT/current/relay), and it runs as the `caddy`
+# user. Without the o+x on these two parents it cannot traverse to them and
+# file_server answers 403 for every relay asset — with the site block matching
+# and looking healthy, which makes it a confusing failure.
+#
+# Traverse only, deliberately: there is no o+r, so other users still cannot
+# LIST these directories, and $ENV_FILE stays 0600 (chmod below) so the
+# Stripe and SMTP secrets remain unreadable. Everything under versions/ is
+# already world-readable application code.
+install -d -o basis-cloud -g basis-cloud -m 751 "$APP_ROOT"
+install -d -o basis-cloud -g basis-cloud -m 751 "$APP_ROOT/versions"
 install -d -o root -g frps -m 750 /etc/frp
 install -d -o basis-cloud -g basis-cloud -m 750 /var/backups/basis-cloud
 
