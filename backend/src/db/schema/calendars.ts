@@ -167,9 +167,10 @@ export const calendarChanges = pgTable(
       .notNull()
       .references(() => calendars.id, { onDelete: 'cascade' }),
     eventUid: varchar('event_uid', { length: 255 }).notNull(),
-    // The provider's id for the event, captured on delete rows only — the row
-    // itself is gone by the time the outbound sweep reads this, so this is the
-    // only handle left to delete it at the provider by.
+    // The provider's id for the event, recorded on every journal row (add,
+    // update, and delete). It is load-bearing only on delete rows: the event
+    // row itself is gone by the time the outbound sweep reads the journal, so
+    // this is the only handle left to delete it at the provider by.
     externalId: varchar('external_id', { length: 255 }),
     changeType: calendarChangeTypeEnum('change_type').notNull(),
     syncToken: integer('sync_token').notNull(),

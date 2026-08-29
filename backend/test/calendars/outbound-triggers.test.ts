@@ -91,8 +91,13 @@ describe('calendar triggers and remote_updated', () => {
     expect(journalAfter.length).toBe(journalBefore.length);
   });
 
-  it('still bumps revision when a real field changes alongside remote_updated', async () => {
+  it('still bumps revision, syncToken, ctag, and journals when a real field changes alongside remote_updated', async () => {
     const event = await makeEvent('google-event-2');
+    const before = await db.query.calendars.findFirst({ where: eq(calendars.id, calendarId) });
+    const journalBefore = await db
+      .select()
+      .from(calendarChanges)
+      .where(eq(calendarChanges.calendarId, calendarId));
 
     await db
       .update(calendarEvents)
@@ -102,7 +107,20 @@ describe('calendar triggers and remote_updated', () => {
     const after = await db.query.calendarEvents.findFirst({
       where: eq(calendarEvents.id, event.id),
     });
+    const calAfter = await db.query.calendars.findFirst({ where: eq(calendars.id, calendarId) });
+    const journalAfter = await db
+      .select()
+      .from(calendarChanges)
+      .where(eq(calendarChanges.calendarId, calendarId));
+
+    // Mirror of the suppressed case above: this is the guard's exact inverse,
+    // and the one that matters most — a guard that's too aggressive here
+    // would silently stop journaling real edits, and every CalDAV client
+    // would miss the change.
     expect(after!.revision).toBeGreaterThan(event.revision);
+    expect(calAfter!.syncToken).toBeGreaterThan(before!.syncToken);
+    expect(calAfter!.ctag).not.toBe(before!.ctag);
+    expect(journalAfter.length).toBe(journalBefore.length + 1);
   });
 
   it('captures external_id onto the journal row when an event is deleted', async () => {

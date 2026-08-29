@@ -114,8 +114,12 @@ AS $function$
 BEGIN
   -- Same guard as the sync trigger, for the same reason: revision is what
   -- CalDAV ETags are built from, and a bump makes every subscribed client
-  -- re-download the event.
-  IF NEW.remote_updated IS DISTINCT FROM OLD.remote_updated
+  -- re-download the event. This function is only ever bound BEFORE UPDATE
+  -- (see the trigger definition in 0004), so TG_OP = 'UPDATE' always holds
+  -- here in practice — but the check is spelled out anyway so the guard is
+  -- correct to read on its own, without knowing that binding.
+  IF TG_OP = 'UPDATE'
+     AND NEW.remote_updated IS DISTINCT FROM OLD.remote_updated
      AND (to_jsonb(NEW) - 'remote_updated') = (to_jsonb(OLD) - 'remote_updated') THEN
     RETURN NEW;
   END IF;
