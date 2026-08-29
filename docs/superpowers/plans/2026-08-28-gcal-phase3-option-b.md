@@ -56,7 +56,13 @@ These are not executor tasks. They require a human with access to the Google Clo
 
 Sensitive-scope verification requires the app's domain to be verified in Google Search Console, by an account that is also an owner of the Google Cloud project. Basis controls the DNS for `home-basis.com`, so this is a TXT record.
 
-- [ ] **O2: Publish a privacy policy at `https://home-basis.com/privacy`**
+- [x] **O2: Publish a privacy policy at `https://home-basis.com/privacy`** —
+      **done 2026-08-29.** `cloud/frontend/src/pages/marketing/PrivacyPage.tsx`,
+      linked from the marketing footer (Google's verification checks that the
+      homepage links the policy). It carries a "Google user data" heading, names
+      both scopes exactly, states that calendar data moves directly between
+      Google and the household's box, and includes the Limited Use sentence.
+      Written for the phase 3 reviewer, not just to satisfy the Branding form.
 
 It must be on the same domain as the app, reachable without a login, and it must describe what Basis does with Google user data specifically: that calendar data is synced directly between Google and the household's own box, that it is not stored on Basis servers, and that the tokens live encrypted on the household's hardware. Verification reviewers read this against the scopes requested.
 
