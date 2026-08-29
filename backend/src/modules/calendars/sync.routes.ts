@@ -12,6 +12,7 @@ import {
   createOAuth2Client,
   getAuthUrl,
   getTokensFromCode,
+  describeGoogleSyncError,
   listGoogleCalendars,
   syncCalendarFromGoogle,
 } from './google-sync.service.js';
@@ -143,7 +144,16 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
         expiry_date: number;
       };
 
-      const googleCalendars = await listGoogleCalendars(tokens.access_token);
+      let googleCalendars;
+      try {
+        googleCalendars = await listGoogleCalendars(tokens.access_token);
+      } catch (err) {
+        // Google's refusals here are usually actionable by the household —
+        // the Calendar API not enabled on their project, consent revoked,
+        // a scope missing. Uncaught, they became a generic 500 and the
+        // picker rendered an empty dropdown with nothing to act on.
+        throw Errors.validation(describeGoogleSyncError(err));
+      }
 
       return {
         success: true,

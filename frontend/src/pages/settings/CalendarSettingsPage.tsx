@@ -119,10 +119,17 @@ export function CalendarSettingsPage() {
   });
 
   // Get provider calendars
-  const { data: googleCalendars, isLoading: loadingGoogleCalendars } = useQuery({
+  const {
+    data: googleCalendars,
+    isLoading: loadingGoogleCalendars,
+    error: googleCalendarsError,
+  } = useQuery({
     queryKey: ['google-calendars'],
     queryFn: calendarsApi.getGoogleCalendars,
     enabled: googleSelectOpen,
+    // Google's refusals here are actionable by the household (Calendar API
+    // not enabled, consent revoked). Retrying just delays showing them.
+    retry: false,
   });
 
   const { data: outlookCalendars, isLoading: loadingOutlookCalendars } = useQuery({
@@ -660,6 +667,20 @@ export function CalendarSettingsPage() {
             <div className="flex items-center justify-center py-8">
               <LoadingSpinner size="lg" />
             </div>
+          ) : googleCalendarsError ? (
+            // Without this the dropdown simply renders empty, which is what a
+            // household saw when their Google Cloud project had not enabled
+            // the Calendar API — Google said exactly what to do and nobody
+            // ever saw it.
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Could not load your Google calendars</AlertTitle>
+              <AlertDescription className="whitespace-pre-wrap break-words">
+                {googleCalendarsError instanceof Error
+                  ? googleCalendarsError.message
+                  : 'Google did not return your calendar list. Try connecting again.'}
+              </AlertDescription>
+            </Alert>
           ) : (
             <div className="space-y-4">
               <div className="space-y-2">
