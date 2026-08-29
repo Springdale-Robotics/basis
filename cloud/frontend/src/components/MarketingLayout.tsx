@@ -169,6 +169,9 @@ export function MarketingLayout() {
             <Link to="/security" className="hover:text-stone-900">
               Security
             </Link>
+            <Link to="/privacy" className="hover:text-stone-900">
+              Privacy
+            </Link>
             <Link to="/about" className="hover:text-stone-900">
               About
             </Link>

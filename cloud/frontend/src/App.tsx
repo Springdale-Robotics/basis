@@ -9,6 +9,7 @@ import { DocsPage } from '@/pages/marketing/DocsPage';
 import { HomePage } from '@/pages/marketing/HomePage';
 import { PricingPage } from '@/pages/marketing/PricingPage';
 import { SecurityPage } from '@/pages/marketing/SecurityPage';
+import { PrivacyPage } from '@/pages/marketing/PrivacyPage';
 import { LoginPage, SignupPage } from '@/pages/app/AuthPage';
 import { ForgotPasswordPage } from '@/pages/app/ForgotPasswordPage';
 import { ResetPasswordPage } from '@/pages/app/ResetPasswordPage';
@@ -55,6 +56,7 @@ export function App() {
           <Route path="pricing" element={<PricingPage />} />
           <Route path="docs" element={<DocsPage />} />
           <Route path="security" element={<SecurityPage />} />
+          <Route path="privacy" element={<PrivacyPage />} />
           <Route path="about" element={<AboutPage />} />
         </Route>
 
