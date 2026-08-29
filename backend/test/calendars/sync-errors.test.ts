@@ -50,3 +50,53 @@ describe('describeGoogleSyncError', () => {
     expect(message.length).toBeLessThan(600);
   });
 });
+
+describe('describeGoogleSyncError — Calendar API not enabled', () => {
+  // The exact shape google-auth-library throws when the project has not
+  // enabled the Calendar API. Taken from a real 403 observed on a live box.
+  const serviceDisabled = Object.assign(
+    new Error(
+      'Google Calendar API has not been used in project 461160055088 before ' +
+        'or it is disabled. Enable it by visiting ' +
+        'https://console.developers.google.com/apis/api/calendar-json.googleapis.com/overview?project=461160055088 ' +
+        'then retry.'
+    ),
+    {
+      code: 403,
+      response: {
+        data: {
+          error: {
+            code: 403,
+            status: 'PERMISSION_DENIED',
+            errors: [{ reason: 'accessNotConfigured' }],
+          },
+        },
+      },
+    }
+  );
+
+  it('explains that the Calendar API must be enabled', () => {
+    const message = describeGoogleSyncError(serviceDisabled);
+    expect(message).toMatch(/Calendar API/i);
+    expect(message).toMatch(/enable/i);
+  });
+
+  it('keeps the activation link Google supplied, so the fix is one click', () => {
+    expect(describeGoogleSyncError(serviceDisabled)).toContain(
+      'https://console.developers.google.com/apis/api/calendar-json.googleapis.com/overview?project=461160055088'
+    );
+  });
+
+  it('does not mistake it for the Testing-consent-screen case', () => {
+    expect(describeGoogleSyncError(serviceDisabled)).not.toMatch(/Testing/);
+  });
+
+  it('still returns a plain object-shaped provider error unchanged', () => {
+    // A 403 that is NOT accessNotConfigured must not get the enable-API advice.
+    const forbidden = Object.assign(new Error('Insufficient Permission'), {
+      code: 403,
+      response: { data: { error: { code: 403, errors: [{ reason: 'forbidden' }] } } },
+    });
+    expect(describeGoogleSyncError(forbidden)).toBe('Insufficient Permission');
+  });
+});
