@@ -469,7 +469,9 @@ export function CalendarSettingsPage() {
         <CardHeader>
           <CardTitle>Add Calendar</CardTitle>
           <CardDescription>
-            Connect an external calendar or import events from an ICS file.
+            Connect an external calendar or import events from an ICS file. To
+            sync more than one calendar from the same account, connect again and
+            pick a different one each time.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
