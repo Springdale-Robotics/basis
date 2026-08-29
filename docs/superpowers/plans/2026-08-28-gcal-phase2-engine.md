@@ -15,6 +15,14 @@
 ## Global Constraints
 
 - **`drizzle-kit generate` is broken in this repo** — it emits ESM `.js` specifiers it then cannot read. **Every migration in this plan is hand-authored**, three files each: the `.sql` in `backend/drizzle/`, an entry appended to `backend/drizzle/meta/_journal.json`, and a `backend/drizzle/meta/NNNN_snapshot.json`. Do not run `npm run db:generate`. This is the single most likely way to get stuck; the migration tasks restate it.
+- **`npm run db:migrate` silently no-ops when an already-applied migration's file
+  changes.** Drizzle keys off the journal's `when` timestamp, not a re-check of file
+  contents, so editing a migration that already ran leaves the live schema stale while
+  printing "completed successfully". In dev, apply the SQL directly (or reset) after
+  editing — otherwise you are testing the OLD function bodies. In production, a fix to
+  an already-released migration must be a NEW migration; editing the old file does
+  nothing on any box that already ran it. This bites hardest on `CREATE OR REPLACE
+  FUNCTION`, where the stale body is invisible and the tests pass against it.
 - **Migrations are idempotent.** Follow `0004_calendar_sync_triggers.sql`: `CREATE OR REPLACE FUNCTION`, `DROP TRIGGER IF EXISTS` before `CREATE TRIGGER`, `ADD COLUMN IF NOT EXISTS`.
 - **Multi-tenancy:** every query filters by `householdId` from `request.user!.householdId`, and caller-supplied ids are verified against it. New household-scoped tables need an RLS policy following `drizzle/0008_rls_all_tables.sql` plus a check in `backend/test/rls/`. *This plan adds no tables* — only columns on existing ones, which the existing policies already cover.
 - **Workers run as the DB owner and bypass RLS by design.** The outbound worker is a worker: it must filter by calendar explicitly, because nothing else will.
