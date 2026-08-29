@@ -216,13 +216,57 @@ here, in the console.
 
 ## Step 5 — Deploy the box, and connect a calendar
 
-Deploy the backend and frontend to the box, then connect a Google calendar from
-Settings → Calendars.
+**This needs an app release first, and credentials on the box.** Neither is
+implied by "deploy the box", which is what this step used to say.
 
-This is the one path I could not exercise: the dev environment has no
-`GOOGLE_CLIENT_ID`, so `/sync/google/connect` throws before returning an auth
-URL. Everything downstream of that response is verified; the response itself
-carrying `relayStart` is not.
+**5a. Credentials.** There is no UI for these (see the section below), so they
+go in the box's env directly. `install.sh` excludes `.env` from its rsync, so
+they survive future updates:
+
+```bash
+sudo tee -a /opt/basis/.env >/dev/null <<'ENV'
+GOOGLE_CLIENT_ID=….apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-…
+ENV
+sudo systemctl restart basis basis-worker
+```
+
+No quotes, no spaces around `=` — `install.sh` bash-sources this file, and that
+is the exact construct that broke the cloud deploy on
+`EMAIL_FROM=Basis Remote <noreply@…>`.
+
+**5b. Cut an app release and update the box.** The relay code reaches a box only
+through a release; a box on an older version still builds the redirect URI from
+its `Host` header and will fail with `redirect_uri_mismatch` no matter how well
+the relay works. Tag `v0.1.35-alpha` (or later) on `main`, then update via
+Settings → Updates.
+
+Expect the update dialog to show **"xhr poll error / did not complete"** when
+the service restarts and the websocket drops. Known open bug — the update has
+usually succeeded. Reload and check the version rather than believing the
+dialog.
+
+**5c. Verify before connecting:**
+
+```bash
+ssh basis 'cat /opt/basis/current/VERSION; \
+  ls /opt/basis/current/backend/dist/modules/calendars/relay.js'
+```
+
+If `relay.js` is missing, stop — the box does not have the relay code and
+connecting will fail confusingly.
+
+**5d. Connect** a Google calendar from Settings → Calendars.
+
+This is the one path that could not be exercised before going live: the dev
+environment has no `GOOGLE_CLIENT_ID`, so `/sync/google/connect` throws before
+returning an auth URL. Everything downstream of that response is verified; the
+response itself carrying `relayStart` is not.
+
+**Watch the address bar on the first hop.** It must be
+`connect.home-basis.com/oauth/google/start#return=…` — with a `#`. If it is
+`?return=`, stop: the box's address is being sent to the cloud host, which is
+the single thing this design exists to prevent.
 
 What you should see: the browser stops at
 `connect.home-basis.com/oauth/google/start`, goes to Google, comes back, and
