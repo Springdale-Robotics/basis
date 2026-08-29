@@ -44,17 +44,44 @@ is why the steps are ordered as they are.
 
 ---
 
-## Step 2 — Deploy the cloud host
+## Step 2 — Merge, cut a cloud release, then deploy it
 
-Normal repo → deploy. Two things ride along:
+**This step has prerequisites the first draft of this runbook glossed over.**
+Production is on `cloud-v0.1.2` (deployed 2026-07-06), and
+`/opt/basis-cloud/current/` holds only `VERSION`, `deploy`, `frontend` and
+`server`. The relay ships in the tarball only because of the staging fix on
+this branch, so deploying the existing release would change nothing.
+
+In order:
+
+1. **Merge PR #104 to `main`** (squash or rebase — `main` wants linear history).
+2. **Tag and push `cloud-v0.1.3`.** That is what triggers
+   `.github/workflows/cloud-release.yml`, which runs its verify job and then
+   builds the tarball — now including `relay/` alongside `server/` and
+   `frontend/`.
+3. **On the cloud host** (`ssh basis-relay`):
+
+   ```bash
+   sudo bash /opt/basis-cloud/current/deploy/update.sh --version cloud-v0.1.3
+   ```
+
+Then confirm the relay actually landed, before touching Caddy:
+
+```bash
+sudo ls /opt/basis-cloud/current/relay
+# expect: callback.js  index.html  lib.js  start.html  start.js
+```
+
+If that directory is missing, stop — the staging fix did not make it into the
+release, and Step 3 would leave the site serving nothing.
+
+Two things ride along with this release:
 
 - `cloud/server/src/lib/reserved-subdomains.ts` — `connect`, `connects` and
   `oauth-relay` become unclaimable at checkout.
 - `cloud/relay/` — static files only (`index.html`, `start.html`, `lib.js`,
-  `start.js`, `callback.js`).
-  The release workflow now stages them into the tarball alongside the server
-  and frontend, so they ship and land at `/opt/basis-cloud/current/relay`
-  with no separate build or copy step of your own.
+  `start.js`, `callback.js`), landing at `/opt/basis-cloud/current/relay`.
+  No separate build or copy step of your own.
 
 ---
 
