@@ -23,7 +23,8 @@ SELECT id, subdomain, status FROM tenants
 WHERE subdomain IN ('connect', 'connects', 'oauth-relay');
 ```
 
-**Run 2026-08-28 — CLEAR.** `ssh basis-relay`, then
+**Run 2026-08-28 — CLEAR.** *(Step 2 also complete: cloud-v0.1.3 live, relay
+files landed, all services healthy. Steps 3-5 remain.)* `ssh basis-relay`, then
 `sudo -u postgres psql -d basis_cloud`. No tenant holds any of the three names;
 the whole `tenants` table is one row, `shelden | active`. This gate is passed
 and does not need re-running unless a new tenant signs up before deploy.
@@ -65,6 +66,22 @@ In order:
    sudo bash /opt/basis-cloud/current/deploy/update.sh --version cloud-v0.1.3
    ```
 
+   **If that fails, re-run it with the NEW release's script.** `current` points
+   at the *previous* version, so `current/deploy/update.sh` is the previous
+   release's copy — and any release that changes `update.sh` itself will not be
+   using the fixed version. This bit on the 0.1.3 deploy: 0.1.2's script
+   bash-sources the whole `.env`, and `EMAIL_FROM=Basis Remote <noreply@…>` is a
+   bash syntax error, so migrations aborted. It failed safely — the symlink was
+   not swapped and 0.1.2 kept serving — and the staged new version was already
+   on disk, so the fix was simply:
+
+   ```bash
+   sudo bash /opt/basis-cloud/versions/0.1.3/deploy/update.sh --version cloud-v0.1.3
+   ```
+
+   The staged directory exists because the script downloads and unpacks before
+   it migrates. Substitute the version you are deploying.
+
 Then confirm the relay actually landed, before touching Caddy:
 
 ```bash
@@ -101,13 +118,32 @@ validating:
 sudo install -m 644 /opt/basis-cloud/current/deploy/Caddyfile /etc/caddy/Caddyfile
 ```
 
-Then, on the cloud host, where the Cloudflare DNS plugin is built in:
+Then validate — **with the systemd environment loaded, or the result is
+meaningless**:
 
 ```bash
-caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo --preserve-env=CLOUDFLARE_API_TOKEN \
+  env $(sudo cat /etc/caddy/env | xargs) \
+  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 ```
 
 Expect `Valid configuration`.
+
+A plain `sudo caddy validate` does **not** work here, and its failure looks
+alarming while meaning nothing:
+
+```
+Error: ... loading module 'cloudflare': API token '' appears invalid
+```
+
+That is only because `caddy validate` run by hand does not get the
+`EnvironmentFile=/etc/caddy/env` that the systemd unit supplies, so
+`{env.CLOUDFLARE_API_TOKEN}` expands to empty. The running service has it. This
+bit the 0.1.3 rollout: validate failed for exactly this reason, and because the
+check was piped into `tail` the non-zero exit was swallowed and the reload went
+ahead anyway. It happened to be safe — the config was fine — but the guard was
+not working. **If you script this, do not pipe `caddy validate` into anything;
+test its exit status directly.**
 
 I have already validated this config two ways locally, so this is a
 belt-and-braces check rather than the only one:
@@ -123,7 +159,24 @@ You will also see a pre-existing warning, `Caddyfile input is not formatted`, at
 line 9. It appears identically on the commit *before* this work, so it is not
 from these changes. `caddy fmt` would rewrite unrelated lines; I left it.
 
-Then reload, and confirm over the real certificate:
+Then reload, and confirm over the real certificate.
+
+**If every relay path returns 403 after a clean reload, it is filesystem
+permissions, not Caddy.** `$APP_ROOT` and `$APP_ROOT/versions` were created
+`0750` owned by `basis-cloud`, and Caddy runs as `caddy`, so `file_server`
+cannot traverse to the release directory. The site block still matches — the
+403 carries this block's own `Cache-Control` and CSP headers, which is how you
+tell it apart from the `*.home-basis.com` suspension gate's 403.
+
+`provision.sh` now creates those two directories `0751`, so a fresh install is
+fine. An existing host provisioned before that change needs it once:
+
+```bash
+sudo chmod o+x /opt/basis-cloud /opt/basis-cloud/versions
+```
+
+Traverse only — no `o+r`, so nothing new becomes listable, and `.env` stays
+`0600`. Verify with `sudo -u caddy test -r /opt/basis-cloud/current/relay/index.html`.
 
 ```bash
 curl -sI https://connect.home-basis.com/oauth/google       # expect 200
