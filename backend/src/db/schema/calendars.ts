@@ -42,6 +42,11 @@ export const calendars = pgTable('calendars', {
   // syncToken = monotonic per-calendar counter (RFC 6578 sync-collection REPORT).
   ctag: varchar('ctag', { length: 64 }),
   syncToken: integer('sync_token').notNull().default(0),
+  // How far the outbound sweep has read this calendar's change journal.
+  outboundCursor: integer('outbound_cursor').notNull().default(0),
+  // When the sweep last pushed anything for this calendar. Drives the
+  // five-minute polling tick; see shouldSyncOnActiveTick.
+  lastOutboundAt: timestamp('last_outbound_at'),
   timezone: varchar('timezone', { length: 64 }).notNull().default('UTC'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -71,6 +76,10 @@ export const calendarEvents = pgTable('calendar_events', {
   originalStartTime: timestamp('original_start_time', { withTimezone: true }),  // Original occurrence time (unique identifier for exception)
   recurrenceStatus: recurrenceStatusEnum('recurrence_status'),  // 'master' | 'exception' | 'cancelled'
   externalId: varchar('external_id', { length: 255 }),
+  // Google's `updated` timestamp for this event, stored on every push and
+  // every pull. A row whose updatedAt is newer has been edited locally since
+  // Google last saw it — that is how the outbound sweep finds work.
+  remoteUpdated: timestamp('remote_updated'),
   // Bumped on every event write — drives ETag for CalDAV GET/PUT.
   revision: integer('revision').notNull().default(1),
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -158,6 +167,10 @@ export const calendarChanges = pgTable(
       .notNull()
       .references(() => calendars.id, { onDelete: 'cascade' }),
     eventUid: varchar('event_uid', { length: 255 }).notNull(),
+    // The provider's id for the event, captured on delete rows only — the row
+    // itself is gone by the time the outbound sweep reads this, so this is the
+    // only handle left to delete it at the provider by.
+    externalId: varchar('external_id', { length: 255 }),
     changeType: calendarChangeTypeEnum('change_type').notNull(),
     syncToken: integer('sync_token').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
