@@ -21,6 +21,79 @@
 - **User-facing copy says "Basis"**, never "homemanager".
 - **Deploys are repo → deploy.** Steps marked **[OPS]** are for the owner.
 
+## Re-read against phase 1's deployment, 2026-08-29
+
+This plan was written before phase 1 was ever deployed. Taking it live found six
+defects, four of them in the deploy seam — places where the plan described the
+*intent* of a step while the mechanics lived somewhere nobody had looked (a CI
+workflow, a script's rsync excludes, a directory's mode bits, which copy of
+`update.sh` was on disk). None were catchable by tests or by a scoped review.
+This section is what that experience changes here. **Read it before Task 1.**
+
+**The box migrates AFTER it swaps, and nothing rolls the database back.**
+`backend/deploy/native/install.sh` repoints `/opt/basis/current` at line 311 and
+only then runs `npm run db:migrate` at line 380, under `set -eo pipefail`. The
+cloud's `update.sh` does the opposite — it migrates first and leaves the symlink
+alone on failure. So on a box, a failed migration aborts with new code linked,
+old code still running, and services un-restarted. `post-update-watchdog.sh`
+reverts the *symlink* when a new version fails its health check; it has no
+concept of schema.
+
+That makes this phase the first in this work whose failure mode is not simply
+"roll back the code". And the sharper risk is not a migration that fails — it is
+the trigger rewrite in Task 1 **succeeding while being subtly wrong**. It
+touches every calendar and every CalDAV client, and a version that churns ETags
+or silently stops journaling would pass any health check the watchdog applies.
+
+**So ship this phase as two releases, not one.** Migration `0018` was already
+written to be inert — pure schema, unlocking nothing. That instinct now has a
+deployment rationale:
+
+1. Release Task 1 alone. Verify on the live box that CalDAV still syncs, ETags
+   are stable, and `calendar_changes` is not growing — with real devices
+   attached, which no test reproduces.
+2. Release the rest once that is proven.
+
+**There is real data now, and there was none when this was written.** A live
+Google calendar is synced on the production box, and the household has CalDAV
+devices attached. The unlock in Task 5 acts on it the moment it deploys, and the
+first outbound sweep pushes every event with `external_id IS NULL` to Google.
+Run this before Task 5 ships, not after:
+
+```sql
+SELECT c.name, count(*) FILTER (WHERE e.external_id IS NULL) AS would_be_pushed
+FROM calendars c LEFT JOIN calendar_events e ON e.calendar_id = c.id
+WHERE c.sync_provider = 'google' AND c.is_synced
+GROUP BY c.name;
+```
+
+Anything above zero is an event that will appear in Google on the first sweep.
+Usually correct — those are basis#101's stranded rows finally syncing — but the
+household should be told, not surprised.
+
+**The trigger guard is now verified.** `to_jsonb(NEW) - 'remote_updated'` was
+written into this plan unverified because Postgres was not running at the time.
+It has since been run against a real table and trigger: a `remote_updated`-only
+update leaves `revision` untouched, a real field change bumps it, and a change
+with no stamp bumps it. Task 1's Step 7 still stands as the test; the SQL shape
+is no longer a guess.
+
+**Expect the next bug to be in newly-reachable code.** Two of phase 1's defects
+were pre-existing and unreachable until the thing in front of them was fixed —
+the OAuth callback redirected somewhere no route served, and Google's errors
+were swallowed into an empty dropdown. Both had been broken for months and could
+not be hit. The unlock in Task 5 does the same thing here: five REST sites and
+the CalDAV handlers stop refusing, and **nobody has ever written to a synced
+calendar through any of them**. Task 8's write-path coverage is the right net;
+widen it to include a recurring-event edit, which has its own routes and its own
+scope handling.
+
+**This plan still has no deploy section, which is the mistake phase 1 made.**
+Reaching a box means: merge, tag `v0.1.3x-alpha` on `main`, update via
+Settings → Updates (expect the known false "xhr poll error" when the socket
+drops), then verify. See `2026-08-28-gcal-phase1-OPS-RUNBOOK.md` Step 5 for the
+shape.
+
 ## Out of Scope
 
 - **basis#101** — the CalDAV handlers' missing `isReadOnly` check. This phase supersedes it (the answer becomes "CalDAV writes sync" rather than "CalDAV writes are refused"), but do not attempt an interim fix here; it ships on its own timeline.
