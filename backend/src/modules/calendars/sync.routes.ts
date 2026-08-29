@@ -117,7 +117,7 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
           JSON.stringify(tokens)
         );
 
-        return reply.redirect('/settings/calendars/google/select');
+        return reply.redirect('/settings/calendars?select=google');
       } catch (err) {
         return reply.redirect('/settings/calendars?error=token_exchange_failed');
       }
@@ -447,7 +447,7 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
           JSON.stringify(tokens)
         );
 
-        return reply.redirect('/settings/calendars/outlook/select');
+        return reply.redirect('/settings/calendars?select=outlook');
       } catch (err) {
         return reply.redirect('/settings/calendars?error=token_exchange_failed');
       }
