@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 
 /**
  * Task 2 of the Google Calendar sync engine (phase 2): echo suppression on
@@ -202,8 +202,12 @@ describe('syncCalendarFromGoogle: echo suppression against real triggers', () =>
 
     await syncCalendarFromGoogle(calendar.id, hhId);
 
+    // Scoped to this test's own calendar: an unscoped lookup by externalId
+    // alone can match a leftover fixture row from another test run (e.g. one
+    // whose afterAll never got a chance to clean up), silently hiding a
+    // regression behind stale data with coincidentally-correct values.
     const inserted = await db.query.calendarEvents.findFirst({
-      where: eq(calendarEvents.externalId, 'g-echo-new-1'),
+      where: and(eq(calendarEvents.calendarId, calendar.id), eq(calendarEvents.externalId, 'g-echo-new-1')),
     });
 
     expect(inserted).toBeTruthy();
