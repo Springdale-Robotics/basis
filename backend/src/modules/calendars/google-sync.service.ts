@@ -96,6 +96,10 @@ export interface GoogleCalendarEvent {
   end: { dateTime?: string; date?: string; timeZone?: string };
   recurrence?: string[];
   status?: string;
+  // Google's own "last modified" stamp for this event, RFC3339. Stored in
+  // calendar_events.remote_updated so the pull can tell an echo of our own
+  // push apart from a genuine remote change.
+  updated?: string;
   // For exception instances
   recurringEventId?: string;
   originalStartTime?: { dateTime?: string; date?: string; timeZone?: string };
@@ -145,6 +149,7 @@ export async function fetchGoogleEvents(
           end: event.end as GoogleCalendarEvent['end'],
           recurrence: event.recurrence || undefined,
           status: event.status || undefined,
+          updated: event.updated || undefined,
           recurringEventId: event.recurringEventId || undefined,
           originalStartTime: event.originalStartTime as GoogleCalendarEvent['originalStartTime'],
         });
@@ -369,7 +374,7 @@ export async function syncCalendarFromGoogle(
       recurrenceRule,
       recurrenceStatus: recurrenceRule ? 'master' as const : null,
       externalId: googleEvent.id,
-      updatedAt: new Date(),
+      remoteUpdated: googleEvent.updated ? new Date(googleEvent.updated) : null,
     };
 
     if (existing) {
@@ -377,6 +382,9 @@ export async function syncCalendarFromGoogle(
       // Skip no-op writes: rewriting unchanged rows churns revisions/ETags
       // and appends calendar_changes journal rows on every hourly sync.
       if (!syncedEventUnchanged(existing, eventData)) {
+        // Deliberately not setting updatedAt here: `.set(eventData)` leaves
+        // it at whatever the last local edit set, which is what the
+        // outbound sweep's `updated_at > remote_updated` dirty check needs.
         await db
           .update(calendarEvents)
           .set(eventData)
@@ -388,6 +396,11 @@ export async function syncCalendarFromGoogle(
       const [inserted] = await db.insert(calendarEvents).values({
         calendarId,
         ...eventData,
+        // Pin updatedAt to the provider's timestamp on insert. Left to
+        // default to now(), a freshly pulled event would satisfy
+        // `updated_at > remote_updated` and be pushed straight back to
+        // Google on the next outbound sweep.
+        updatedAt: eventData.remoteUpdated ?? new Date(),
       }).returning();
       externalIdToDbId[googleEvent.id] = inserted.id;
       created++;
@@ -444,11 +457,13 @@ export async function syncCalendarFromGoogle(
       originalStartTime,
       recurrenceStatus: isCancelled ? 'cancelled' as const : 'exception' as const,
       externalId: googleEvent.id,
-      updatedAt: new Date(),
+      remoteUpdated: googleEvent.updated ? new Date(googleEvent.updated) : null,
     };
 
     if (existing) {
       if (!syncedEventUnchanged(existing, eventData)) {
+        // See the master-event branch above: `.set(eventData)` deliberately
+        // leaves updatedAt untouched.
         await db
           .update(calendarEvents)
           .set(eventData)
@@ -460,6 +475,9 @@ export async function syncCalendarFromGoogle(
       await db.insert(calendarEvents).values({
         calendarId,
         ...eventData,
+        // Pin updatedAt to the provider's timestamp on insert — see the
+        // master-event branch above for why.
+        updatedAt: eventData.remoteUpdated ?? new Date(),
       });
       created++;
     }

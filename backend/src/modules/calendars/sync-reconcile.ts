@@ -26,6 +26,7 @@ interface SyncedEventRow {
   recurringEventId?: string | null;
   originalStartTime?: Date | null;
   externalId?: string | null;
+  remoteUpdated?: Date | null;
 }
 
 interface IncomingEventData {
@@ -39,6 +40,7 @@ interface IncomingEventData {
   recurrenceStatus?: string | null;
   recurringEventId?: string | null;
   originalStartTime?: Date | null;
+  remoteUpdated?: Date | null;
 }
 
 function sameInstant(a: Date | null | undefined, b: Date | null | undefined): boolean {
@@ -49,6 +51,12 @@ function sameInstant(a: Date | null | undefined, b: Date | null | undefined): bo
 
 /** True when the incoming provider data matches the stored row — skip the write. */
 export function syncedEventUnchanged(existing: SyncedEventRow, incoming: IncomingEventData): boolean {
+  // Google's own `updated` stamp is the authoritative "did anything change
+  // over there" signal, including changes to fields Basis does not mirror.
+  if (!sameInstant(existing.remoteUpdated, incoming.remoteUpdated)) {
+    return false;
+  }
+
   return (
     existing.title === incoming.title &&
     (existing.description ?? null) === (incoming.description ?? null) &&
