@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
+import { encrypt } from '../../src/lib/crypto.js';
 
 const createGoogleEvent = vi.fn();
 const updateGoogleEvent = vi.fn();
@@ -19,6 +20,9 @@ const { calendarChanges, calendarEvents, calendars, households } = await import(
 );
 const { processCalendarOutboundJob } = await import(
   '../../src/jobs/calendar-outbound.worker.js'
+);
+const { findCreates, findUpdates } = await import(
+  '../../src/modules/calendars/outbound-discovery.js'
 );
 
 // A fresh household + calendar per test, not a shared fixture. The sweep
@@ -42,6 +46,24 @@ const times = {
 const runSweep = () =>
   processCalendarOutboundJob({ id: 'test', data: { calendarId } } as never);
 
+// Real ciphertext, not a placeholder string. An earlier draft used
+// syncCredentials: 'unused-in-this-test' and fell back to shipping that
+// raw string to Google as a bearer token whenever it failed to decrypt —
+// which is every test, since it isn't valid ciphertext. That meant every
+// happy-path test passed *because* real token resolution never ran, not
+// because it worked (a basis#112-shaped gap). Building this with encrypt()
+// exercises the real getValidAccessToken path, expiry_date is set far
+// enough out that it never takes the refresh branch (which would hit a
+// real, unmocked Google endpoint).
+const validCredentials = () =>
+  encrypt(
+    JSON.stringify({
+      access_token: 'test-access-token',
+      refresh_token: 'test-refresh-token',
+      expiry_date: Date.now() + 3600_000,
+    })
+  );
+
 beforeEach(async () => {
   createGoogleEvent.mockReset();
   updateGoogleEvent.mockReset();
@@ -63,7 +85,7 @@ beforeEach(async () => {
       isReadOnly: false,
       syncProvider: 'google',
       syncCalendarId: 'fixture@group.calendar.google.com',
-      syncCredentials: 'unused-in-this-test',
+      syncCredentials: validCredentials(),
     })
     .returning();
   calendarId = calendar.id;
@@ -330,6 +352,179 @@ describe('outbound sweep', () => {
     expect(result).toEqual({ created: 0, updated: 0, deleted: 0, failed: 0 });
   });
 
+  it('C1: refuses to push a master with an EXDATE, leaving it dirty and rediscoverable rather than pushing and wiping the exclusion', async () => {
+    // The dominant "cancel one occurrence" path never creates a 'cancelled'
+    // row at all — calendars.routes.ts's two cancel-an-occurrence routes
+    // (DELETE .../events/:id with scope 'single', and DELETE
+    // .../events/:id/instances/:originalStartTime) both add an EXDATE to the
+    // *master* row and bump its updatedAt. That master then reaches this
+    // sweep as an ordinary dirty update. Before this fix, updateGoogleEvent's
+    // recurrence field replaced Google's whole recurrence array with just
+    // the RRULE line, silently wiping the EXDATE Google already had.
+    const [event] = await db
+      .insert(calendarEvents)
+      .values({
+        calendarId,
+        title: 'Recurring with an excluded occurrence',
+        ...times,
+        recurrenceRule: 'FREQ=WEEKLY',
+        recurrenceStatus: 'master',
+        recurrenceExDates: JSON.stringify(['2026-09-08T10:00:00.000Z']),
+        externalId: 'g-recur-1',
+        remoteUpdated: new Date('2026-08-28T10:00:00Z'),
+        updatedAt: new Date('2026-08-28T11:00:00Z'),
+      })
+      .returning();
+
+    const result = await runSweep();
+
+    expect(updateGoogleEvent).not.toHaveBeenCalled();
+    // Deferred, not an error: this is the same "out of scope, not failed"
+    // bucket as the recurrenceStatus skips above.
+    expect(result).toEqual({ created: 0, updated: 0, deleted: 0, failed: 0 });
+
+    const after = await db.query.calendarEvents.findFirst({
+      where: eq(calendarEvents.id, event.id),
+    });
+    // remote_updated untouched — still dirty by the same predicate a healthy
+    // update would have cleared.
+    expect(after!.remoteUpdated).toEqual(new Date('2026-08-28T10:00:00Z'));
+    expect(after!.updatedAt.getTime()).toBeGreaterThan(after!.remoteUpdated!.getTime());
+
+    // The assertion that actually distinguishes deferral from loss: this row
+    // is still sitting in findUpdates for the next sweep to find, not
+    // silently dropped.
+    const stillPending = await findUpdates(calendarId);
+    expect(stillPending.map((e) => e.id)).toContain(event.id);
+  });
+
+  it('C1: refuses to create a recurring event that already carries an EXDATE before its first push', async () => {
+    // Same underlying gap as the update-path case, hit from the other side:
+    // a brand-new (never-synced) master that already has a local exclusion
+    // before it's ever reached Google. createGoogleEvent has no way to send
+    // that exclusion either, so pushing it now would create the full,
+    // un-excluded series.
+    const [event] = await db
+      .insert(calendarEvents)
+      .values({
+        calendarId,
+        title: 'New series, one occurrence already excluded',
+        ...times,
+        recurrenceRule: 'FREQ=WEEKLY',
+        recurrenceStatus: 'master',
+        recurrenceExDates: JSON.stringify(['2026-09-08T10:00:00.000Z']),
+      })
+      .returning();
+
+    const result = await runSweep();
+
+    expect(createGoogleEvent).not.toHaveBeenCalled();
+    expect(result).toEqual({ created: 0, updated: 0, deleted: 0, failed: 0 });
+
+    const stillPending = await findCreates(calendarId);
+    expect(stillPending.map((e) => e.id)).toContain(event.id);
+  });
+
+  it('C2: refuses to create an all-day event this mapping cannot express, counting it failed and leaving it for the next sweep', async () => {
+    // Basis stores a one-day all-day event as an inclusive noon-to-noon
+    // range on the same date (see EventForm.tsx's handleFormSubmit), but
+    // Google's end.date is exclusive. Pushed as-is, start.date === end.date
+    // — a zero-length range, not the one full day this event actually is.
+    const day = new Date('2026-09-05T12:00:00Z');
+    const [event] = await db
+      .insert(calendarEvents)
+      .values({
+        calendarId,
+        title: 'One-day all-day event',
+        startTime: day,
+        endTime: day,
+        allDay: true,
+      })
+      .returning();
+
+    const result = await runSweep();
+
+    expect(createGoogleEvent).not.toHaveBeenCalled();
+    // Unlike C1's recurrence skips, this is counted failed — the instruction
+    // that produced this fix was explicit that an unmappable create should
+    // be counted as a failure, not silently deferred.
+    expect(result).toEqual({ created: 0, updated: 0, deleted: 0, failed: 1 });
+
+    const after = await db.query.calendarEvents.findFirst({
+      where: eq(calendarEvents.id, event.id),
+    });
+    expect(after!.externalId).toBeNull();
+
+    const stillPending = await findCreates(calendarId);
+    expect(stillPending.map((e) => e.id)).toContain(event.id);
+  });
+
+  it('C2: refuses to create a recurring event, since this mapping never attaches a time zone', async () => {
+    const [event] = await db
+      .insert(calendarEvents)
+      .values({
+        calendarId,
+        title: 'New recurring series',
+        ...times,
+        recurrenceRule: 'FREQ=WEEKLY',
+        recurrenceStatus: 'master',
+      })
+      .returning();
+
+    const result = await runSweep();
+
+    expect(createGoogleEvent).not.toHaveBeenCalled();
+    expect(result).toEqual({ created: 0, updated: 0, deleted: 0, failed: 1 });
+
+    const stillPending = await findCreates(calendarId);
+    expect(stillPending.map((e) => e.id)).toContain(event.id);
+  });
+
+  it('I2: records a calendar-level error when a sweep ends with failures and nothing succeeded', async () => {
+    createGoogleEvent.mockRejectedValue(new Error('Google is down'));
+    await db.insert(calendarEvents).values({ calendarId, title: 'Always fails', ...times });
+
+    const result = await runSweep();
+    expect(result.failed).toBeGreaterThan(0);
+    expect(result.created + result.updated + result.deleted).toBe(0);
+
+    const cal = await db.query.calendars.findFirst({ where: eq(calendars.id, calendarId) });
+    expect(cal!.syncError).toContain('Outbound push failed');
+  });
+
+  it('I2: does not touch the calendar error when at least one item succeeds', async () => {
+    createGoogleEvent.mockResolvedValue({
+      id: 'g-ok',
+      updated: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await db.insert(calendarEvents).values({ calendarId, title: 'Succeeds', ...times });
+
+    await runSweep();
+
+    const cal = await db.query.calendars.findFirst({ where: eq(calendars.id, calendarId) });
+    expect(cal!.syncError).toBeNull();
+  });
+
+  it('I5: fails the sweep fast on undecryptable credentials, without ever calling Google or shipping ciphertext as a token', async () => {
+    await db
+      .update(calendars)
+      .set({ syncCredentials: 'not-valid-ciphertext' })
+      .where(eq(calendars.id, calendarId));
+    await db.insert(calendarEvents).values({ calendarId, title: 'Should not push', ...times });
+
+    const result = await runSweep();
+
+    expect(createGoogleEvent).not.toHaveBeenCalled();
+    expect(updateGoogleEvent).not.toHaveBeenCalled();
+    expect(deleteGoogleEvent).not.toHaveBeenCalled();
+    // Nothing was attempted at all — discovery isn't even consulted once the
+    // token can't be resolved.
+    expect(result).toEqual({ created: 0, updated: 0, deleted: 0, failed: 0 });
+
+    const cal = await db.query.calendars.findFirst({ where: eq(calendars.id, calendarId) });
+    expect(cal!.syncError).toContain('access token');
+  });
+
   it('picks up work that appears mid-sweep instead of waiting for the next trigger', async () => {
     let calls = 0;
     createGoogleEvent.mockImplementation(async () => {
@@ -353,11 +548,43 @@ describe('outbound sweep', () => {
 
     const result = await runSweep();
 
-    // Bounded, not infinite: discovery finds this same never-succeeding row
-    // on every pass, so the only thing that can stop the loop is the pass
-    // cap. Ten calls, not an unbounded number of them.
-    expect(createGoogleEvent).toHaveBeenCalledTimes(10);
-    expect(result.failed).toBe(10);
+    // I1 fix: a pass that makes no progress stops the loop immediately,
+    // rather than burning the full MAX_SWEEP_PASSES retrying an item that
+    // cannot succeed. Discovery would hand back this same row every pass
+    // (nothing about its state changes on failure), so a second attempt in
+    // the same invocation could only repeat the first one's outcome. One
+    // call, not ten — the naive "always run every pass" version was itself
+    // a 10x-failure amplifier against a wedged calendar or a Google outage.
+    expect(createGoogleEvent).toHaveBeenCalledTimes(1);
+    expect(result.failed).toBe(1);
     expect(result.created).toBe(0);
+  });
+
+  it('keeps looping past a persistent failure as long as something else is still making progress', async () => {
+    // Proves the no-progress break (I1) doesn't cut the loop short while
+    // there's real work to do — it only stops once a pass truly achieves
+    // nothing. One item fails every time; three more each need their own
+    // pass to arrive (mimicking edits landing mid-sweep, as in the "picks up
+    // work that appears mid-sweep" test above).
+    createGoogleEvent.mockImplementation(async (_token: unknown, _calId: unknown, input: { summary: string }) => {
+      if (input.summary === 'Never succeeds') {
+        throw new Error('Google is down for this one');
+      }
+      return { id: `g-${input.summary}`, updated: new Date(Date.now() + 60_000).toISOString() };
+    });
+
+    await db.insert(calendarEvents).values({ calendarId, title: 'Never succeeds', ...times });
+    await db.insert(calendarEvents).values({ calendarId, title: 'Succeeds pass 1', ...times });
+
+    const result = await runSweep();
+
+    // Pass 1: 'Never succeeds' fails, 'Succeeds pass 1' succeeds — progress
+    // was made, so the loop continues. Pass 2: only 'Never succeeds' is left
+    // (still undiscovered by findCreates since it never got an externalId)
+    // — no progress, loop stops. Two attempts at the stuck item, not one and
+    // not ten.
+    expect(result.created).toBe(1);
+    expect(result.failed).toBe(2);
+    expect(createGoogleEvent).toHaveBeenCalledTimes(3);
   });
 });

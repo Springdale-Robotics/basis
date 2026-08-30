@@ -1,9 +1,8 @@
 import { Job } from 'bullmq';
-import type { Logger } from 'pino';
 import { eq } from 'drizzle-orm';
 import { db } from '../config/database.js';
 import { calendarEvents, calendars } from '../db/schema/index.js';
-import type { Calendar, CalendarEvent } from '../db/schema/index.js';
+import type { CalendarEvent } from '../db/schema/index.js';
 import {
   createGoogleEvent,
   deleteGoogleEvent,
@@ -16,6 +15,7 @@ import {
   findUpdates,
   isOutboundCalendar,
 } from '../modules/calendars/outbound-discovery.js';
+import { parseExDates, parseRDates } from '../modules/calendars/recurrence.service.js';
 import { logger } from '../lib/logger.js';
 
 export interface CalendarOutboundJobData {
@@ -33,10 +33,40 @@ export interface OutboundResult {
 // job — and the worker slot it occupies — looping forever. A healthy
 // calendar never gets close to this: every pass that makes progress shrinks
 // what the next pass's discovery finds, so N pending changes clear in one
-// pass regardless of N. Only a change that fails on every attempt burns
-// passes, and it burns at most this many before the sweep gives up and
-// leaves it for the next trigger.
+// pass regardless of N. The loop also breaks early (see the bottom of
+// processCalendarOutboundJob) the moment a pass makes no progress at all, so
+// this cap is a last-resort backstop, not the normal way a stuck item gets
+// bounded — see the fix-round report (I1) for why the naive "always run 10
+// passes" version was itself a 10x-failure amplifier.
 const MAX_SWEEP_PASSES = 10;
+
+/**
+ * True when this row carries a per-occurrence override (an EXDATE or RDATE
+ * on a recurring master) that neither createGoogleEvent nor updateGoogleEvent
+ * knows how to send.
+ *
+ * Both write functions build `recurrence` as a single RRULE line
+ * (`toGoogleEventInput` below only ever reads `recurrenceRule`) and, on an
+ * update, `eventBody.recurrence = [...]` *replaces* Google's whole recurrence
+ * array rather than merging into it. Pushing a master with a local EXDATE —
+ * the row `calendars.routes.ts`'s two "cancel one occurrence" routes
+ * (`DELETE .../events/:id` with scope 'single', and
+ * `DELETE .../events/:id/instances/:originalStartTime`) actually produce,
+ * per an owner review that traced this exact path — would silently erase
+ * every exclusion Google already had for that series: the cancelled
+ * occurrence reappears at Google (and on every device reading it), and any
+ * previously-Google-side-cancelled occurrences come back too.
+ *
+ * Refused rather than pushed wrong. Caught in isPushableCreate/isPushableUpdate
+ * below, not counted as failed — this is the same "silently deferred, not
+ * counted as an error" bucket as the recurrenceStatus exclusions, because it
+ * isn't a Google-side error, it's a known gap in what this task's mapping can
+ * express. The row stays dirty (remote_updated untouched) and is
+ * rediscovered on every future sweep until instance-override support exists.
+ */
+function hasUnpushableRecurrenceEdits(event: CalendarEvent): boolean {
+  return parseExDates(event.recurrenceExDates).length > 0 || parseRDates(event.recurrenceRDates).length > 0;
+}
 
 /**
  * A brand-new recurrence override has no Google identity to attach to.
@@ -52,20 +82,26 @@ const MAX_SWEEP_PASSES = 10;
  *
  * Both are worse than doing nothing, so neither status is pushed as a
  * create. Only masters and plain (non-recurring) events do, until instance-
- * level override support exists for creates.
+ * level override support exists for creates. A master that itself already
+ * carries an EXDATE/RDATE before its first push is excluded for the same
+ * reason as hasUnpushableRecurrenceEdits documents above: the create path
+ * has no way to send those exclusions either, so pushing it now would create
+ * the full, un-excluded series at Google.
  */
 function isPushableCreate(event: CalendarEvent): boolean {
-  return event.recurrenceStatus !== 'exception' && event.recurrenceStatus !== 'cancelled';
+  if (event.recurrenceStatus === 'exception' || event.recurrenceStatus === 'cancelled') return false;
+  if (hasUnpushableRecurrenceEdits(event)) return false;
+  return true;
 }
 
 /**
- * An update is a different situation: a row reaches findUpdates only with
- * externalId already set, and for an 'exception' row that id was assigned by
- * Google itself as a real instance id (from an earlier pull of a modified
- * occurrence). Patching that id with updateGoogleEvent is exactly the
- * correct way to edit one occurrence — there is no free-standing-duplicate
- * risk here, because the write targets an id Google already recognises as
- * belonging to the series.
+ * An update is a different situation from a create for recurrence overrides:
+ * a row reaches findUpdates only with externalId already set, and for an
+ * 'exception' row that id was assigned by Google itself as a real instance
+ * id (from an earlier pull of a modified occurrence). Patching that id with
+ * updateGoogleEvent is exactly the correct way to edit one occurrence —
+ * there is no free-standing-duplicate risk here, because the write targets
+ * an id Google already recognises as belonging to the series.
  *
  * 'cancelled' is left out even so: this task's updateGoogleEvent never sends
  * a status field, so there is no way to push whatever a local edit to an
@@ -74,9 +110,52 @@ function isPushableCreate(event: CalendarEvent): boolean {
  * Google already considers resolved. Skipped, not pushed, not counted as
  * failed — same as the create-path decision, and for the same reason: no
  * defined outcome beats a guessed one.
+ *
+ * A master with an EXDATE/RDATE is refused for the reason documented on
+ * hasUnpushableRecurrenceEdits above — this is the actual, common path onto
+ * this row shape (a household cancelling one occurrence of an existing
+ * Google-synced series edits the *master*, not a 'cancelled' row), which is
+ * why this check is not folded into the recurrenceStatus condition above.
  */
 function isPushableUpdate(event: CalendarEvent): boolean {
-  return event.recurrenceStatus !== 'cancelled';
+  if (event.recurrenceStatus === 'cancelled') return false;
+  if (hasUnpushableRecurrenceEdits(event)) return false;
+  return true;
+}
+
+/**
+ * True when this create's shape can be safely expressed by createGoogleEvent
+ * as currently written. Two independent gaps in that mapping, both
+ * pre-existing and both invisible until this task actually called it:
+ *
+ *  - All-day: Basis stores an all-day event as an *inclusive* noon-to-noon
+ *    range (a one-day event has startTime === endTime; see
+ *    EventForm.tsx's handleFormSubmit), but Google's `end.date` is
+ *    *exclusive*. createGoogleEvent takes the date portion of each
+ *    timestamp as-is, so a one-day event pushes as `start.date == end.date`
+ *    — a zero-length range — and a multi-day event lands a day short.
+ *  - Recurring: Google requires `start.timeZone` on a recurring insert so it
+ *    can interpret the RRULE's DST behaviour, but createGoogleEvent's
+ *    parameter shape has no timeZone field at all, and nothing plumbs
+ *    calendars.timezone through to it. No recurring create can carry one
+ *    today.
+ *
+ * Neither is fixed here — that's explicitly a design conversation, not a
+ * fix-round change, because fixing the date arithmetic or adding timezone
+ * plumbing changes what gets sent to Google, not just what gets refused.
+ * Refused creates are counted `failed` (unlike the recurrence-status/EXDATE
+ * skips above, which aren't errors) and left with externalId still null, so
+ * they're rediscovered by findCreates on every future sweep until the
+ * mapping is fixed.
+ */
+function isCreateExpressible(event: CalendarEvent): boolean {
+  if (event.allDay) {
+    const startDate = event.startTime.toISOString().slice(0, 10);
+    const endDate = event.endTime.toISOString().slice(0, 10);
+    if (!(endDate > startDate)) return false;
+  }
+  if (event.recurrenceRule) return false;
+  return true;
 }
 
 function toGoogleEventInput(event: CalendarEvent): {
@@ -109,35 +188,15 @@ function isAlreadyGone(err: unknown): boolean {
 }
 
 /**
- * Resolve a Google access token for this calendar, tolerating credentials
- * that fail to decrypt or parse.
- *
- * The pull path (syncCalendarFromGoogle) treats that failure as fatal to the
- * whole job, which is right there — a pull either happens or it doesn't.
- * The sweep's unit of success is the individual item, so a bad token belongs
- * in the same bucket as an item Google itself rejects: it degrades to
- * per-item `failed` counts (via a 401 from Google) rather than taking down
- * every other pending change on the calendar before any of them is
- * attempted.
- */
-async function resolveAccessToken(calendar: Calendar, log: Logger): Promise<string> {
-  try {
-    return await getValidAccessToken(calendar);
-  } catch (err) {
-    log.warn({ err }, 'Could not derive a Google access token from stored credentials');
-    return calendar.syncCredentials ?? '';
-  }
-}
-
-/**
  * Push one calendar's pending changes to Google.
  *
  * Serialisation is by job id — a sweep is enqueued as
  * `calendar-outbound-<calendarId>`, and BullMQ won't run two jobs sharing a
  * live id. That dedupe stops applying the moment a job goes active, so an
  * edit made mid-sweep would otherwise sit unpushed until something else
- * triggered a fresh sweep. Looping until discovery comes back empty closes
- * that window without a second queue.
+ * triggered a fresh sweep. Looping until discovery comes back empty (or a
+ * pass makes no progress — see the bottom of the loop) closes that window
+ * without a second queue.
  */
 export async function processCalendarOutboundJob(
   job: Job<CalendarOutboundJobData>
@@ -163,8 +222,32 @@ export async function processCalendarOutboundJob(
   }
 
   const googleCalendarId = calendar.syncCalendarId;
-  const accessToken = await resolveAccessToken(calendar, log);
+
+  // No fallback here on purpose: an earlier draft of this worker caught a
+  // decrypt/parse failure and fell back to shipping the raw (still
+  // encrypted) syncCredentials string as the bearer token — which means a
+  // calendar with genuinely broken credentials would send its own ciphertext
+  // to Google in an Authorization header on every attempted call, and every
+  // "happy path" test passed only because token resolution never actually
+  // ran (a basis#112-shaped test gap). Fail the whole sweep fast instead,
+  // the same posture the pull path (syncCalendarFromGoogle) already takes
+  // for the same failure.
+  let accessToken: string;
+  try {
+    accessToken = await getValidAccessToken(calendar);
+  } catch (err) {
+    log.error({ err }, 'Could not obtain a Google access token; aborting this sweep');
+    await db
+      .update(calendars)
+      .set({
+        syncError: 'Outbound push failed: could not obtain a Google access token from stored credentials.',
+      })
+      .where(eq(calendars.id, calendarId));
+    return result;
+  }
+
   let cursor = calendar.outboundCursor;
+  let stoppedForNoProgress = false;
 
   for (let pass = 0; pass < MAX_SWEEP_PASSES; pass += 1) {
     const [creates, updates, deletes] = await Promise.all([
@@ -184,7 +267,17 @@ export async function processCalendarOutboundJob(
       return result;
     }
 
+    const progressBefore = result.created + result.updated + result.deleted;
+
     for (const event of pushableCreates) {
+      if (!isCreateExpressible(event)) {
+        log.warn(
+          { eventId: event.id },
+          'Outbound create refused: this all-day/recurrence shape cannot be expressed by the current Google mapping'
+        );
+        result.failed += 1;
+        continue;
+      }
       try {
         const remote = await createGoogleEvent(accessToken, googleCalendarId, toGoogleEventInput(event));
         const stamp = remote.updated ? new Date(remote.updated) : new Date();
@@ -263,7 +356,9 @@ export async function processCalendarOutboundJob(
       calendar.outboundCursor = cursor;
     }
 
-    if (result.created + result.updated + result.deleted > 0) {
+    const progressAfter = result.created + result.updated + result.deleted;
+
+    if (progressAfter > progressBefore) {
       // Marks the calendar "active" for the five-minute polling tick. Set
       // here rather than inferred from outstanding work, which goes false
       // the instant this sweep succeeds.
@@ -271,9 +366,39 @@ export async function processCalendarOutboundJob(
         .update(calendars)
         .set({ lastOutboundAt: new Date() })
         .where(eq(calendars.id, calendarId));
+    } else {
+      // Nothing succeeded this pass. Discovery will hand back exactly the
+      // same stuck items next pass (nothing about their state changed), so
+      // further passes would only repeat the same failed API calls at
+      // MAX_SWEEP_PASSES cost for zero additional benefit — the mid-sweep-
+      // pickup guarantee only needs the loop to keep going when something
+      // *succeeded*, since that's the only case where new discovery could
+      // differ from this pass's.
+      stoppedForNoProgress = true;
+      break;
     }
   }
 
-  log.warn({ result }, 'Outbound sweep hit its pass limit with work outstanding');
+  if (stoppedForNoProgress) {
+    log.warn({ result }, 'Outbound sweep stopped: a pass made no progress');
+  } else {
+    log.warn({ result }, 'Outbound sweep hit its pass limit with work outstanding');
+  }
+
+  if (result.failed > 0 && result.created + result.updated + result.deleted === 0) {
+    // Nothing succeeded across the whole invocation. The pull path
+    // (syncCalendarFromGoogle) writes the same column on failure and clears
+    // it to null on a successful pull — sharing it here means a healthy pull
+    // next hour will silently clear this message even if outbound is still
+    // wedged, before a dedicated outbound error surface exists. Flagged for
+    // the design conversation rather than solved here.
+    await db
+      .update(calendars)
+      .set({
+        syncError: `Outbound push failed for ${result.failed} pending change${result.failed === 1 ? '' : 's'}; will retry on the next sweep.`,
+      })
+      .where(eq(calendars.id, calendarId));
+  }
+
   return result;
 }
