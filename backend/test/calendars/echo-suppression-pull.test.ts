@@ -274,4 +274,126 @@ describe('syncCalendarFromGoogle: echo suppression against real triggers', () =>
     expect(calendarAfter!.ctag).not.toBe(calendarBefore!.ctag);
     expect(journalAfter.length).toBe(journalBefore.length + 1);
   });
+
+  it('recurrence exception: a pull where only remote_updated moves does not bump revision, does not journal, does not reroll ctag/syncToken', async () => {
+    const calendar = await makeSyncedCalendar();
+
+    // A weekly master and one modified occurrence of it — the shape the
+    // brief flagged as untested: the exception insert/update sites at
+    // ~480/~468 in google-sync.service.ts are structurally parallel to the
+    // master-event sites above, but nothing before this test exercised them
+    // against real triggers.
+    const masterStart = new Date('2026-09-07T09:00:00Z'); // Mon
+    const masterEnd = new Date('2026-09-07T09:15:00Z');
+    const masterStamp = new Date('2026-08-20T00:00:00Z');
+
+    const originalStartTime = new Date('2026-09-14T09:00:00Z'); // the following Mon
+    const exceptionStart = new Date('2026-09-14T10:00:00Z'); // moved an hour later
+    const exceptionEnd = new Date('2026-09-14T10:15:00Z');
+    const firstStamp = new Date('2026-08-28T12:00:00Z');
+    const localEditStamp = new Date('2026-08-29T08:00:00Z');
+
+    // Seed the master exactly as Google will describe it below, so the
+    // master branch is a true no-op (syncedEventUnchanged short-circuits it
+    // before any write) and cannot itself move the calendar-level counters
+    // this test checks. Isolating the exception branch's own effect is the
+    // whole point.
+    const [master] = await db
+      .insert(calendarEvents)
+      .values({
+        calendarId: calendar.id,
+        title: 'Standup',
+        description: null,
+        location: null,
+        startTime: masterStart,
+        endTime: masterEnd,
+        allDay: false,
+        recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO',
+        recurrenceStatus: 'master',
+        externalId: 'g-recur-master-1',
+        remoteUpdated: masterStamp,
+      })
+      .returning();
+
+    // Seed the exception the same way case 1 seeds its master-event row:
+    // fields matching what Google will return, remote_updated at an earlier
+    // stamp, and updated_at already ahead of it as a genuine local edit
+    // Google hasn't seen yet would leave it.
+    const [exception] = await db
+      .insert(calendarEvents)
+      .values({
+        calendarId: calendar.id,
+        title: 'Standup (moved)',
+        description: null,
+        location: null,
+        startTime: exceptionStart,
+        endTime: exceptionEnd,
+        allDay: false,
+        recurringEventId: master.id,
+        originalStartTime,
+        recurrenceStatus: 'exception',
+        externalId: 'g-recur-exception-1',
+        remoteUpdated: firstStamp,
+        updatedAt: localEditStamp,
+      })
+      .returning();
+
+    mockGoogleResponse([
+      {
+        id: 'g-recur-master-1',
+        summary: 'Standup',
+        start: { dateTime: masterStart.toISOString() },
+        end: { dateTime: masterEnd.toISOString() },
+        recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=MO'],
+        updated: masterStamp.toISOString(),
+      },
+      {
+        id: 'g-recur-exception-1',
+        summary: 'Standup (moved)',
+        start: { dateTime: exceptionStart.toISOString() },
+        end: { dateTime: exceptionEnd.toISOString() },
+        recurringEventId: 'g-recur-master-1',
+        originalStartTime: { dateTime: originalStartTime.toISOString() },
+        // Same "something Basis doesn't mirror changed on this instance"
+        // shape as case 1, just on the exception branch.
+        updated: '2026-08-30T00:00:00.000Z',
+      },
+    ]);
+
+    const calendarBefore = await db.query.calendars.findFirst({ where: eq(calendars.id, calendar.id) });
+    const journalBefore = await db
+      .select()
+      .from(calendarChanges)
+      .where(eq(calendarChanges.calendarId, calendar.id));
+
+    const result = await syncCalendarFromGoogle(calendar.id, hhId);
+
+    const after = await db.query.calendarEvents.findFirst({ where: eq(calendarEvents.id, exception.id) });
+    const masterAfter = await db.query.calendarEvents.findFirst({ where: eq(calendarEvents.id, master.id) });
+    const calendarAfter = await db.query.calendars.findFirst({ where: eq(calendars.id, calendar.id) });
+    const journalAfter = await db
+      .select()
+      .from(calendarChanges)
+      .where(eq(calendarChanges.calendarId, calendar.id));
+
+    // Proves the master branch really was a total no-op (app-level skip,
+    // not just a suppressed trigger), so everything below is attributable
+    // to the exception branch alone: only one write happened, and it wasn't
+    // the master's.
+    expect(result.updated).toBe(1);
+    expect(masterAfter!.revision).toBe(master.revision);
+    expect(masterAfter!.remoteUpdated?.toISOString()).toBe(masterStamp.toISOString());
+
+    // The write did happen — remote_updated moved to Google's new stamp.
+    expect(after!.remoteUpdated?.toISOString()).toBe('2026-08-30T00:00:00.000Z');
+
+    // But nothing a CalDAV client could observe changed.
+    expect(after!.revision).toBe(exception.revision);
+    expect(calendarAfter!.syncToken).toBe(calendarBefore!.syncToken);
+    expect(calendarAfter!.ctag).toBe(calendarBefore!.ctag);
+    expect(journalAfter.length).toBe(journalBefore.length);
+
+    // updated_at is exactly where the pre-existing local edit left it.
+    expect(after!.updatedAt.toISOString()).toBe(localEditStamp.toISOString());
+  });
 });
