@@ -65,6 +65,32 @@ export const calendarSyncQueue = new Queue('calendar-sync', {
   },
 });
 
+export const calendarOutboundQueue = new Queue('calendar-outbound', {
+  connection: redis,
+  defaultJobOptions: {
+    // Immediate removal, not a retained count. queueOutboundSweep below uses
+    // a fixed per-calendar job id on purpose (that's what serialises
+    // sweeps), but BullMQ's addStandardJob dedups an `add()` against any
+    // retained job sharing that id — completed or failed — and silently
+    // drops the enqueue instead of queueing a new one (see the
+    // queueReceiptReprocess comment further down for the same trap hit
+    // before). removeOnComplete/removeOnFail: 50 here would mean the first
+    // sweep for a calendar runs, its record survives, and every hourly
+    // enqueue after that is a silent no-op forever. `true` removes the job
+    // the moment it settles, so the id is free for the next tick.
+    removeOnComplete: true,
+    removeOnFail: true,
+    // No retries: processCalendarOutboundJob never throws for a per-item
+    // failure (that's what the `failed` count in its result is for), so a
+    // thrown error here means something outside any single item's control —
+    // a bad calendar row, a code bug. Retrying that automatically just
+    // re-runs into the same wall; better to surface it once via the
+    // 'failed' handler below and let the next hourly-tick enqueue retry
+    // fresh.
+    attempts: 1,
+  },
+});
+
 export const mediaQueue = new Queue('media', {
   connection: redis,
   defaultJobOptions: {
@@ -144,6 +170,10 @@ export interface CalendarSyncJobData {
   type: 'sync_all' | 'sync_single';
   calendarId?: string;
   householdId?: string;
+}
+
+export interface CalendarOutboundJobData {
+  calendarId: string;
 }
 
 export interface MediaJobData {
@@ -262,6 +292,29 @@ export async function initializeWorkers(): Promise<void> {
     logger.error({ jobId: job?.id, error }, 'Calendar sync job failed');
   });
 
+  // Calendar outbound worker — pushes local changes to Google. Concurrency
+  // above 1 is safe here in a way it isn't for calendarSyncWorker: per-
+  // calendar exclusivity comes from the job id (`calendar-outbound:<id>`),
+  // which BullMQ refuses to duplicate while a job with that id is waiting or
+  // active, so raising this only lets *different* calendars sweep in
+  // parallel.
+  const calendarOutboundWorker = new Worker(
+    'calendar-outbound',
+    async (job: Job<CalendarOutboundJobData>) => {
+      const { processCalendarOutboundJob } = await import('./calendar-outbound.worker.js');
+      return processCalendarOutboundJob(job);
+    },
+    { connection: redis, concurrency: 3 }
+  );
+
+  calendarOutboundWorker.on('completed', (job, result) => {
+    logger.info({ jobId: job.id, result }, 'Calendar outbound sweep completed');
+  });
+
+  calendarOutboundWorker.on('failed', (job, error) => {
+    logger.error({ jobId: job?.id, error }, 'Calendar outbound sweep failed');
+  });
+
   // Media worker
   const mediaWorker = new Worker(
     'media',
@@ -339,7 +392,7 @@ export async function initializeWorkers(): Promise<void> {
     logger.error({ jobId: job?.id, scanId: job?.data.scanId, error }, 'Receipt scan job failed');
   });
 
-  workers = [notificationWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, mediaWorker, imageParseWorker, bugReportWorker, receiptWorker];
+  workers = [notificationWorker, cleanupWorker, inventoryWorker, calendarReminderWorker, calendarSyncWorker, calendarOutboundWorker, mediaWorker, imageParseWorker, bugReportWorker, receiptWorker];
   logger.info('Background workers initialized');
 }
 
@@ -486,6 +539,7 @@ export async function shutdownWorkers(): Promise<void> {
   await inventoryQueue.close();
   await calendarReminderQueue.close();
   await calendarSyncQueue.close();
+  await calendarOutboundQueue.close();
   await mediaQueue.close();
   await imageParseQueue.close();
   await bugReportQueue.close();
@@ -517,6 +571,28 @@ export async function queueCalendarSync(calendarId: string, householdId: string)
   }, {
     jobId: `calendar-sync-${calendarId}-${Date.now()}`,
   });
+}
+
+/**
+ * Ask for a calendar's pending local changes to be pushed to Google.
+ *
+ * The fixed job id (no timestamp, unlike queueCalendarSync above) is what
+ * serialises sweeps per calendar: BullMQ refuses a second job sharing a live
+ * id, so two edits in quick succession collapse into one sweep rather than
+ * queueing twice. That dedupe only holds while the job is waiting — once it
+ * goes active a same-id enqueue is dropped, not queued — so the sweep itself
+ * loops until discovery comes back empty, which is what actually closes the
+ * "edit landed mid-sweep" window.
+ *
+ * Hyphen-separated, not colon-separated (see queueInventoryCheck's NB above):
+ * bullmq >=5.66 rejects ':' in a custom job id outright.
+ */
+export async function queueOutboundSweep(calendarId: string): Promise<void> {
+  await calendarOutboundQueue.add(
+    'sweep',
+    { calendarId },
+    { jobId: `calendar-outbound-${calendarId}` }
+  );
 }
 
 // Helper to queue media processing jobs
