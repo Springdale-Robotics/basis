@@ -781,8 +781,8 @@ afterAll(async () => {
 });
 
 const times = {
-  start: new Date('2026-09-01T10:00:00Z'),
-  end: new Date('2026-09-01T11:00:00Z'),
+  startTime: new Date('2026-09-01T10:00:00Z'),
+  endTime: new Date('2026-09-01T11:00:00Z'),
 };
 
 describe('findCreates', () => {
