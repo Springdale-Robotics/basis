@@ -558,7 +558,19 @@ A change pushed to Google comes straight back on the next pull looking like a re
 
 There is a second, sharper loop to close in the same task. The pull's insert path lets `updated_at` default to `now()`, while `remote_updated` gets Google's `updated` — which is in the past. So `updated_at > remote_updated` is immediately true and every freshly pulled event would look locally edited and be pushed straight back. **The pull's inserts must set `updatedAt` explicitly to the same instant as `remoteUpdated`.**
 
-The pull's *updates* are already safe: `syncCalendarFromGoogle` does `.set(eventData)`, which does not include `updatedAt`, so a pull leaves it at whatever the last local edit set. That is the behaviour the invariant needs — do not "fix" it.
+**The pull's updates were NOT already safe — this sentence used to claim they were, and it was
+wrong.** `syncCalendarFromGoogle` does `.set(eventData)`, and at the time this plan was written that
+shared `eventData` literal *did* set `updatedAt: new Date()`, on both the master and the exception
+branch, feeding the update as well as the insert. Following the original wording literally would
+have left every pull bumping `updated_at`, so every pulled row would satisfy
+`updated_at > remote_updated` forever — defeating this invariant, and defeating Task 1's trigger
+guard too, since that guard's jsonb comparison does not exclude `updated_at`.
+
+The correct instruction: remove `updatedAt` from the shared `eventData` object, and set it
+explicitly at the two **insert** sites only, pinned to the provider's timestamp. The update path
+must then name no `updatedAt` at all, so a pull leaves it at whatever the last genuine local edit
+set. Task 2's implementer caught this by reading the code rather than trusting the plan; the
+correction is in `google-sync.service.ts` as shipped.
 
 **Files:**
 - Modify: `backend/src/modules/calendars/google-sync.service.ts` (the insert at ~323, the update at ~318, the exception insert at ~395)
