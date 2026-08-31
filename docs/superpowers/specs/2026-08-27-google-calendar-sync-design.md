@@ -387,6 +387,17 @@ the event was already gone on Google's side. Recurrence in v1: masters go out;
 handles master/exception, outbound exception editing is where the edge cases
 live.
 
+**And "a single occurrence" includes deleting one.** That does not create an
+exception row: both routes that cancel an occurrence add an EXDATE to the
+*master* and bump its `updated_at`, so it arrives at any outbound path looking
+like an ordinary master edit. Pushing it destroys data — `updateGoogleEvent`
+replaces Google's whole recurrence array, wiping exclusions it held, and the
+pull keeps only `recurrence[0]`, so the local row never learns them back; the
+sweep then stamps the row clean and never retries. Until the recurrence array
+round-trips both ways, a synced calendar must **refuse** single-occurrence edits
+and cancellations at the point of action, rather than accept them locally and
+diverge silently. (Found 2026-08-31, implementing phase 2.)
+
 Fixing basis#101 is folded into this: once outbound exists, the answer for
 CalDAV writes to a synced calendar is "they sync" rather than "they are
 refused", and no `isReadOnly` check needs adding to the CalDAV handlers. Until
