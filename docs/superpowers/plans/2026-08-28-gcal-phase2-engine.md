@@ -102,6 +102,76 @@ Settings → Updates (expect the known false "xhr poll error" when the socket
 drops), then verify. See `2026-08-28-gcal-phase1-OPS-RUNBOOK.md` Step 5 for the
 shape.
 
+## Amendment, 2026-08-31 — per-occurrence editing, and what counts as it
+
+Task 4's review found that pushing a synced recurring master to Google would silently destroy data,
+and tracing it produced a scope correction that supersedes parts of Tasks 4-8 below. **Read this
+before implementing any of them.**
+
+### The correction
+
+The spec says: *"Recurrence in v1: masters go out; editing a single occurrence of a synced series is
+v2."* That was right. What it missed — and what this plan inherited — is that **an EXDATE on a
+master IS per-occurrence editing.**
+
+"Delete just this one occurrence" does not create an exception row in Basis. Both routes that do it
+(`calendars.routes.ts:791` under scope `single`, and the cancel-instance route at `:1013`) add an
+EXDATE to the **master** row and bump its `updatedAt`. So the row reaching the outbound sweep is a
+`'master'`, and a rule that says "masters go out" swallows it.
+
+Pushing it is destructive, because the recurrence model does not round-trip in either direction:
+`updateGoogleEvent` sets `eventBody.recurrence = ['RRULE:…']`, replacing Google's entire recurrence
+array and wiping any exclusions it held; and the pull keeps only `recurrence?.[0]`, so the local row
+can never learn Google's exclusions either. The sweep then stamps `remote_updated` past `updated_at`
+and the row is clean forever. Net: the occurrence vanishes in Basis, stays on every device reading
+Google, previously-deleted occurrences at Google come back, and nothing is logged or retried.
+
+### The decision
+
+**Per-occurrence editing of a synced series stays out of scope, as the spec always said — and that
+now explicitly includes EXDATE-on-master.** This is not a new scope reduction; it is the existing
+one, correctly applied.
+
+**Refuse at the point of action, not at the sync boundary.** Accepting an edit locally and letting
+it sit undeliverable is silent divergence — quieter than data loss, the same class of problem. All
+three single-occurrence branches already load `calendar` and already check `isReadOnly` on the line
+above; the new check belongs beside it.
+
+Concretely:
+
+1. **Refuse single-occurrence edits and cancellations on a synced calendar**, at
+   `calendars.routes.ts:579` (update, scope `single`), `:791` (delete, scope `single`) and the
+   cancel-instance route around `:1013`. A clear message naming the limitation, in the shape of the
+   adjacent read-only refusal. This is what a household experiences, so the copy matters: they can
+   edit the whole series, or disconnect the calendar.
+2. **Keep the outbound guard that refuses a master carrying EXDATE/RDATE state**, as defence in
+   depth for any path that reaches the sweep dirty regardless. It should stay a skip, not an error.
+3. **Do not build recurrence round-tripping in this phase.** Storing and sending the full recurrence
+   array is easy; the hard part is what happens when both sides changed exclusions, and
+   last-writer-wins has no sensible answer for "Google dropped occurrence A, Basis dropped
+   occurrence B". That is a real project and deferring it was correct.
+
+### The all-day defect is NOT part of this — it is a bug, fix it properly
+
+Do not bundle these. `createGoogleEvent`/`updateGoogleEvent` map all-day events as
+`{ date: start }` / `{ date: end }`, but Basis's own form stores a one-day all-day event as
+noon-to-noon on the **same date** — an inclusive end — while Google's `end.date` is **exclusive**.
+A one-day event therefore pushes as `start.date == end.date`, and a multi-day one lands a day short.
+
+This round-trips fine for Google-origin events, which is why it was invisible while outbound was
+dead code.
+
+There is exactly one correct answer — convert between inclusive and exclusive at the Google boundary
+— and no design judgement is required. Fix it in both `createGoogleEvent` and `updateGoogleEvent`
+(the update path shares the defect and is currently unguarded), and then **delete the
+`isCreateExpressible` all-day guard**, which is papering over a defect rather than marking a
+boundary. The recurring-create half of that guard stays until timezone handling is sorted.
+
+### Also amend the spec
+
+`docs/superpowers/specs/2026-08-27-google-calendar-sync-design.md` should say that per-occurrence
+editing includes EXDATE-on-master. That one sentence is what would have prevented this.
+
 ## Out of Scope
 
 - **basis#101** — the CalDAV handlers' missing `isReadOnly` check. This phase supersedes it (the answer becomes "CalDAV writes sync" rather than "CalDAV writes are refused"), but do not attempt an interim fix here; it ships on its own timeline.
