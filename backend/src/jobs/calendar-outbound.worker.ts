@@ -125,35 +125,25 @@ function isPushableUpdate(event: CalendarEvent): boolean {
 
 /**
  * True when this create's shape can be safely expressed by createGoogleEvent
- * as currently written. Two independent gaps in that mapping, both
- * pre-existing and both invisible until this task actually called it:
+ * as currently written.
  *
- *  - All-day: Basis stores an all-day event as an *inclusive* noon-to-noon
- *    range (a one-day event has startTime === endTime; see
- *    EventForm.tsx's handleFormSubmit), but Google's `end.date` is
- *    *exclusive*. createGoogleEvent takes the date portion of each
- *    timestamp as-is, so a one-day event pushes as `start.date == end.date`
- *    — a zero-length range — and a multi-day event lands a day short.
- *  - Recurring: Google requires `start.timeZone` on a recurring insert so it
- *    can interpret the RRULE's DST behaviour, but createGoogleEvent's
- *    parameter shape has no timeZone field at all, and nothing plumbs
- *    calendars.timezone through to it. No recurring create can carry one
- *    today.
+ * The all-day inclusive/exclusive mismatch that used to live here is fixed
+ * at the source in `toGoogleAllDayEndDate` (google-sync.service.ts) rather
+ * than refused — see the 2026-08-31 amendment to the phase 2 plan. What
+ * remains is a real, still-unresolved gap: Google requires `start.timeZone`
+ * on a recurring insert so it can interpret the RRULE's DST behaviour, but
+ * createGoogleEvent's parameter shape has no timeZone field at all, and
+ * nothing plumbs calendars.timezone through to it. No recurring create can
+ * carry one today, so it isn't fixed here — that's explicitly a design
+ * conversation, not a fix-round change, because timezone plumbing changes
+ * what gets sent to Google, not just what gets refused.
  *
- * Neither is fixed here — that's explicitly a design conversation, not a
- * fix-round change, because fixing the date arithmetic or adding timezone
- * plumbing changes what gets sent to Google, not just what gets refused.
  * Refused creates are counted `failed` (unlike the recurrence-status/EXDATE
  * skips above, which aren't errors) and left with externalId still null, so
  * they're rediscovered by findCreates on every future sweep until the
  * mapping is fixed.
  */
 function isCreateExpressible(event: CalendarEvent): boolean {
-  if (event.allDay) {
-    const startDate = event.startTime.toISOString().slice(0, 10);
-    const endDate = event.endTime.toISOString().slice(0, 10);
-    if (!(endDate > startDate)) return false;
-  }
   if (event.recurrenceRule) return false;
   return true;
 }

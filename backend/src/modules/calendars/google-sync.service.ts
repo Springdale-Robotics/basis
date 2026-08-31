@@ -570,6 +570,52 @@ export interface GoogleEventWriteResult {
   updated: string | null;
 }
 
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/** True at exactly UTC midnight — the one timestamp shape a Basis-authored
+ * all-day event can never produce (see below) and every Google-pulled
+ * all-day boundary always does. */
+function isUtcMidnight(date: Date): boolean {
+  return (
+    date.getUTCHours() === 0 &&
+    date.getUTCMinutes() === 0 &&
+    date.getUTCSeconds() === 0 &&
+    date.getUTCMilliseconds() === 0
+  );
+}
+
+/**
+ * A `calendarEvents` row can hold an all-day end in either of two shapes,
+ * and this is the one place that has to tell them apart before sending a
+ * `date` to Google.
+ *
+ * - Google-pulled: the sync pull (see the master-event loop above) stores
+ *   `googleEvent.end.date` verbatim. Google's `end.date` is EXCLUSIVE (RFC
+ *   5545/Google Calendar API: the day after the last actual day), and a
+ *   date-only string always parses as UTC midnight, so this shape is always
+ *   `00:00:00.000Z`.
+ * - Basis-authored: `EventForm.handleFormSubmit` (frontend/src/components/
+ *   calendar/EventForm.tsx) stores a one-day all-day event as noon-to-noon
+ *   on the same date and a multi-day one as noon-to-noon on its *last*
+ *   actual day — an INCLUSIVE end, deliberately at noon rather than
+ *   midnight ("to avoid timezone boundary issues... which shifts to the
+ *   previous day for negative UTC offsets"). That deliberate choice is what
+ *   makes this shape distinguishable: it is never UTC midnight in any
+ *   timezone this app is realistically deployed in (it would take a server
+ *   running at a UTC+/-12 offset to collide, which is the same unresolved-
+ *   timezone territory the recurring-create guard below is still guarding).
+ *
+ * So: an end already sitting at UTC midnight is treated as already-exclusive
+ * and passed through; anything else is treated as an inclusive last-day and
+ * pushed out by one day to become exclusive. A row can only be one shape or
+ * the other — both start and end of a given row are written by the same
+ * code path — so checking the end alone is enough.
+ */
+function toGoogleAllDayEndDate(end: Date): string {
+  const exclusiveEnd = isUtcMidnight(end) ? end : new Date(end.getTime() + ONE_DAY_MS);
+  return exclusiveEnd.toISOString().split('T')[0];
+}
+
 export async function createGoogleEvent(
   accessToken: string,
   googleCalendarId: string,
@@ -596,7 +642,7 @@ export async function createGoogleEvent(
       ? { date: event.start.toISOString().split('T')[0] }
       : { dateTime: event.start.toISOString() },
     end: event.allDay
-      ? { date: event.end.toISOString().split('T')[0] }
+      ? { date: toGoogleAllDayEndDate(event.end) }
       : { dateTime: event.end.toISOString() },
   };
 
@@ -642,7 +688,7 @@ export async function updateGoogleEvent(
       ? { date: event.start.toISOString().split('T')[0] }
       : { dateTime: event.start.toISOString() };
     eventBody.end = event.allDay
-      ? { date: event.end.toISOString().split('T')[0] }
+      ? { date: toGoogleAllDayEndDate(event.end) }
       : { dateTime: event.end.toISOString() };
   }
 

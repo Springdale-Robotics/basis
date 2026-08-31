@@ -425,12 +425,25 @@ describe('outbound sweep', () => {
     expect(stillPending.map((e) => e.id)).toContain(event.id);
   });
 
-  it('C2: refuses to create an all-day event this mapping cannot express, counting it failed and leaving it for the next sweep', async () => {
-    // Basis stores a one-day all-day event as an inclusive noon-to-noon
-    // range on the same date (see EventForm.tsx's handleFormSubmit), but
-    // Google's end.date is exclusive. Pushed as-is, start.date === end.date
-    // — a zero-length range, not the one full day this event actually is.
+  it('C2 (superseded 2026-08-31): a one-day all-day event now pushes, not refused', async () => {
+    // Round 1 refused this shape outright — Basis stores a one-day all-day
+    // event as an inclusive noon-to-noon range on the same date (see
+    // EventForm.tsx's handleFormSubmit), but Google's end.date is exclusive,
+    // and pushed as-is start.date === end.date would be a zero-length range.
+    //
+    // The 2026-08-31 amendment says this is a bug to fix, not a boundary to
+    // guard: toGoogleAllDayEndDate (google-sync.service.ts) now does the
+    // inclusive-to-exclusive conversion, so isCreateExpressible no longer
+    // refuses all-day shapes at all. createGoogleEvent is mocked in this
+    // file, so this test only proves the worker stopped refusing the create
+    // and passed the raw start/end through — the conversion itself is
+    // covered against the real function in all-day-google-mapping.test.ts.
     const day = new Date('2026-09-05T12:00:00Z');
+    createGoogleEvent.mockResolvedValue({
+      id: 'g-allday',
+      updated: new Date(Date.now() + 60_000).toISOString(),
+    });
+
     const [event] = await db
       .insert(calendarEvents)
       .values({
@@ -444,19 +457,13 @@ describe('outbound sweep', () => {
 
     const result = await runSweep();
 
-    expect(createGoogleEvent).not.toHaveBeenCalled();
-    // Unlike C1's recurrence skips, this is counted failed — the instruction
-    // that produced this fix was explicit that an unmappable create should
-    // be counted as a failure, not silently deferred.
-    expect(result).toEqual({ created: 0, updated: 0, deleted: 0, failed: 1 });
+    expect(createGoogleEvent).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ created: 1, updated: 0, deleted: 0, failed: 0 });
 
     const after = await db.query.calendarEvents.findFirst({
       where: eq(calendarEvents.id, event.id),
     });
-    expect(after!.externalId).toBeNull();
-
-    const stillPending = await findCreates(calendarId);
-    expect(stillPending.map((e) => e.id)).toContain(event.id);
+    expect(after!.externalId).toBe('g-allday');
   });
 
   it('C2: refuses to create a recurring event, since this mapping never attaches a time zone', async () => {
