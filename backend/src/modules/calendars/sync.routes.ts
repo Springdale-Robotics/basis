@@ -13,6 +13,8 @@ import {
   getAuthUrl,
   getTokensFromCode,
   describeGoogleSyncError,
+  getGoogleCalendarAccessRole,
+  isWritableGoogleAccessRole,
   listGoogleCalendars,
   syncCalendarFromGoogle,
 } from './google-sync.service.js';
@@ -189,6 +191,25 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
         expiry_date: number;
       };
 
+      // Re-read the role directly from Google rather than trusting the
+      // picker's own filtering (if any) or the caller-supplied
+      // googleCalendarId's provenance. A calendar this Google account can
+      // only read — a partner's shared calendar, Holidays, a school
+      // calendar — must not come in writable: every outbound push against
+      // it would 403 forever, and a delete would 403 while the local row is
+      // already gone, letting the next pull recreate it. Done before the
+      // temporary tokens are deleted below: if this call throws on a
+      // transient Google hiccup, the household can still retry the OAuth
+      // completion step instead of being forced back through the entire
+      // consent flow.
+      let accessRole: string | undefined;
+      try {
+        accessRole = await getGoogleCalendarAccessRole(tokens.access_token, googleCalendarId);
+      } catch (err) {
+        throw Errors.validation(describeGoogleSyncError(err));
+      }
+      const isReadOnly = !isWritableGoogleAccessRole(accessRole);
+
       // Delete temporary tokens
       await redis.del(tempTokenKey);
 
@@ -206,8 +227,11 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
           type: 'synced',
           isSynced: true,
           // Two-way as of phase 2: local edits are discovered from state and
-          // pushed by the outbound sweep. See outbound-discovery.ts.
-          isReadOnly: false,
+          // pushed by the outbound sweep (see outbound-discovery.ts) — but
+          // only when this Google account can actually write to the
+          // calendar. isReadOnly reflects the real accessRole, not a
+          // blanket "Google calendars are editable" assumption.
+          isReadOnly,
           syncProvider: 'google',
           syncCredentials: encryptedCredentials,
           syncCalendarId: googleCalendarId,

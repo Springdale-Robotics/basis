@@ -7,7 +7,6 @@ import { importIcsToCalendar } from '../../src/modules/calendars/ics.service.js'
 
 let householdId: string;
 let googleCalendarId: string;
-let outlookCalendarId: string;
 let localCalendarId: string;
 
 beforeAll(async () => {
@@ -31,20 +30,6 @@ beforeAll(async () => {
     .returning();
   googleCalendarId = google.id;
 
-  const [outlook] = await db
-    .insert(calendars)
-    .values({
-      householdId,
-      name: 'Outlook',
-      type: 'synced',
-      isSynced: true,
-      isReadOnly: true,
-      syncProvider: 'outlook',
-      syncCalendarId: 'o-1',
-    })
-    .returning();
-  outlookCalendarId = outlook.id;
-
   const [local] = await db
     .insert(calendars)
     .values({
@@ -62,14 +47,18 @@ afterAll(async () => {
   await db.delete(households).where(eq(households.id, householdId));
 });
 
+// The Outlook-stays-read-only guarantee now lives at the route layer, in
+// connect-writability.test.ts ("always connects read-only") and at the
+// migration layer, in unlock-migration-scope.test.ts ("leaves a synced
+// Outlook calendar locked") — both exercise real code paths rather than
+// asserting a fixture back at itself. An earlier version of this file did
+// the latter: insert a calendar with isReadOnly: true, then assert it reads
+// back true. That's true regardless of anything this task changed — it
+// would still pass if sync.routes.ts's Outlook branch were flipped to
+// isReadOnly: false, since migrations had already run and no route was ever
+// called. Removed rather than fixed in place, since the coverage it was
+// gesturing at belongs where the actual behavior lives.
 describe('unlock', () => {
-  it('leaves Outlook calendars read-only — they have no outbound path', async () => {
-    const outlook = await db.query.calendars.findFirst({
-      where: eq(calendars.id, outlookCalendarId),
-    });
-    expect(outlook!.isReadOnly).toBe(true);
-  });
-
   it('refuses an ICS import into a synced calendar even once it is writable', async () => {
     await expect(
       importIcsToCalendar(googleCalendarId, householdId, 'BEGIN:VCALENDAR\nEND:VCALENDAR')

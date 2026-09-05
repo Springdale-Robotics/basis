@@ -360,6 +360,11 @@ export function CalendarSyncSettings({ calendars }: CalendarSyncSettingsProps) {
                               Primary
                             </Badge>
                           )}
+                          {cal.accessRole && !['owner', 'writer'].includes(cal.accessRole) && (
+                            <Badge variant="outline" className="ml-2 text-xs">
+                              Read-only
+                            </Badge>
+                          )}
                         </div>
                       </SelectItem>
                     ))}
