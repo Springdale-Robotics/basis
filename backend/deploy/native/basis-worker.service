@@ -14,6 +14,14 @@ User=basis
 Group=basis
 WorkingDirectory=/opt/basis/current/backend
 EnvironmentFile=/opt/basis/.env
+# Pinned, not inherited. All-day events are stored as a wall-clock instant and
+# converted to Google's exclusive `end.date` at the sync boundary, and that
+# conversion distinguishes a Basis-authored end (noon) from a provider-supplied
+# one (exact UTC midnight). At a host offset of exactly +/-12 local noon IS UTC
+# midnight and the two become indistinguishable; at |offset| >= 13 the date
+# arithmetic shifts a day. Boxes are self-hosted and set to local time, so this
+# cannot be left to whatever the host happens to be.
+Environment=TZ=UTC
 ExecStart=/usr/bin/node dist/worker.js
 Restart=always
 RestartSec=10
