@@ -205,10 +205,9 @@ export async function syncRoutes(app: FastifyInstance): Promise<void> {
           color: color || '#4285F4', // Google blue
           type: 'synced',
           isSynced: true,
-          // Pull-only: no push-to-provider path exists, so local edits would
-          // be silently clobbered by the next hourly pull. Read-only until
-          // real two-way sync ships.
-          isReadOnly: true,
+          // Two-way as of phase 2: local edits are discovered from state and
+          // pushed by the outbound sweep. See outbound-discovery.ts.
+          isReadOnly: false,
           syncProvider: 'google',
           syncCredentials: encryptedCredentials,
           syncCalendarId: googleCalendarId,

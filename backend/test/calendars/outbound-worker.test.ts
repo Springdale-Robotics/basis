@@ -499,7 +499,7 @@ describe('outbound sweep', () => {
     expect(cal!.syncError).toContain('Outbound push failed');
   });
 
-  it('I2: does not touch the calendar error when at least one item succeeds', async () => {
+  it('I2: does not touch the calendar error when a sweep has no failures at all', async () => {
     createGoogleEvent.mockResolvedValue({
       id: 'g-ok',
       updated: new Date(Date.now() + 60_000).toISOString(),
@@ -510,6 +510,44 @@ describe('outbound sweep', () => {
 
     const cal = await db.query.calendars.findFirst({ where: eq(calendars.id, calendarId) });
     expect(cal!.syncError).toBeNull();
+  });
+
+  it('I2: records a calendar-level error on a mixed sweep — some items succeed, some fail', async () => {
+    // Route by summary rather than call order: the sweep runs creates
+    // concurrently-discovered-but-sequentially-pushed, and this pins the
+    // test to "this specific item fails" rather than "the Nth call fails",
+    // which would silently stop meaning anything if the loop order changed.
+    createGoogleEvent.mockImplementation(
+      async (_accessToken: string, _googleCalendarId: string, input: { summary: string }) => {
+        if (input.summary === 'Fails every time') {
+          throw new Error('Google is down for this one');
+        }
+        return { id: 'g-mixed-ok', updated: new Date(Date.now() + 60_000).toISOString() };
+      }
+    );
+    await db.insert(calendarEvents).values([
+      { calendarId, title: 'Fails every time', ...times },
+      { calendarId, title: 'Succeeds fine', ...times },
+    ]);
+
+    const result = await runSweep();
+    // The stuck item is retried once more within this same invocation,
+    // because the loop keeps going whenever a pass makes *any* progress
+    // (see the "no progress" comment at the bottom of the sweep loop) — so
+    // it accumulates two failures across two passes, while the healthy item
+    // only ever needed the first. What matters for this test isn't the
+    // exact retry count, it's that both `failed` and a success are nonzero
+    // in the same invocation — the "mixed" shape the fix round exists for.
+    expect(result.failed).toBeGreaterThan(0);
+    expect(result.created).toBe(1);
+
+    const cal = await db.query.calendars.findFirst({ where: eq(calendars.id, calendarId) });
+    // Previously: a sweep with any successes at all wrote no syncError,
+    // even with a permanently-stuck item sitting right alongside. That was
+    // tolerable while outbound was inert; now it's how a household would
+    // learn one of their edits isn't reaching Google.
+    expect(cal!.syncError).toContain(`${result.failed} failure`);
+    expect(cal!.syncError).toContain('1 successful');
   });
 
   it('I5: fails the sweep fast on undecryptable credentials, without ever calling Google or shipping ciphertext as a token', async () => {

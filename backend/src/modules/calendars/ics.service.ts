@@ -165,6 +165,17 @@ export async function importIcsToCalendar(
     throw new Error('Calendar is read-only');
   }
 
+  // A synced calendar's external_id column belongs to the provider. An ICS
+  // import would fill it with ICS UIDs, which the outbound sweep would then
+  // read as "Google already has this" — skipping the create, and later
+  // calling updateGoogleEvent with an id Google has never seen. Bulk import
+  // into a synced calendar is not part of two-way sync.
+  if (calendar.isSynced) {
+    throw new Error(
+      'This calendar is synced with an external provider — import into a local calendar instead'
+    );
+  }
+
   // Parse ICS content
   const parsedEvents = parseIcsContent(icsContent);
 
