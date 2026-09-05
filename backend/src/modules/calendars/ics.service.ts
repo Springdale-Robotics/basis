@@ -3,6 +3,7 @@ import { db } from '../../config/database.js';
 import { calendars, calendarEvents, type CalendarEvent } from '../../db/schema/index.js';
 import { eq } from 'drizzle-orm';
 import { logger } from '../../lib/logger.js';
+import { Errors } from '../../lib/errors.js';
 
 export interface ParsedEvent {
   title: string;
@@ -158,11 +159,22 @@ export async function importIcsToCalendar(
   });
 
   if (!calendar || calendar.householdId !== householdId) {
-    throw new Error('Calendar not found');
+    throw Errors.notFound('Calendar');
   }
 
   if (calendar.isReadOnly) {
-    throw new Error('Calendar is read-only');
+    throw Errors.forbidden('Calendar is read-only');
+  }
+
+  // A synced calendar's external_id column belongs to the provider. An ICS
+  // import would fill it with ICS UIDs, which the outbound sweep would then
+  // read as "Google already has this" — skipping the create, and later
+  // calling updateGoogleEvent with an id Google has never seen. Bulk import
+  // into a synced calendar is not part of two-way sync.
+  if (calendar.isSynced) {
+    throw Errors.forbidden(
+      'This calendar is synced with an external provider — import into a local calendar instead'
+    );
   }
 
   // Parse ICS content

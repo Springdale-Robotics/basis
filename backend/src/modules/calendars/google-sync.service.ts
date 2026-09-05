@@ -68,6 +68,25 @@ export interface GoogleCalendarInfo {
   description?: string;
   backgroundColor?: string;
   primary?: boolean;
+  // Google's own permission for this calendar under the connecting user's
+  // account: 'owner' | 'writer' | 'reader' | 'freeBusyReader'. Carried
+  // through so the picker (and, more importantly, /sync/google/complete) can
+  // tell a calendar the household actually owns or can edit apart from one
+  // they can only read — a partner's shared calendar, Holidays, a school
+  // calendar. Previously fetched and silently discarded here, which is how
+  // the unlock in phase 2 task 5 could otherwise make a read-only shared
+  // calendar look connectable and writable.
+  accessRole?: string;
+}
+
+/** Google roles that this app is willing to push local edits to. Reader and
+ * freeBusyReader are exactly the roles Google itself won't accept a write
+ * against — pushing to one of those doesn't fail occasionally, it fails
+ * forever, on every item, on every sweep. */
+const WRITABLE_GOOGLE_ACCESS_ROLES = new Set(['owner', 'writer']);
+
+export function isWritableGoogleAccessRole(accessRole: string | undefined): boolean {
+  return accessRole !== undefined && WRITABLE_GOOGLE_ACCESS_ROLES.has(accessRole);
 }
 
 export async function listGoogleCalendars(
@@ -85,7 +104,30 @@ export async function listGoogleCalendars(
     description: cal.description || undefined,
     backgroundColor: cal.backgroundColor || undefined,
     primary: cal.primary || false,
+    accessRole: cal.accessRole || undefined,
   }));
+}
+
+/**
+ * Re-reads a single calendar's access role directly from Google, rather than
+ * trusting anything the client sent. /sync/google/complete's request body is
+ * just `{ googleCalendarId }` with no re-validation against the token — a
+ * client-side-only "hide read-only calendars in the picker" filter would be
+ * cosmetic, not a guarantee. calendarList.get() only ever returns an entry
+ * the authenticated user already has in their own calendar list, so this
+ * can't be pointed at an arbitrary calendar the token holder has no
+ * relationship to.
+ */
+export async function getGoogleCalendarAccessRole(
+  accessToken: string,
+  googleCalendarId: string
+): Promise<string | undefined> {
+  const oauth2Client = createOAuth2Client();
+  oauth2Client.setCredentials({ access_token: accessToken });
+
+  const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+  const response = await calendar.calendarList.get({ calendarId: googleCalendarId });
+  return response.data.accessRole || undefined;
 }
 
 export interface GoogleCalendarEvent {

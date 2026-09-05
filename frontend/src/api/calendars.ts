@@ -210,6 +210,9 @@ export const calendarsApi = {
       description?: string;
       backgroundColor?: string;
       primary?: boolean;
+      // 'owner' | 'writer' | 'reader' | 'freeBusyReader'. Only owner/writer
+      // connect as writable — see getGoogleCalendarAccessRole on the backend.
+      accessRole?: string;
     }> }>('/calendars/sync/google/calendars'),
 
   completeGoogleSync: (data: { googleCalendarId: string; name: string; color?: string }) =>

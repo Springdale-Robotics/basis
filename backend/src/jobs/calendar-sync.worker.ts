@@ -89,9 +89,11 @@ export async function processCalendarSyncJob(job: Job<CalendarSyncJobData>): Pro
           // the outbound sweep's floor — the hourly tick guarantees pending
           // changes get pushed at least once an hour, even with no other
           // trigger wired up yet. Cheap to call unconditionally: the sweep's
-          // own isOutboundCalendar gate (Task 3) no-ops for a read-only
-          // calendar, and every synced Google calendar is read-only until a
-          // later unlock migration.
+          // own isOutboundCalendar gate (Task 3) no-ops for anything not
+          // both synced and writable. Since the 0019 unlock migration, an
+          // ordinary Google calendar satisfies that, so this call now does
+          // real work every time — it only no-ops for the rare Google
+          // calendar with isReadOnly forced back to true by hand.
           await queueOutboundSweep(calendar.id);
         } else if (calendar.syncProvider === 'outlook') {
           calendarLog.info('Syncing from Outlook Calendar');

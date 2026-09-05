@@ -375,19 +375,26 @@ export async function processCalendarOutboundJob(
     log.warn({ result }, 'Outbound sweep hit its pass limit with work outstanding');
   }
 
-  if (result.failed > 0 && result.created + result.updated + result.deleted === 0) {
-    // Nothing succeeded across the whole invocation. The pull path
-    // (syncCalendarFromGoogle) writes the same column on failure and clears
-    // it to null on a successful pull — sharing it here means a healthy pull
-    // next hour will silently clear this message even if outbound is still
-    // wedged, before a dedicated outbound error surface exists. Flagged for
-    // the design conversation rather than solved here.
-    await db
-      .update(calendars)
-      .set({
-        syncError: `Outbound push failed for ${result.failed} pending change${result.failed === 1 ? '' : 's'}; will retry on the next sweep.`,
-      })
-      .where(eq(calendars.id, calendarId));
+  if (result.failed > 0) {
+    // Any failure surfaces, not just a total wipeout. A mixed sweep — some
+    // items succeed, some fail every pass — used to write nothing at all
+    // here, because the original trigger was "failed > 0 AND nothing
+    // succeeded". That was tolerable while outbound was inert and nothing
+    // failing meant anything; now this is how a household learns a subset
+    // of their edits isn't reaching Google, alongside ones that are.
+    //
+    // The pull path (syncCalendarFromGoogle) writes the same column on
+    // failure and clears it to null on a successful pull — sharing it here
+    // means a healthy pull next hour will silently clear this message even
+    // if outbound is still wedged, before a dedicated outbound error
+    // surface exists. Flagged for the design conversation rather than
+    // solved here.
+    const succeeded = result.created + result.updated + result.deleted;
+    const message =
+      succeeded > 0
+        ? `Outbound push had ${result.failed} failure${result.failed === 1 ? '' : 's'} alongside ${succeeded} successful change${succeeded === 1 ? '' : 's'}; will retry the failures on the next sweep.`
+        : `Outbound push failed for ${result.failed} pending change${result.failed === 1 ? '' : 's'}; will retry on the next sweep.`;
+    await db.update(calendars).set({ syncError: message }).where(eq(calendars.id, calendarId));
   }
 
   return result;

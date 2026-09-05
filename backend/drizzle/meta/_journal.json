@@ -134,6 +134,13 @@
       "when": 1787106000000,
       "tag": "0018_calendar_outbound_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1787109600000,
+      "tag": "0019_unlock_google_calendars",
+      "breakpoints": true
     }
   ]
 }
