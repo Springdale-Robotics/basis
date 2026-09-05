@@ -1,4 +1,4 @@
-import { DEFAULT_COLOR } from './calendar-utils';
+import { DEFAULT_COLOR, allDayDisplayEnd } from './calendar-utils';
 import { useEffect, useState, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -103,7 +103,10 @@ export function EventForm({
           title: event.title,
           description: event.description || '',
           startTime: format(new Date(event.startTime), "yyyy-MM-dd'T'HH:mm"),
-          endTime: format(new Date(event.endTime), "yyyy-MM-dd'T'HH:mm"),
+          endTime: format(
+            event.allDay ? allDayDisplayEnd(event.endTime) : new Date(event.endTime),
+            "yyyy-MM-dd'T'HH:mm"
+          ),
           allDay: event.allDay,
           calendarId: event.calendarId,
           location: event.location || '',
@@ -182,7 +185,10 @@ export function EventForm({
           title: event.title,
           description: event.description || '',
           startTime: format(new Date(event.startTime), dateFormat),
-          endTime: format(new Date(event.endTime), dateFormat),
+          endTime: format(
+            event.allDay ? allDayDisplayEnd(event.endTime) : new Date(event.endTime),
+            dateFormat
+          ),
           allDay: event.allDay,
           calendarId: event.calendarId,
           location: event.location || '',

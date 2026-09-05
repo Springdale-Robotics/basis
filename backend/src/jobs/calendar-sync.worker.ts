@@ -6,7 +6,7 @@ import { syncCalendarFromGoogle, describeGoogleSyncError } from '../modules/cale
 import { syncCalendarFromOutlook } from '../modules/calendars/outlook-sync.service.js';
 import { emitHouseholdEvent } from '../websocket/events.js';
 import { logger } from '../lib/logger.js';
-import { queueNotification } from './index.js';
+import { queueNotification, queueOutboundSweep } from './index.js';
 
 export interface CalendarSyncJobData {
   type: 'sync_all' | 'sync_single';
@@ -83,6 +83,16 @@ export async function processCalendarSyncJob(job: Job<CalendarSyncJobData>): Pro
         if (calendar.syncProvider === 'google') {
           calendarLog.info('Syncing from Google Calendar');
           syncResult = await syncCalendarFromGoogle(calendar.id, calendar.householdId);
+
+          // Push local changes right after pulling remote ones, so the sweep
+          // always works from freshly stamped remote_updated values. This is
+          // the outbound sweep's floor — the hourly tick guarantees pending
+          // changes get pushed at least once an hour, even with no other
+          // trigger wired up yet. Cheap to call unconditionally: the sweep's
+          // own isOutboundCalendar gate (Task 3) no-ops for a read-only
+          // calendar, and every synced Google calendar is read-only until a
+          // later unlock migration.
+          await queueOutboundSweep(calendar.id);
         } else if (calendar.syncProvider === 'outlook') {
           calendarLog.info('Syncing from Outlook Calendar');
           syncResult = await syncCalendarFromOutlook(calendar.id, calendar.householdId);

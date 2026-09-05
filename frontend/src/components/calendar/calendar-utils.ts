@@ -26,6 +26,39 @@ export function resolveCalendarColor(
   return calendar.color || DEFAULT_COLOR;
 }
 
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * An all-day event's `endTime` can arrive at this form holding either of two
+ * shapes: Google's EXCLUSIVE end (always exact UTC midnight — see
+ * backend's `toGoogleAllDayEndDate` in google-sync.service.ts for the full
+ * reasoning) or this form's own INCLUSIVE end, the last actual day, stamped
+ * at noon by EventForm's handleFormSubmit.
+ *
+ * Loading a Google-pulled event's raw end straight into the end-date field
+ * would show the user a day past the event's real last day. Worse: if they
+ * save without touching it, the noon-stamp on submit turns that overshot
+ * date into the new INCLUSIVE end, growing the event by a real day at
+ * Google on its next push — a plain re-save doing that is exactly the
+ * "silently shifts events by a day" failure this boundary exists to avoid.
+ *
+ * So: an end sitting at exact UTC midnight is exclusive — display the day
+ * before it, the true last day. Anything else (this form never writes
+ * all-day fields at midnight) is already the last actual day — display as
+ * given. Round-trips correctly either way: once a row has been through this
+ * form once, its end is never midnight again, so this only ever fires for
+ * an event pulled straight from Google.
+ */
+export function allDayDisplayEnd(endTime: string | Date): Date {
+  const end = new Date(endTime);
+  const isUtcMidnight =
+    end.getUTCHours() === 0 &&
+    end.getUTCMinutes() === 0 &&
+    end.getUTCSeconds() === 0 &&
+    end.getUTCMilliseconds() === 0;
+  return isUtcMidnight ? new Date(end.getTime() - ONE_DAY_MS) : end;
+}
+
 export function isSameDay(a: Date, b: Date): boolean {
   return (
     a.getFullYear() === b.getFullYear() &&

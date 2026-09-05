@@ -2,6 +2,7 @@ import { google, calendar_v3 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { db } from '../../config/database.js';
 import { calendars, calendarEvents } from '../../db/schema/index.js';
+import type { Calendar } from '../../db/schema/index.js';
 import { eq, and } from 'drizzle-orm';
 import { config } from '../../config/index.js';
 import { encrypt, decrypt } from '../../lib/crypto.js';
@@ -513,6 +514,108 @@ export async function syncCalendarFromGoogle(
   return { created, updated, deleted };
 }
 
+/**
+ * Decrypt a calendar's stored Google credentials and return an access token
+ * good enough to call the API right now, refreshing (and re-persisting) it
+ * first if it's within a minute of expiring.
+ *
+ * Mirrors the refresh logic inlined in syncCalendarFromGoogle above — kept
+ * separate rather than factored into a shared call site there, so this
+ * addition can't change behaviour on the pull path that basis#101's 49
+ * production pulls already verified.
+ *
+ * Throws on a credentials blob that won't decrypt or parse. Callers that
+ * want "bad credentials" to degrade one item at a time instead of failing
+ * outright (the outbound sweep) should catch this themselves.
+ */
+export async function getValidAccessToken(calendar: Calendar): Promise<string> {
+  if (!calendar.syncCredentials) {
+    throw new Error('Calendar has no sync credentials');
+  }
+
+  let credentials: { access_token: string; refresh_token: string; expiry_date: number };
+  try {
+    credentials = JSON.parse(decrypt(calendar.syncCredentials));
+  } catch {
+    throw new Error('Failed to decrypt sync credentials');
+  }
+
+  if (credentials.expiry_date >= Date.now() + 60000) {
+    return credentials.access_token;
+  }
+
+  const oauth2Client = createOAuth2Client();
+  const newTokens = await refreshTokens(oauth2Client, credentials.refresh_token);
+
+  const updatedCredentials = encrypt(
+    JSON.stringify({
+      ...credentials,
+      access_token: newTokens.access_token,
+      expiry_date: newTokens.expiry_date,
+    })
+  );
+
+  await db
+    .update(calendars)
+    .set({ syncCredentials: updatedCredentials })
+    .where(eq(calendars.id, calendar.id));
+
+  return newTokens.access_token;
+}
+
+/** What every write handler below hands back — enough to stamp external_id
+ * and remote_updated without a second round-trip. */
+export interface GoogleEventWriteResult {
+  id: string;
+  updated: string | null;
+}
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/** True at exactly UTC midnight — the one timestamp shape a Basis-authored
+ * all-day event can never produce (see below) and every Google-pulled
+ * all-day boundary always does. */
+function isUtcMidnight(date: Date): boolean {
+  return (
+    date.getUTCHours() === 0 &&
+    date.getUTCMinutes() === 0 &&
+    date.getUTCSeconds() === 0 &&
+    date.getUTCMilliseconds() === 0
+  );
+}
+
+/**
+ * A `calendarEvents` row can hold an all-day end in either of two shapes,
+ * and this is the one place that has to tell them apart before sending a
+ * `date` to Google.
+ *
+ * - Google-pulled: the sync pull (see the master-event loop above) stores
+ *   `googleEvent.end.date` verbatim. Google's `end.date` is EXCLUSIVE (RFC
+ *   5545/Google Calendar API: the day after the last actual day), and a
+ *   date-only string always parses as UTC midnight, so this shape is always
+ *   `00:00:00.000Z`.
+ * - Basis-authored: `EventForm.handleFormSubmit` (frontend/src/components/
+ *   calendar/EventForm.tsx) stores a one-day all-day event as noon-to-noon
+ *   on the same date and a multi-day one as noon-to-noon on its *last*
+ *   actual day — an INCLUSIVE end, deliberately at noon rather than
+ *   midnight ("to avoid timezone boundary issues... which shifts to the
+ *   previous day for negative UTC offsets"). That deliberate choice is what
+ *   makes this shape distinguishable: it is never UTC midnight in any
+ *   timezone this app is realistically deployed in (it would take a server
+ *   running at a UTC+/-12 offset to collide, which is the same unresolved-
+ *   timezone territory the recurring-create guard below is still guarding).
+ *
+ * So: an end already sitting at UTC midnight is treated as already-exclusive
+ * and passed through; anything else is treated as an inclusive last-day and
+ * pushed out by one day to become exclusive. A row can only be one shape or
+ * the other — both start and end of a given row are written by the same
+ * code path — so checking the end alone is enough.
+ */
+function toGoogleAllDayEndDate(end: Date): string {
+  const exclusiveEnd = isUtcMidnight(end) ? end : new Date(end.getTime() + ONE_DAY_MS);
+  return exclusiveEnd.toISOString().split('T')[0];
+}
+
 export async function createGoogleEvent(
   accessToken: string,
   googleCalendarId: string,
@@ -525,7 +628,7 @@ export async function createGoogleEvent(
     allDay: boolean;
     recurrence?: string;
   }
-): Promise<string> {
+): Promise<GoogleEventWriteResult> {
   const oauth2Client = createOAuth2Client();
   oauth2Client.setCredentials({ access_token: accessToken });
 
@@ -539,7 +642,7 @@ export async function createGoogleEvent(
       ? { date: event.start.toISOString().split('T')[0] }
       : { dateTime: event.start.toISOString() },
     end: event.allDay
-      ? { date: event.end.toISOString().split('T')[0] }
+      ? { date: toGoogleAllDayEndDate(event.end) }
       : { dateTime: event.end.toISOString() },
   };
 
@@ -552,7 +655,7 @@ export async function createGoogleEvent(
     requestBody: eventBody,
   });
 
-  return response.data.id!;
+  return { id: response.data.id!, updated: response.data.updated ?? null };
 }
 
 export async function updateGoogleEvent(
@@ -568,7 +671,7 @@ export async function updateGoogleEvent(
     allDay?: boolean;
     recurrence?: string;
   }
-): Promise<void> {
+): Promise<GoogleEventWriteResult> {
   const oauth2Client = createOAuth2Client();
   oauth2Client.setCredentials({ access_token: accessToken });
 
@@ -585,7 +688,7 @@ export async function updateGoogleEvent(
       ? { date: event.start.toISOString().split('T')[0] }
       : { dateTime: event.start.toISOString() };
     eventBody.end = event.allDay
-      ? { date: event.end.toISOString().split('T')[0] }
+      ? { date: toGoogleAllDayEndDate(event.end) }
       : { dateTime: event.end.toISOString() };
   }
 
@@ -593,11 +696,13 @@ export async function updateGoogleEvent(
     eventBody.recurrence = event.recurrence ? [`RRULE:${event.recurrence}`] : [];
   }
 
-  await calendar.events.patch({
+  const response = await calendar.events.patch({
     calendarId: googleCalendarId,
     eventId: googleEventId,
     requestBody: eventBody,
   });
+
+  return { id: response.data.id!, updated: response.data.updated ?? null };
 }
 
 export async function deleteGoogleEvent(

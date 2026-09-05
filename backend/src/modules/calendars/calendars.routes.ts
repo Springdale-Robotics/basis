@@ -130,6 +130,32 @@ const dateRangeQuery = z.object({
   expandRecurring: z.coerce.boolean().optional().default(true),
 });
 
+// A single-occurrence edit or cancellation of a recurring master doesn't
+// create an exception row — it adds an EXDATE to the master itself (or, on
+// the update path, upserts an exception row that is fine on its own but
+// leaves the master's EXDATE state the outbound sweep would need to touch).
+// Either way, the row reaching the outbound sweep is a 'master' carrying
+// EXDATE/RDATE state that createGoogleEvent/updateGoogleEvent cannot express
+// without wiping whatever exclusions Google already has for that series
+// (see calendar-outbound.worker.ts's hasUnpushableRecurrenceEdits). That
+// sweep guard stops the destructive push, but on its own it just leaves the
+// edit sitting locally, silently diverged from every device reading Google.
+//
+// Per-occurrence editing of a synced series is out of scope (spec: "masters
+// go out; editing a single occurrence of a synced series is v2"), so refuse
+// it here, at the point of action, rather than accept it and let it rot
+// undelivered. A non-synced (local) calendar is unaffected — this only
+// triggers on `calendar.isSynced`, not `isReadOnly`, so it keeps refusing
+// once a later task allows synced calendars to accept whole-series writes.
+function assertSingleOccurrenceEditable(calendar: { isSynced: boolean }): void {
+  if (calendar.isSynced) {
+    throw Errors.forbidden(
+      "A single occurrence of a repeating event can't be changed yet on a calendar synced with an external provider. " +
+        'Edit or delete the whole series instead, or disconnect the calendar.'
+    );
+  }
+}
+
 export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
   // List calendars
   app.get(
@@ -577,6 +603,8 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
             : originalStartTime || new Date(event.startTime);
 
         if (effectiveScope === 'single') {
+          assertSingleOccurrenceEditable(calendar);
+
           // Upsert the exception for this instance: editing (or dragging) an
           // already-modified occurrence updates its row instead of erroring
           // on a duplicate insert.
@@ -789,6 +817,8 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
             : originalStartTime || new Date(event.startTime);
 
         if (effectiveScope === 'single') {
+          assertSingleOccurrenceEditable(calendar);
+
           // Add EXDATE to exclude this single instance
           const newExDates = addExDate(event.recurrenceExDates, instanceDate);
 
@@ -915,6 +945,16 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
         throw Errors.validation('Event is not a recurring master event');
       }
 
+      // A fourth single-occurrence write path beyond the three named in the
+      // 2026-08-31 amendment, found while implementing it: this is what the
+      // frontend's drag-to-reschedule and "cancel just this one" actions
+      // actually call (see CalendarPage.tsx). It creates/updates an
+      // exception row exactly like PATCH .../events/:id?scope=single, so it
+      // carries the identical risk — an exception row on a synced calendar's
+      // master that isPushableCreate/isPushableUpdate will skip forever,
+      // with nothing telling the household. Guarded for the same reason.
+      assertSingleOccurrenceEditable(calendar);
+
       // Upsert: dragging or re-modifying an occurrence that already has an
       // exception row must update it, not 409.
       const existingException = await db.query.calendarEvents.findFirst({
@@ -1007,6 +1047,8 @@ export async function calendarsRoutes(app: FastifyInstance): Promise<void> {
       if (!masterEvent.recurrenceRule || !isRecurringMaster(masterEvent)) {
         throw Errors.validation('Event is not a recurring master event');
       }
+
+      assertSingleOccurrenceEditable(calendar);
 
       const instanceDate = new Date(request.params.originalStartTime);
 
