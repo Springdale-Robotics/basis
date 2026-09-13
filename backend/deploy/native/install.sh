@@ -30,12 +30,12 @@ Options:
   --source DIR    Path to a Basis source checkout or extracted tarball.
   --port PORT     Backend port (default 3000).
   --skip-deps     Don't apt-install Node/Postgres/Redis (use existing).
-  --units-only    Only (re)install the systemd units, the post-update watchdog
-                  and the sudoers rule. Does not deploy, build, migrate or
-                  restart anything. Use this to pick up changes to units or
-                  sudoers on a box that is already running — a full run would
-                  redeploy from --source and repoint /opt/basis/current at an
-                  unreleased build.
+  --units-only    Only (re)install the systemd units, the post-update watchdog,
+                  the sudoers rule and the boot-after-power-loss settings. Does
+                  not deploy, build, migrate or restart anything. Use this to
+                  pick up host-level changes on a box that is already running —
+                  a full run would redeploy from --source and repoint
+                  /opt/basis/current at an unreleased build.
   -h, --help      Show this message.
 EOF
   exit 0
@@ -116,6 +116,107 @@ SUDOERS
   ok "Installed /etc/sudoers.d/basis (passwordless restart of basis units only)"
 }
 
+# ─── boot after power loss ────────────────────────────────────────────────
+#
+# Two ways a headless box fails to come back after an unclean shutdown, both
+# invisible without a monitor plugged in:
+#
+#   1. GRUB's recordfail. Ubuntu marks a boot as "failed" until userspace
+#      clears the flag, so after a power cut GRUB shows its menu and, on some
+#      releases, holds it indefinitely waiting for a keypress that never
+#      comes. GRUB_RECORDFAIL_TIMEOUT bounds that wait.
+#   2. fsck stopping at an interactive prompt when the journal replay is not
+#      enough. fsck.repair=yes on the kernel command line tells the initramfs
+#      (root filesystem) and systemd-fsck (everything else) to answer "yes" and
+#      keep booting.
+#
+# Both take effect at the NEXT boot, not on this run. Both are edits to
+# /etc/default/grub followed by update-grub, so this only applies where that
+# file and command exist -- a Pi (no GRUB) or macOS passes through untouched.
+# Existing operator choices win: a positive recordfail timeout or any explicit
+# fsck.repair= value is left alone. Best-effort: nothing here can fail the
+# install.
+#
+# Takes the grub defaults path as $1 so it can be exercised against fixture
+# files; UPDATE_GRUB is overridable for the same reason.
+harden_boot_after_power_loss() {
+  local grub_file="$1"
+  local update_grub="${UPDATE_GRUB:-update-grub}"
+
+  if [ ! -f "$grub_file" ] || ! command -v "$update_grub" >/dev/null 2>&1; then
+    log "No GRUB defaults at $grub_file or no update-grub — skipping boot-after-power-loss settings"
+    return 0
+  fi
+
+  local tmp changed=0
+  tmp="$(mktemp)"
+  cp "$grub_file" "$tmp"
+
+  # Recordfail timeout: add if absent or commented out, replace only -1 (wait
+  # forever). Anchored at line start so a commented line is replaced, not
+  # duplicated alongside.
+  if grep -qE '^GRUB_RECORDFAIL_TIMEOUT=' "$tmp"; then
+    if grep -qE '^GRUB_RECORDFAIL_TIMEOUT=-1[[:space:]]*$' "$tmp"; then
+      sed -i -E 's/^GRUB_RECORDFAIL_TIMEOUT=-1[[:space:]]*$/GRUB_RECORDFAIL_TIMEOUT=5/' "$tmp"
+      changed=1
+    fi
+  elif grep -qE '^#[[:space:]]*GRUB_RECORDFAIL_TIMEOUT=' "$tmp"; then
+    sed -i -E 's/^#[[:space:]]*GRUB_RECORDFAIL_TIMEOUT=.*$/GRUB_RECORDFAIL_TIMEOUT=5/' "$tmp"
+    changed=1
+  else
+    printf '\nGRUB_RECORDFAIL_TIMEOUT=5\n' >> "$tmp"
+    changed=1
+  fi
+
+  # fsck.repair=yes into GRUB_CMDLINE_LINUX_DEFAULT only (not GRUB_CMDLINE_LINUX,
+  # which also feeds recovery entries). Any existing fsck.repair= is respected.
+  if grep -qE '^GRUB_CMDLINE_LINUX_DEFAULT=' "$tmp"; then
+    if ! grep -E '^GRUB_CMDLINE_LINUX_DEFAULT=' "$tmp" | grep -q 'fsck.repair='; then
+      # Three shapes: ="" / ='' (insert), ="x" / 'x' (append with a space),
+      # unquoted (append with a space and quote the result). Each substitution
+      # is followed by `t` (branch to end on success) so the later patterns
+      # cannot re-match the line the earlier one just rewrote.
+      sed -i -E \
+        -e 's/^(GRUB_CMDLINE_LINUX_DEFAULT=)(["'"'"'])\2[[:space:]]*$/\1"fsck.repair=yes"/' -e t \
+        -e 's/^(GRUB_CMDLINE_LINUX_DEFAULT=)(["'"'"'])(.*[^[:space:]])[[:space:]]*\2[[:space:]]*$/\1\2\3 fsck.repair=yes\2/' -e t \
+        -e 's/^(GRUB_CMDLINE_LINUX_DEFAULT=)([^"'"'"'[:space:]][^[:space:]]*)[[:space:]]*$/\1"\2 fsck.repair=yes"/' \
+        "$tmp"
+      changed=1
+    fi
+  else
+    printf '\nGRUB_CMDLINE_LINUX_DEFAULT="fsck.repair=yes"\n' >> "$tmp"
+    changed=1
+  fi
+
+  if [ "$changed" -eq 0 ]; then
+    rm -f "$tmp"
+    ok "Boot-after-power-loss settings already in place ($grub_file)"
+    return 0
+  fi
+
+  # Same discipline as the sudoers drop-in: the live file is only replaced once
+  # the new one parses and sources cleanly. A broken /etc/default/grub breaks
+  # every future update-grub, including the ones kernel upgrades run.
+  if ! bash -n "$tmp" 2>/dev/null || ! ( set -e; . "$tmp" ) >/dev/null 2>&1; then
+    rm -f "$tmp"
+    warn "Generated $grub_file did not parse — leaving the existing file alone"
+    return 0
+  fi
+  # Preserve the original file's ownership/mode rather than mktemp's 0600.
+  if ! cat "$tmp" > "$grub_file"; then
+    rm -f "$tmp"
+    warn "Couldn't write $grub_file — boot-after-power-loss settings not applied"
+    return 0
+  fi
+  rm -f "$tmp"
+
+  if "$update_grub" >/dev/null 2>&1; then
+    ok "Boot-after-power-loss settings applied (GRUB_RECORDFAIL_TIMEOUT=5, fsck.repair=yes) — take effect at next boot"
+  else
+    warn "$grub_file updated but '$update_grub' failed — run it by hand so the settings reach the boot config"
+  fi
+}
+
 # ─── OS detect ────────────────────────────────────────────────────────────
 if [ -f /etc/os-release ]; then
   . /etc/os-release
@@ -146,11 +247,13 @@ if [ "$UNITS_ONLY" -eq 1 ]; then
   [ -d /opt/basis/ingredient-parser-venv ] && PARSER_PRESENT=1
 
   install_units_and_sudoers "$SOURCE_DIR" "$PARSER_PRESENT"
+  harden_boot_after_power_loss /etc/default/grub
 
   echo
-  ok "Units, watchdog and sudoers updated."
+  ok "Units, watchdog, sudoers and boot settings updated."
   log "Nothing was deployed, built, migrated or restarted."
   log "Running services keep serving the version they are on until the next update."
+  log "Boot-after-power-loss settings apply at the next boot."
   exit 0
 fi
 
@@ -418,6 +521,7 @@ if [ "$OS_ID" != macos ]; then
     || systemctl enable NetworkManager-wait-online.service >/dev/null 2>&1 || true
 
   install_units_and_sudoers "$INSTALL_PATH" "$PARSER_OK"
+  harden_boot_after_power_loss /etc/default/grub
 
   log "Starting Basis"
   # Clear any latched start-limit/failed state from a prior aborted attempt —
