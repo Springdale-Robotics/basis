@@ -26,6 +26,7 @@ import { deduplicateIngredientMatches, dedupeKeyFor } from '@/lib/recipe-utils';
 import { useBatchImageProcessing, type BatchItem } from '@/hooks/useBatchImageProcessing';
 import { FileSourcePicker } from '@/components/shared/FileSourcePicker';
 import { ReconcileIngredientsDialog } from '@/components/recipes/ReconcileIngredientsDialog';
+import { QuantityInput } from '@/components/recipes/QuantityInput';
 import { useIngredientReconciliation } from '@/hooks/useIngredientReconciliation';
 import { toast } from '@/hooks/useToast';
 import { BulkIngredientActions } from './BulkIngredientActions';
@@ -884,10 +885,10 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
                       <CardContent className="p-2 max-h-40 overflow-y-auto space-y-1">
                         {((ov.ingredients as typeof recipe.ingredients) || recipe.ingredients).map((ing, i) => (
                           <div key={i} className="flex items-center gap-1">
-                            <Input className="w-14 h-7 text-xs px-1" placeholder="Qty" value={ing.quantity ?? ''} onChange={(e) => {
+                            <QuantityInput className="w-14 h-7 text-xs px-1" placeholder="Qty" value={ing.quantity} onValueChange={(quantity) => {
                               const current = (ov.ingredients as typeof recipe.ingredients) || [...recipe.ingredients];
                               const updated = [...current];
-                              updated[i] = { ...updated[i], quantity: e.target.value ? parseFloat(e.target.value) : undefined };
+                              updated[i] = { ...updated[i], quantity };
                               setActiveOverrides({ ingredients: updated });
                             }} />
                             <Input className="w-14 h-7 text-xs px-1" placeholder="Unit" value={ing.unit ?? ''} onChange={(e) => {
