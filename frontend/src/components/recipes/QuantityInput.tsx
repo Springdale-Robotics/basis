@@ -31,7 +31,6 @@ export function QuantityInput({ value, onValueChange, onBlur, ...props }: Quanti
     <Input
       {...props}
       type="text"
-      inputMode="decimal"
       value={text}
       onChange={(e) => {
         const raw = e.target.value;
@@ -56,10 +55,30 @@ function format(value: number | undefined): string {
   return value === undefined || !Number.isFinite(value) ? '' : String(value);
 }
 
-/** undefined = cleared, null = not (yet) a number. */
+const VULGAR_FRACTIONS: Record<string, number> = {
+  '½': 1 / 2, '⅓': 1 / 3, '⅔': 2 / 3, '¼': 1 / 4, '¾': 3 / 4,
+  '⅕': 1 / 5, '⅖': 2 / 5, '⅗': 3 / 5, '⅘': 4 / 5, '⅙': 1 / 6,
+  '⅚': 5 / 6, '⅛': 1 / 8, '⅜': 3 / 8, '⅝': 5 / 8, '⅞': 7 / 8,
+};
+
+const GLYPHS = Object.keys(VULGAR_FRACTIONS).join('');
+const SIMPLE_FRACTION = /^(\d+)\/(\d+)$/; // 1/4, 12/3
+const MIXED_FRACTION = /^(\d+)\s+(\d+)\/(\d+)$/; // 1 1/2
+const GLYPH_FRACTION = new RegExp(`^(\\d+)?\\s*([${GLYPHS}])$`); // ¼, 1¼, 1 ¼
+
+/** undefined = cleared, null = not (yet) a number. Accepts decimals and fractions. */
 function parse(raw: string): number | undefined | null {
   const trimmed = raw.trim();
   if (trimmed === '') return undefined;
-  const n = Number(trimmed);
+
+  let n = Number(trimmed);
+  let m: RegExpExecArray | null;
+  if ((m = SIMPLE_FRACTION.exec(trimmed))) {
+    n = Number(m[1]) / Number(m[2]);
+  } else if ((m = MIXED_FRACTION.exec(trimmed))) {
+    n = Number(m[1]) + Number(m[2]) / Number(m[3]);
+  } else if ((m = GLYPH_FRACTION.exec(trimmed))) {
+    n = Number(m[1] ?? 0) + VULGAR_FRACTIONS[m[2]];
+  }
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
