@@ -59,7 +59,10 @@ async def parse_ingredients(body: ParseIngredientsRequest):
 
     for line in body.ingredients:
         try:
-            parsed = parse_ingredient(line)
+            # Keep alternatives as the author wrote them ("butter or olive oil").
+            # Split mode can't tell "or" from "and", and joining its list back
+            # together turned "X (or Y)" into "X, Y", which reads as two ingredients.
+            parsed = parse_ingredient(line, separate_names=False)
 
             quantity = None
             if parsed.amount and parsed.amount[0].quantity is not None:

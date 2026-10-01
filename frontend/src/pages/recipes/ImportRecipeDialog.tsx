@@ -28,6 +28,7 @@ import { IngredientMatchRow } from './IngredientMatchRow';
 import { BulkIngredientActions } from './BulkIngredientActions';
 import { BulkImportRecipeDialog } from './BulkImportRecipeDialog';
 import { ReconcileIngredientsDialog } from '@/components/recipes/ReconcileIngredientsDialog';
+import { QuantityInput } from '@/components/recipes/QuantityInput';
 import { useIngredientReconciliation } from '@/hooks/useIngredientReconciliation';
 import { useInventoryTier } from '@/hooks/useInventoryTier';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -1332,14 +1333,14 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                         <CardContent className="p-3 max-h-48 overflow-y-auto space-y-2">
                           {(overrides.ingredients || recipe.ingredients).map((ing, i) => (
                             <div key={i} className="flex items-center gap-1.5">
-                              <Input
+                              <QuantityInput
                                 className="w-16 h-8 text-xs px-2"
                                 placeholder="Qty"
-                                value={ing.quantity ?? ''}
-                                onChange={(e) => {
+                                value={ing.quantity}
+                                onValueChange={(quantity) => {
                                   const current = (overrides.ingredients) || [...recipe.ingredients];
                                   const updated = [...current];
-                                  updated[i] = { ...updated[i], quantity: e.target.value ? parseFloat(e.target.value) : undefined };
+                                  updated[i] = { ...updated[i], quantity };
                                   setOverrides(prev => ({ ...prev, ingredients: updated }))
 ;
                                 }}
