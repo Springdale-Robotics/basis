@@ -4,6 +4,8 @@ import { config } from '../../../config/index.js';
 import { logger } from '../../../lib/logger.js';
 import { isReachable } from '../../llm/ollama-client.js';
 import { getVisionModel } from '../../llm/llm-settings.js';
+import { getAiBackend, getClaudeKeyStatus } from '../../llm/claude/ai-backend.js';
+import { CLAUDE_ERROR_MESSAGES } from '../../llm/claude/claude-call.js';
 
 export interface VisionResult {
   rawText: string;
@@ -56,13 +58,29 @@ export interface AllProvidersStatus {
  *   likely to actually be present, even when the separate vlm-llm service
  *   is not deployed.
  *
+ * The box-wide AI backend switch (Settings → AI Models) comes first:
+ * - 'claude': the Claude provider and nothing else. Returned even without a
+ *   usable key, so the scan fails with "add/re-enter your key" rather than a
+ *   vague "AI service unavailable" — and never falls back to a local model.
+ * - 'local': nothing leaves the box, so HandwritingOCR (an upload to a third
+ *   party) is skipped even when its key or IMAGE_PARSE_PROVIDER asks for it.
+ * - not chosen: the selection logic above, unchanged.
+ *
  * Returns null if no provider is available.
  */
 export async function getVisionProvider(): Promise<VisionProvider | null> {
+  const backend = await getAiBackend();
+  if (backend === 'claude') {
+    const { ClaudeVisionProvider } = await import('./claude-vision.js');
+    logger.info({ provider: 'claude' }, 'Using Claude vision provider');
+    return new ClaudeVisionProvider();
+  }
+
   const providerConfig = config.IMAGE_PARSE_PROVIDER;
+  const thirdPartyAllowed = backend !== 'local';
 
   // HandwritingOCR provider (explicit or auto with API key)
-  if (providerConfig === 'handwriting-ocr' || providerConfig === 'auto') {
+  if (thirdPartyAllowed && (providerConfig === 'handwriting-ocr' || providerConfig === 'auto')) {
     if (config.HANDWRITING_OCR_API_KEY) {
       try {
         const { HandwritingOcrProvider } = await import('./handwriting-ocr-provider.js');
@@ -130,6 +148,23 @@ export async function getVisionProvider(): Promise<VisionProvider | null> {
   return null;
 }
 
+async function claudeStatus(): Promise<VisionProviderStatus> {
+  const { state } = await getClaudeKeyStatus();
+  const { getClaudeModel } = await import('../../llm/claude/claude-model.js');
+  return {
+    available: state === 'set',
+    name: 'claude',
+    model: (await getClaudeModel()).id,
+    expectedProcessingMs: 15000,
+    error:
+      state === 'set'
+        ? undefined
+        : state === 'unreadable'
+          ? CLAUDE_ERROR_MESSAGES.key_unreadable
+          : CLAUDE_ERROR_MESSAGES.no_key,
+  };
+}
+
 /**
  * Get detailed status of the vision provider.
  */
@@ -142,6 +177,10 @@ export async function getVisionProviderStatus(): Promise<VisionProviderStatus> {
       name: 'none',
       error: 'VLM-LLM service not available. Ensure the service is running and Ollama has the required models.',
     };
+  }
+
+  if (provider.name === 'claude') {
+    return claudeStatus();
   }
 
   if (provider.name === 'handwriting-ocr') {
@@ -216,12 +255,19 @@ export async function getVisionProviderStatus(): Promise<VisionProviderStatus> {
  * Useful for debugging and monitoring.
  */
 export async function getAllProvidersStatus(): Promise<AllProvidersStatus> {
+  const backend = await getAiBackend();
+  if (backend === 'claude') {
+    // Claude and nothing else will run, so nothing else is worth probing.
+    const status = await claudeStatus();
+    return { primary: status, fallback: null, activeProvider: status.available ? 'claude' : null };
+  }
+
   let primaryStatus: VisionProviderStatus | null = null;
   let fallbackStatus: VisionProviderStatus | null = null;
   let activeProvider: string | null = null;
 
-  // Check HandwritingOCR provider
-  if (config.HANDWRITING_OCR_API_KEY) {
+  // Check HandwritingOCR provider — never on a box set to keep everything local.
+  if (backend !== 'local' && config.HANDWRITING_OCR_API_KEY) {
     try {
       const { HandwritingOcrProvider } = await import('./handwriting-ocr-provider.js');
       const ocrProvider = new HandwritingOcrProvider();
