@@ -1051,7 +1051,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                           description="Add one photo, or several. You'll choose what they are next."
                         />
                         <p className="text-xs text-muted-foreground">
-                          JPG, PNG, GIF, WebP or HEIC, up to 10MB each.
+                          JPG, PNG, GIF or WebP, up to 10MB each.
                         </p>
                       </div>
                     )}
