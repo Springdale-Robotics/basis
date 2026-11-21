@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { config } from '../../config/index.js';
 import { logger } from '../../lib/logger.js';
 import { getTextModel } from '../llm/llm-settings.js';
+import { getAiBackend, getClaudeKeyStatus } from '../llm/claude/ai-backend.js';
+import { claudeComplete } from '../llm/claude/claude-call.js';
 import type { TranscribedLine } from './receipt-ocr.js';
 
 /**
@@ -146,6 +148,9 @@ export function attachConfidences(
 }
 
 export async function isStructurerAvailable(): Promise<boolean> {
+  if ((await getAiBackend()) === 'claude') {
+    return (await getClaudeKeyStatus()).state === 'set';
+  }
   try {
     const model = await getTextModel();
     const response = await fetch(`${config.OLLAMA_HOST}/api/tags`, {
@@ -159,7 +164,18 @@ export async function isStructurerAvailable(): Promise<boolean> {
   }
 }
 
+/** Claude path: same prompt, same parser; errors already carry a user-facing message. */
+async function structureWithClaude(rawText: string): Promise<StructuredReceipt> {
+  // Generous: a long Costco receipt runs to well over a hundred lines.
+  const reply = await claudeComplete({ content: `${PROMPT}${rawText}`, maxTokens: 8192 });
+  const structured = parseStructuredResponse(reply);
+  logger.info({ merchant: structured.merchant, lineCount: structured.lines.length }, 'Receipt structured (Claude)');
+  return structured;
+}
+
 export async function structureReceipt(rawText: string): Promise<StructuredReceipt> {
+  if ((await getAiBackend()) === 'claude') return structureWithClaude(rawText);
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.RECEIPT_STRUCTURE_TIMEOUT_MS);
 
