@@ -10,6 +10,29 @@ interface RequestContext {
 
 export const asyncLocalStorage = new AsyncLocalStorage<RequestContext>();
 
+/** Fields stripped from every log line. Exported so the redaction can be tested. */
+export const REDACT_PATHS = [
+  'req.headers.authorization',
+  'req.headers.cookie',
+  'password',
+  'passwordHash',
+  'token',
+  'credentials',
+  'secret',
+  '*.password',
+  '*.passwordHash',
+  '*.token',
+  '*.credentials',
+  '*.secret',
+  // Claude API key (Settings → AI Models). Named fields only: redacting every
+  // `key` would also strip system_settings keys and other diagnostics.
+  'apiKey',
+  '*.apiKey',
+  'claudeApiKey',
+  '*.claudeApiKey',
+  'req.body.apiKey',
+];
+
 export const logger = pino({
   level: config.LOG_LEVEL,
   formatters: {
@@ -28,20 +51,7 @@ export const logger = pino({
     error: pino.stdSerializers.err,
   },
   redact: {
-    paths: [
-      'req.headers.authorization',
-      'req.headers.cookie',
-      'password',
-      'passwordHash',
-      'token',
-      'credentials',
-      'secret',
-      '*.password',
-      '*.passwordHash',
-      '*.token',
-      '*.credentials',
-      '*.secret',
-    ],
+    paths: REDACT_PATHS,
     remove: true,
   },
   transport:
