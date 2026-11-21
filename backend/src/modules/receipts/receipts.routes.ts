@@ -18,7 +18,7 @@ import {
 } from '../../db/schema/index.js';
 import { queueReceiptReprocess } from '../../jobs/index.js';
 import { isOcrAvailable } from './receipt-ocr.js';
-import { isStructurerAvailable } from './receipt-structurer.js';
+import { isStructurerAvailable, structurerUnavailableReason } from './receipt-structurer.js';
 import { createScan, getScan, rematchScanLines, confirmScan } from './receipts.service.js';
 import {
   updateScanSchema,
@@ -71,10 +71,21 @@ export default async function receiptsRoutes(app: FastifyInstance): Promise<void
     '/status',
     { preHandler: [authMiddleware, requireInventoryAccess('view')] },
     async () => {
-      const [ocr, structurer] = await Promise.all([isOcrAvailable(), isStructurerAvailable()]);
+      const [ocr, structurer, structurerReason] = await Promise.all([
+        isOcrAvailable(),
+        isStructurerAvailable(),
+        structurerUnavailableReason(),
+      ]);
       return {
         success: true,
-        data: { available: ocr && structurer, ocrAvailable: ocr, structurerAvailable: structurer },
+        data: {
+          available: ocr && structurer,
+          ocrAvailable: ocr,
+          structurerAvailable: structurer,
+          // Set when Claude is selected but can't run (no/unreadable key), so
+          // the UI can say that instead of "the local AI model is unreachable".
+          structurerReason,
+        },
       };
     }
   );

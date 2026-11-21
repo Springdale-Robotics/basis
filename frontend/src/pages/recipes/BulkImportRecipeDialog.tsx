@@ -33,6 +33,15 @@ import { BulkIngredientActions } from './BulkIngredientActions';
 import { IngredientMatchRow } from './IngredientMatchRow';
 
 type BulkMode = 'image' | 'url' | 'text' | 'file' | 'spreadsheet';
+/**
+ * Mirrors llmFailureWarning() in backend/src/services/llm-recipe-parser.ts —
+ * keep the prefix in step with it.
+ */
+const CLAUDE_FAILURE_PREFIX = "Claude couldn't help with this recipe:";
+function isClaudeFailureWarning(warning: string): boolean {
+  return warning.startsWith(CLAUDE_FAILURE_PREFIX);
+}
+
 type BulkStep = 'mode' | 'input' | 'processing' | 'ocr-review' | 'recipe-review' | 'catalog' | 'confirm';
 
 // Per-recipe batch item. The image/upload/polling lifecycle is owned by
@@ -203,6 +212,15 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
       }
       setImportSessions(sessions);
       setIngredientMatches(matches);
+      // The review screen doesn't list per-recipe parse warnings, so surface a
+      // Claude failure (bad key, no credit, …) once — otherwise every recipe
+      // would silently fall back to basic parsing.
+      const claudeFailures = new Set(
+        [...sessions.values()].flatMap((s) => (s.parseWarnings ?? []).filter(isClaudeFailureWarning))
+      );
+      for (const warning of claudeFailures) {
+        toast({ title: 'Some recipes used basic parsing', description: warning, variant: 'destructive' });
+      }
       setStep('recipe-review');
     },
   });
@@ -1069,7 +1087,9 @@ export function BulkImportRecipeDialog({ open, onOpenChange, onSuccess, initialF
               ? '.xlsx,.xls,.csv'
               : mode === 'file'
                 ? '.recipe'
-                : 'image/jpeg,image/png,image/gif,image/webp,image/heic'
+                : // No HEIC: iOS converts photos to JPEG when HEIC isn't accepted,
+                  // and the server's image library can't decode HEIC.
+                  'image/jpeg,image/png,image/gif,image/webp'
           }
           multiple={mode !== 'spreadsheet'}
           title={

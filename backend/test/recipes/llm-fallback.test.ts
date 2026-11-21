@@ -89,6 +89,7 @@ describe('getLLMProvider under the AI backend switch', () => {
     mocks.create.mockResolvedValue({ content: [{ type: 'text', text: VALID_RECIPE }], stop_reason: 'end_turn' });
     await parseRecipeWithLLM('Pancakes\n1 cup flour\nMix and cook.');
     expect(Object.keys(mocks.create.mock.calls[0][0]).sort()).toEqual(['max_tokens', 'messages', 'model', 'system']);
+    expect(mocks.create.mock.calls[0][0].max_tokens).toBe(16000);
   });
 });
 

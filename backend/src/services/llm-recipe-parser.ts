@@ -122,7 +122,8 @@ export async function parseRecipeWithLLM(text: string): Promise<LLMParseOutcome>
       `Recipe text:\n"""\n${text}\n"""`,
       {
         systemPrompt: RECIPE_PARSE_PROMPT,
-        maxTokens: 4096,
+        // Room for thinking (current Claude models) plus a long recipe.
+        maxTokens: 16000,
       }
     );
 

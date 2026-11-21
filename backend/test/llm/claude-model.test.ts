@@ -106,6 +106,12 @@ describe('getClaudeModel', () => {
     expect((row?.value as { id: string }).id).toBe('claude-haiku-6');
   });
 
+  it('asks the Models API with a short timeout', async () => {
+    const list = clientListing([model('claude-haiku-6', '2027-03-01T00:00:00Z')]);
+    await getClaudeModel();
+    expect(list).toHaveBeenCalledWith(undefined, { timeout: 15_000 });
+  });
+
   it('uses a fresh stored choice without asking the Models API', async () => {
     await storeResolved('claude-haiku-5-5', 1);
     const list = clientListing([model('claude-haiku-6', '2027-03-01T00:00:00Z')]);

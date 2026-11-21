@@ -1045,7 +1045,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
                             // impossible.
                             setPendingPhotos(prev => [...prev, ...files]);
                           }}
-                          accept="image/jpeg,image/png,image/gif,image/webp,image/heic"
+                          accept="image/jpeg,image/png,image/gif,image/webp"
                           multiple
                           title="Add recipe photos"
                           description="Add one photo, or several. You'll choose what they are next."

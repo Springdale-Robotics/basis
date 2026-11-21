@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Anthropic from '@anthropic-ai/sdk';
+import { readFile } from 'fs/promises';
 import { loadSharp } from '../../../src/lib/sharp.js';
 
 const mocks = vi.hoisted(() => ({ create: vi.fn() }));
@@ -63,6 +64,24 @@ describe('ClaudeVisionProvider', () => {
     mocks.create.mockResolvedValue({ content: [{ type: 'text', text: 'x' }], stop_reason: 'end_turn' });
     await new ClaudeVisionProvider().parseImage(await bigPng(), 'image/png', '  ');
     expect(sentBlocks()[1]).toEqual({ type: 'text', text: DEFAULT_TRANSCRIPTION_PROMPT });
+  });
+
+  it('leaves room for thinking and a long transcription (max_tokens 16000)', async () => {
+    mocks.create.mockResolvedValue({ content: [{ type: 'text', text: 'x' }], stop_reason: 'end_turn' });
+    await new ClaudeVisionProvider().parseImage(await bigPng(), 'image/png', '');
+    expect(mocks.create.mock.calls[0][0].max_tokens).toBe(16000);
+  });
+
+  it('a real iPhone HEIC photo fails with the clear message, not a raw API error', async () => {
+    const heic = await readFile(new URL('../../receipts/fixtures/sample-receipt.heic', import.meta.url));
+    const result = await new ClaudeVisionProvider().parseImage(heic, 'image/heic', '').then(
+      () => 'sent',
+      (e: Error) => e.message
+    );
+    // sharp here has no HEVC decoder; if a future build gains one the photo is
+    // simply sent as a JPEG, which is also fine.
+    if (result !== 'sent') expect(result).toBe("This photo couldn't be read. Try a JPEG or PNG.");
+    else expect(sentBlocks()[0].source.media_type).toBe('image/jpeg');
   });
 
   it('refuses an image it cannot decode instead of sending it', async () => {

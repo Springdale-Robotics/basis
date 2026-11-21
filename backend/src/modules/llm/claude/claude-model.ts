@@ -16,6 +16,8 @@ export const CLAUDE_MODEL_KEY = 'ai.claudeModel';
 export const FALLBACK_CLAUDE_MODEL = { id: 'claude-haiku-5-5', displayName: 'Claude Haiku 5.5' } as const;
 
 const RESOLVE_EVERY_MS = 24 * 60 * 60 * 1000;
+/** A model list is tiny; anything slower than this is a connectivity problem. */
+export const MODELS_LIST_TIMEOUT_MS = 15_000;
 /**
  * After a failed lookup (revoked key, no internet), wait this long before
  * asking again. Without it every page load and every scan waits on the same
@@ -58,7 +60,7 @@ async function resolve(stored: ResolvedClaudeModel | null): Promise<ResolvedClau
 
   try {
     const models: Anthropic.ModelInfo[] = [];
-    for await (const m of client.models.list()) models.push(m);
+    for await (const m of client.models.list(undefined, { timeout: MODELS_LIST_TIMEOUT_MS })) models.push(m);
 
     const newest = pickNewestHaiku(models);
     if (!newest) {

@@ -37,6 +37,7 @@ export function AiBackendCard() {
     queryClient.setQueryData(['llm', 'backend'], next);
     // The model cards and recipe/receipt status depend on the backend.
     queryClient.invalidateQueries({ queryKey: ['llm'] });
+    queryClient.invalidateQueries({ queryKey: ['receipts', 'status'] });
   };
 
   const backendMutation = useMutation({

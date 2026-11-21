@@ -54,12 +54,23 @@ describe('receipt structuring with Claude selected', () => {
     const prompt = mocks.create.mock.calls[0][0].messages[0].content as string;
     expect(prompt.startsWith('You are parsing a supermarket receipt')).toBe(true);
     expect(prompt.endsWith('MILK 3.50')).toBe(true);
+    expect(mocks.create.mock.calls[0][0].max_tokens).toBe(16000);
     expect(fetched).toEqual([]);
   });
 
   it('is available with a key and never asks Ollama', async () => {
     expect(await isStructurerAvailable()).toBe(true);
     expect(fetched).toEqual([]);
+  });
+
+  it('explains why structuring is unavailable when Claude has no usable key', async () => {
+    const { structurerUnavailableReason } = await import('../../src/modules/receipts/receipt-structurer.js');
+    mocks.keyState = 'none';
+    expect(await structurerUnavailableReason()).toBe(CLAUDE_ERROR_MESSAGES.no_key);
+    mocks.keyState = 'unreadable';
+    expect(await structurerUnavailableReason()).toBe(CLAUDE_ERROR_MESSAGES.key_unreadable);
+    mocks.keyState = 'set';
+    expect(await structurerUnavailableReason()).toBeNull();
   });
 
   it('is unavailable without a usable key', async () => {

@@ -107,11 +107,26 @@ describe('claudeComplete error mapping', () => {
     });
   }
 
-  it('maps other API errors to api with the status', async () => {
+  it('maps an overloaded API (529) to the busy message', async () => {
     mocks.create.mockRejectedValue(apiError(Anthropic.InternalServerError, 529, 'overloaded'));
     const err = await claudeComplete({ content: 'Hi', maxTokens: 10 }).catch((e) => e);
+    expect(err.kind).toBe('rate_limit');
+    expect(err.message).toBe(CLAUDE_ERROR_MESSAGES.rate_limit);
+  });
+
+  it('maps a billing failure (402) to the no-credit message', async () => {
+    mocks.create.mockRejectedValue(apiError(Anthropic.APIError as never, 402, 'credit balance too low'));
+    const err = await claudeComplete({ content: 'Hi', maxTokens: 10 }).catch((e) => e);
+    expect(err.kind).toBe('billing');
+    expect(err.message).toBe(CLAUDE_ERROR_MESSAGES.billing);
+    expect(err.message).toContain('console.anthropic.com');
+  });
+
+  it('maps other API errors to api with the status', async () => {
+    mocks.create.mockRejectedValue(apiError(Anthropic.InternalServerError, 500, 'boom'));
+    const err = await claudeComplete({ content: 'Hi', maxTokens: 10 }).catch((e) => e);
     expect(err.kind).toBe('api');
-    expect(err.message).toBe(`${CLAUDE_ERROR_MESSAGES.api} (HTTP 529).`);
+    expect(err.message).toBe(`${CLAUDE_ERROR_MESSAGES.api} (HTTP 500).`);
   });
 
   it('maps a refusal stop reason to refusal', async () => {
@@ -146,5 +161,15 @@ describe('claudeComplete when the model is retired', () => {
     const err = await claudeComplete({ content: 'Hi', maxTokens: 10 }).catch((e) => e);
     expect(err.kind).toBe('api');
     expect(mocks.create).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('claude client limits', () => {
+  it('bounds every request so a stalled connection cannot hold a job for half an hour', async () => {
+    const { createClaudeClient } = await vi.importActual<typeof import('../../src/modules/llm/claude/ai-backend.js')>(
+      '../../src/modules/llm/claude/ai-backend.js'
+    );
+    const client = createClaudeClient('sk-ant-test-1234');
+    expect(client.timeout).toBe(120_000);
   });
 });

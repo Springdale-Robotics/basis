@@ -81,7 +81,13 @@ export interface CreateItemForLineRequest {
 
 export const receiptsApi = {
   getStatus: () =>
-    apiGet<{ available: boolean; ocrAvailable: boolean; structurerAvailable: boolean }>(
+    apiGet<{
+      available: boolean;
+      ocrAvailable: boolean;
+      structurerAvailable: boolean;
+      /** Set when Claude is selected but has no usable key. */
+      structurerReason?: string | null;
+    }>(
       '/receipts/status'
     ),
 

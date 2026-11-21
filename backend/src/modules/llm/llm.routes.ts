@@ -20,7 +20,7 @@ import {
   setAiBackend,
 } from './claude/ai-backend.js';
 import { ClaudeError } from './claude/claude-call.js';
-import { getClaudeModel } from './claude/claude-model.js';
+import { getClaudeModel, MODELS_LIST_TIMEOUT_MS } from './claude/claude-model.js';
 import Anthropic from '@anthropic-ai/sdk';
 
 const updateSettingsSchema = z.object({
@@ -43,7 +43,9 @@ interface BackendState {
 /** What the settings page renders. Never includes the key itself. */
 async function backendState(): Promise<BackendState> {
   const [backend, key] = await Promise.all([getAiBackend(), getClaudeKeyStatus()]);
-  const model = key.state === 'set' ? await getClaudeModel() : null;
+  // Only ask Anthropic about models when Claude is the chosen backend: on
+  // "This server" nothing — not even a model list request — leaves the box.
+  const model = backend === 'claude' && key.state === 'set' ? await getClaudeModel() : null;
   return {
     backend,
     keyState: key.state,
@@ -58,13 +60,16 @@ async function backendState(): Promise<BackendState> {
  */
 async function verifyClaudeKey(apiKey: string): Promise<void> {
   try {
-    const page = createClaudeClient(apiKey).models.list();
+    const page = createClaudeClient(apiKey).models.list(undefined, { timeout: MODELS_LIST_TIMEOUT_MS });
     for await (const _model of page) break; // first entry is enough
   } catch (error) {
     if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) {
       throw Errors.validation('Anthropic rejected this key. Check it and try again.');
     }
     if (error instanceof Anthropic.RateLimitError) throw Errors.validation(new ClaudeError('rate_limit').message);
+    if (error instanceof Anthropic.APIError && error.status === 402) {
+      throw Errors.validation(new ClaudeError('billing').message);
+    }
     if (error instanceof Anthropic.APIConnectionError) throw Errors.validation(new ClaudeError('network').message);
     const status = error instanceof Anthropic.APIError ? error.status : undefined;
     throw Errors.validation(new ClaudeError('api', status).message);
@@ -191,8 +196,9 @@ export async function llmRoutes(app: FastifyInstance): Promise<void> {
     const { apiKey } = claudeKeySchema.parse(request.body);
     await verifyClaudeKey(apiKey);
     await saveClaudeKey(apiKey);
-    // A new key may see different models; look up the newest Haiku now.
-    await getClaudeModel({ force: true });
+    // A new key may see different models; look up the newest Haiku now —
+    // but only if Claude is in use (see backendState).
+    if ((await getAiBackend()) === 'claude') await getClaudeModel({ force: true });
     return { success: true, data: await backendState() };
   });
 

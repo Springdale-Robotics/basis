@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Writable } from 'stream';
 import pino from 'pino';
 import Anthropic from '@anthropic-ai/sdk';
@@ -7,7 +7,7 @@ import { db } from '../../src/config/database.js';
 import { systemSettings } from '../../src/db/schema/index.js';
 import { setupRouteTest, type RouteTestContext, type TestUser } from '../helpers/route-harness.js';
 
-const mocks = vi.hoisted(() => ({ list: vi.fn() }));
+const mocks = vi.hoisted(() => ({ list: vi.fn(), getClaudeModel: vi.fn() }));
 
 // Never reach Anthropic: the candidate-key check goes through createClaudeClient,
 // and model resolution is stubbed.
@@ -17,7 +17,7 @@ vi.mock('../../src/modules/llm/claude/ai-backend.js', async (importOriginal) => 
 }));
 vi.mock('../../src/modules/llm/claude/claude-model.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/modules/llm/claude/claude-model.js')>()),
-  getClaudeModel: async () => ({ id: 'claude-haiku-6', displayName: 'Claude Haiku 6', resolvedAt: 'now' }),
+  getClaudeModel: mocks.getClaudeModel,
 }));
 
 const { CLAUDE_ERROR_MESSAGES } = await import('../../src/modules/llm/claude/claude-call.js');
@@ -37,9 +37,13 @@ beforeAll(async () => {
   admin = await ctx.createUser(householdId, 'admin');
   member = await ctx.createUser(householdId, 'member');
 });
+beforeEach(() => {
+  mocks.getClaudeModel.mockResolvedValue({ id: 'claude-haiku-6', displayName: 'Claude Haiku 6', resolvedAt: 'now' });
+});
 afterEach(async () => {
   await clearAi();
   mocks.list.mockReset();
+  mocks.getClaudeModel.mockReset();
 });
 afterAll(async () => {
   await clearAi();
@@ -95,7 +99,8 @@ describe('PUT /claude-key', () => {
       backend: null,
       keyState: 'set',
       keyHint: '••••7890',
-      model: { id: 'claude-haiku-6', displayName: 'Claude Haiku 6' },
+      // Not chosen yet, so no model lookup happens (see "no model lookups" below).
+      model: null,
     });
     expect(res.text).not.toContain('sk-ant-valid-1234567890');
     expect((await call(admin, 'GET', '/backend')).text).not.toContain('sk-ant-valid-1234567890');
@@ -115,6 +120,27 @@ describe('PUT /claude-key', () => {
 
   it('rejects an empty key', async () => {
     expect((await call(admin, 'PUT', '/claude-key', { apiKey: '   ' })).status).toBe(400);
+  });
+});
+
+describe('no model lookups while on This server', () => {
+  it('saving a key on a box set to local does not ask Anthropic for models', async () => {
+    listOk();
+    await call(admin, 'PUT', '/backend', { backend: 'local' });
+    const res = await call(admin, 'PUT', '/claude-key', { apiKey: 'sk-ant-valid-1234567890' });
+
+    expect(res.status).toBe(200);
+    expect(res.json.data.model).toBeNull();
+    expect(mocks.getClaudeModel).not.toHaveBeenCalled();
+    await call(admin, 'GET', '/backend');
+    expect(mocks.getClaudeModel).not.toHaveBeenCalled();
+  });
+
+  it('switching to Claude resolves the model then', async () => {
+    listOk();
+    await call(admin, 'PUT', '/claude-key', { apiKey: 'sk-ant-valid-1234567890' });
+    const res = await call(admin, 'PUT', '/backend', { backend: 'claude' });
+    expect(res.json.data.model).toEqual({ id: 'claude-haiku-6', displayName: 'Claude Haiku 6' });
   });
 });
 

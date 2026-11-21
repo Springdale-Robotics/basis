@@ -99,7 +99,9 @@ export async function clearClaudeKey(): Promise<void> {
 
 /** The one place a Claude client is constructed — tests mock this. */
 export function createClaudeClient(apiKey: string): Anthropic {
-  return new Anthropic({ apiKey, maxRetries: 2 });
+  // Bounded: the SDK default (10 min per attempt, retried) could hold a scan or
+  // an HTTP request for half an hour on a stalled connection.
+  return new Anthropic({ apiKey, maxRetries: 2, timeout: 120_000 });
 }
 
 let cached: { key: string; client: Anthropic } | null = null;

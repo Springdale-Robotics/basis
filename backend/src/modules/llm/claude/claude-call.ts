@@ -8,6 +8,7 @@ export type ClaudeErrorKind =
   | 'key_unreadable'
   | 'auth'
   | 'rate_limit'
+  | 'billing'
   | 'network'
   | 'refusal'
   | 'truncated'
@@ -19,9 +20,10 @@ export const CLAUDE_ERROR_MESSAGES: Record<ClaudeErrorKind, string> = {
   key_unreadable: "The saved Claude API key can't be read — please re-enter it in Settings → AI Models.",
   auth: 'The Claude API key was rejected — replace it in Settings → AI Models.',
   rate_limit: 'Claude is busy right now. Try again in a minute.',
+  billing: 'Your Anthropic account has no credit left. Add some at console.anthropic.com, then try again.',
   network: "Can't reach Anthropic right now. Check this server's internet connection and try again.",
   refusal: 'Claude declined to read this.',
-  truncated: "Claude's answer was cut off because the input was too long.",
+  truncated: "Claude's answer was cut off before it finished. Try a smaller photo or a shorter text.",
   api: 'Claude returned an error',
 };
 
@@ -44,6 +46,8 @@ function mapSdkError(error: unknown): ClaudeError {
     return new ClaudeError('auth', error.status);
   }
   if (error instanceof Anthropic.RateLimitError) return new ClaudeError('rate_limit', 429);
+  if (error instanceof Anthropic.APIError && error.status === 529) return new ClaudeError('rate_limit', 529);
+  if (error instanceof Anthropic.APIError && error.status === 402) return new ClaudeError('billing', 402);
   if (error instanceof Anthropic.APIConnectionError) return new ClaudeError('network');
   if (error instanceof Anthropic.APIError) return new ClaudeError('api', error.status);
   return new ClaudeError('api');

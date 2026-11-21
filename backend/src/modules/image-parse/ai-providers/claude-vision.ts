@@ -54,7 +54,9 @@ export class ClaudeVisionProvider implements VisionProvider {
     this.model = (await getClaudeModel()).id;
 
     const rawText = await claudeComplete({
-      maxTokens: 4096,
+      // Generous: current Haiku models think before answering, and thinking
+      // shares this budget. Unused budget costs nothing.
+      maxTokens: 16000,
       content: [
         { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } },
         { type: 'text', text: prompt.trim() || DEFAULT_TRANSCRIPTION_PROMPT },
