@@ -1,9 +1,10 @@
 # Claude API as a box-wide AI backend — design
 
-Date: 2026-11-20 · Status: draft, awaiting owner approval
+Date: 2026-11-20 · Status: approved by owner 2026-11-20 (with the model change below)
 
 Owner decisions: one box-wide switch (approach 1); "This server" is strictly
-local, HandwritingOCR included; Claude failures on recipe import show a warning.
+local, HandwritingOCR included; Claude failures on recipe import show a warning;
+the model tracks the newest Claude Haiku rather than a pinned version.
 All other choices are the author's calls, open to the owner's correction.
 
 ## Why
@@ -22,7 +23,8 @@ party must be an explicit, visible admin choice — never a silent fallback.
 
 - One box-wide switch on **Settings → AI Models**: "Where AI runs" —
   *This server (Ollama)* or *Claude API*.
-- With Claude selected, all three AI jobs use Claude Haiku 5.5:
+- With Claude selected, all three AI jobs use the newest Claude Haiku
+  (currently Haiku 5.5):
   1. photo import (image-parse sessions, incl. bulk recipe capture),
   2. receipt line structuring (after local Tesseract OCR),
   3. recipe text parsing (`services/llm-recipe-parser.ts`).
@@ -32,7 +34,7 @@ party must be an explicit, visible admin choice — never a silent fallback.
 ## Non-goals
 
 - Per-feature provider choice (considered, rejected — see Approaches).
-- A model picker. Model is fixed at `claude-haiku-5-5` (one constant).
+- A model picker. The model is always the newest Haiku (see Model resolution).
 - Changing receipt OCR (Tesseract stays local; only structuring moves).
 - Hosting/isolation of Basis on chumbucket — separate design, next.
 
@@ -102,8 +104,8 @@ while `claude` is active sets `ai.backend = "local"` in the same operation.
 
 - New `modules/llm/ai-backend.ts`: `getAiBackend()`, `getClaudeKey()` (decrypts;
   null if absent/undecryptable), `setClaudeKey()`, `clearClaudeKey()`,
-  `getClaudeClient()` (cached per key; rebuilt when the key changes), and the
-  `CLAUDE_MODEL = 'claude-haiku-5-5'` constant.
+  `getClaudeClient()` (cached per key; rebuilt when the key changes), and
+  `getClaudeModel()` (see Model resolution).
 - **Vision:** new `ai-providers/claude-vision.ts` implementing
   `VisionProvider`. Downscales like the Ollama provider (reuse/export
   `downscaleForInference`, parameterised edge — ~1568 px is Claude's useful
@@ -116,7 +118,7 @@ while `claude` is active sets `ai.backend = "local"` in the same operation.
   backend. The Claude path sends the same `PROMPT` + transcription and reuses
   `parseStructuredResponse()` (which already tolerates fences/prose).
 - **Recipe text:** `getLLMProvider()` follows the tri-state above. The Claude
-  path uses the UI key + `CLAUDE_MODEL` and sends no sampling params. The
+  path uses the UI key + `getClaudeModel()` and sends no sampling params. The
   legacy env path keeps working; drop `temperature` from it too.
 - **Recipe-import failures are visible (owner decision, 2026-11-20).** Today
   `parseRecipeWithLLM()` swallows every error and returns `null`, and the two
@@ -143,9 +145,32 @@ while `claude` is active sets `ai.backend = "local"` in the same operation.
   it in thrown messages; the SDK client is constructed with it explicitly
   (don't set `process.env.ANTHROPIC_API_KEY`).
 
+### Model resolution (owner decision, 2026-11-20)
+
+The owner wants the newest Haiku, not a pinned version that will eventually be
+retired.
+
+- `getClaudeModel()` asks the Models API (`client.models.list()`) for models
+  whose id starts with `claude-haiku-`, and picks the one with the latest
+  `created_at`. Where the Models API reports `capabilities`, only models that
+  take image input are eligible (photo import needs vision). Check the field
+  shape against the SDK/docs; don't guess it.
+- Store the result in `system_settings` as `ai.claudeModel`
+  (`{ id, displayName, resolvedAt }`). Re-resolve when a key is saved and when
+  the stored choice is more than 24 h old. If listing fails, keep using the
+  stored choice; if nothing was ever resolved, use the fallback constant
+  `claude-haiku-5-5`.
+- If a call fails because the model no longer exists (404 `not_found_error`
+  naming the model), re-resolve right away and retry that call once.
+- Calls stay minimal so a new Haiku is unlikely to break them: no `thinking`
+  config, no sampling params, no prefill, no forced `tool_choice`. Check
+  `stop_reason` (`refusal`, `max_tokens`) on every response.
+- The page shows the resolved `displayName`. Pricing in the UI copy is a
+  rough figure ("under $1/month"), not tied to a specific model.
+
 ### API (all admin-only, under `/api/v1/llm`)
 
-- `GET /backend` → `{ backend: 'local'|'claude'|null, keyState: 'none'|'set'|'unreadable', keyHint: '••••abcd' | null }`.
+- `GET /backend` → `{ backend: 'local'|'claude'|null, keyState: 'none'|'set'|'unreadable', keyHint: '••••abcd' | null, model: { id, displayName } | null }`.
 - `PUT /backend` `{ backend: 'local'|'claude' }` → 400 if `claude` without a key.
 - `PUT /claude-key` `{ key }` → verifies the key with a minimal real call
   before saving; 400 with the Anthropic reason if it fails. Returns the
@@ -163,7 +188,7 @@ Where AI runs
 (•) Claude API (Anthropic) — photos, receipt text and recipe text are sent
                              to Anthropic to be read
     API key  [ ••••abcd ]  [Replace] [Remove]
-    Uses Claude Haiku 5.5. Typical cost: under $1/month.
+    Uses Claude Haiku 5.5 (newest Haiku). Typical cost: under $1/month.
 ```
 
 - Selecting Claude with no key opens the key field; the switch saves only
@@ -186,6 +211,10 @@ Where AI runs
 - `GET /backend` never returns the key; logger redaction covers it.
 - Key encrypt/decrypt round-trip; undecryptable stored value → treated as no key.
 - Claude calls carry no `temperature`/`top_p`/`top_k`.
+- Model resolution: picks the newest Haiku from a mocked model list; ignores
+  non-Haiku models; uses the cached choice when listing fails; falls back to the
+  constant when nothing was ever resolved; a 404 for the model forces a
+  re-resolve and one retry.
 - Claude SDK mocked in tests; no real API calls in CI.
 
 ## Left to the builder
