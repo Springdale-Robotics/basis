@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config/index.js';
+import { getAiBackend } from '../modules/llm/claude/ai-backend.js';
+import { claudeComplete } from '../modules/llm/claude/claude-call.js';
 
 /**
  * Unified LLM provider interface.
@@ -14,7 +16,6 @@ export interface LLMProvider {
 
 export interface LLMOptions {
   maxTokens?: number;
-  temperature?: number;
   systemPrompt?: string;
 }
 
@@ -38,7 +39,8 @@ class AnthropicProvider implements LLMProvider {
     const response = await this.client.messages.create({
       model: config.LLM_RECIPE_MODEL,
       max_tokens: options?.maxTokens ?? 4096,
-      temperature: options?.temperature ?? 0,
+      // No sampling params: current Claude models reject non-default values,
+      // and API version 2026-10-21 rejects them on every model.
       system: options?.systemPrompt,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -74,7 +76,7 @@ class OllamaProvider implements LLMProvider {
         prompt: fullPrompt,
         stream: false,
         options: {
-          temperature: options?.temperature ?? 0,
+          temperature: 0,
           num_predict: options?.maxTokens ?? 4096,
         },
       }),
@@ -89,16 +91,52 @@ class OllamaProvider implements LLMProvider {
   }
 }
 
+/**
+ * Claude via the key saved in Settings → AI Models. Always "available" when
+ * selected: a missing or unreadable key surfaces as a ClaudeError with a
+ * user-facing message instead of silently skipping the AI step.
+ */
+class ClaudeTextProvider implements LLMProvider {
+  name = 'claude';
+
+  isAvailable(): boolean {
+    return true;
+  }
+
+  async complete(prompt: string, options?: LLMOptions): Promise<string> {
+    return claudeComplete({
+      system: options?.systemPrompt,
+      content: prompt,
+      maxTokens: options?.maxTokens ?? 4096,
+    });
+  }
+}
+
 // Singleton instances
 let anthropicProvider: AnthropicProvider | null = null;
 let ollamaProvider: OllamaProvider | null = null;
+const claudeTextProvider = new ClaudeTextProvider();
+
+function getOllamaProvider(): OllamaProvider | null {
+  if (!ollamaProvider) {
+    ollamaProvider = new OllamaProvider();
+  }
+  return ollamaProvider.isAvailable() ? ollamaProvider : null;
+}
 
 /**
- * Get the best available LLM provider.
- * Prefers Anthropic (higher accuracy), falls back to Ollama.
+ * Get the LLM provider for recipe text, following the AI backend switch:
+ * - 'claude': Claude with the key from Settings, nothing else.
+ * - 'local': Ollama only. The ANTHROPIC_API_KEY env var is ignored, because
+ *   the admin chose to keep everything on this box.
+ * - not chosen: the original order — env-key Anthropic, then Ollama.
  * Returns null if no provider is available.
  */
-export function getLLMProvider(): LLMProvider | null {
+export async function getLLMProvider(): Promise<LLMProvider | null> {
+  const backend = await getAiBackend();
+  if (backend === 'claude') return claudeTextProvider;
+  if (backend === 'local') return getOllamaProvider();
+
   // Try Anthropic first
   if (!anthropicProvider) {
     anthropicProvider = new AnthropicProvider();
@@ -108,12 +146,5 @@ export function getLLMProvider(): LLMProvider | null {
   }
 
   // Fall back to Ollama
-  if (!ollamaProvider) {
-    ollamaProvider = new OllamaProvider();
-  }
-  if (ollamaProvider.isAvailable()) {
-    return ollamaProvider;
-  }
-
-  return null;
+  return getOllamaProvider();
 }

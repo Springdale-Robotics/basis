@@ -1,4 +1,5 @@
 import { getLLMProvider } from './llm-provider.js';
+import { ClaudeError } from '../modules/llm/claude/claude-call.js';
 
 export interface LLMParsedIngredient {
   name: string;
@@ -94,14 +95,26 @@ export function validateLLMRecipe(parsed: LLMParsedRecipe | null | undefined): p
   return true;
 }
 
+export type LLMParseOutcome =
+  | { ok: true; recipe: LLMParsedRecipe }
+  | { ok: false; reason: 'unavailable' | 'unparseable' }
+  /** Claude failed in a way the user should hear about (bad key, rate limit, …). */
+  | { ok: false; reason: 'provider_error'; userMessage: string };
+
+/** Shown on an import that fell back to basic parsing because Claude failed. */
+export function llmFailureWarning(userMessage: string): string {
+  return `Claude couldn't help with this recipe: ${userMessage} Used basic parsing instead.`;
+}
+
 /**
  * Parse recipe text using an LLM (Claude or Ollama).
- * Returns a structured recipe or null if no LLM is available or parsing fails.
+ * Claude failures come back as 'provider_error' so callers can tell the user;
+ * anything else that goes wrong stays a quiet 'unparseable', as before.
  */
-export async function parseRecipeWithLLM(text: string): Promise<LLMParsedRecipe | null> {
-  const provider = getLLMProvider();
+export async function parseRecipeWithLLM(text: string): Promise<LLMParseOutcome> {
+  const provider = await getLLMProvider();
   if (!provider) {
-    return null;
+    return { ok: false, reason: 'unavailable' };
   }
 
   try {
@@ -110,7 +123,6 @@ export async function parseRecipeWithLLM(text: string): Promise<LLMParsedRecipe 
       {
         systemPrompt: RECIPE_PARSE_PROMPT,
         maxTokens: 4096,
-        temperature: 0,
       }
     );
 
@@ -123,14 +135,15 @@ export async function parseRecipeWithLLM(text: string): Promise<LLMParsedRecipe 
 
     const parsed = JSON.parse(jsonStr) as LLMParsedRecipe;
 
-    if (!validateLLMRecipe(parsed)) return null;
+    if (!validateLLMRecipe(parsed)) return { ok: false, reason: 'unparseable' };
 
-    // Flatten ingredient groups into a flat ingredients array for compatibility
-    // (the import system expects both formats)
-    return parsed;
+    return { ok: true, recipe: parsed };
   } catch (error) {
+    if (error instanceof ClaudeError) {
+      return { ok: false, reason: 'provider_error', userMessage: error.message };
+    }
     console.error(`[LLM Recipe Parser] Failed (${provider.name}):`, error);
-    return null;
+    return { ok: false, reason: 'unparseable' };
   }
 }
 

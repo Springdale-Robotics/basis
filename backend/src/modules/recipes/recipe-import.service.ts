@@ -661,6 +661,32 @@ function parseRecipeFileFormat(text: string): {
 // Applied uniformly across text and URL import paths.
 const FALLBACK_CONFIDENCE_THRESHOLD = 0.6;
 
+/**
+ * The AI step both import paths fall back to when the basic parsers aren't
+ * confident. Never throws — the import must still finish with what the basic
+ * parsers found. A Claude failure (bad key, rate limit, …) is not silent,
+ * though: it comes back as a warning the review screen shows.
+ */
+export async function tryLLMFallback(
+  text: string
+): Promise<{ recipe: ParsedRecipe | null; warnings: string[] }> {
+  try {
+    const { parseRecipeWithLLM, llmResultToImportFormat, llmFailureWarning, LLM_PARSE_WARNING } = await import(
+      '../../services/llm-recipe-parser.js'
+    );
+    const outcome = await parseRecipeWithLLM(text);
+    if (outcome.ok) {
+      return { recipe: llmResultToImportFormat(outcome.recipe) as ParsedRecipe, warnings: [LLM_PARSE_WARNING] };
+    }
+    if (outcome.reason === 'provider_error') {
+      return { recipe: null, warnings: [llmFailureWarning(outcome.userMessage)] };
+    }
+  } catch (err) {
+    console.warn('[Recipe Import] LLM fallback failed, keeping the basic parser result:', err);
+  }
+  return { recipe: null, warnings: [] };
+}
+
 // Confidence floor applied after a successful CRF re-parse — CRF is more
 // reliable than regex for ingredient line structure.
 const CRF_CONFIDENCE_FLOOR = 0.75;
@@ -876,23 +902,17 @@ export async function processImportSession(
 
     // LLM fallback: if parsing still produced low confidence, try AI
     if (confidence < FALLBACK_CONFIDENCE_THRESHOLD) {
-      try {
-        const { parseRecipeWithLLM, llmResultToImportFormat, LLM_PARSE_WARNING } = await import('../../services/llm-recipe-parser.js');
-        const llmResult = await parseRecipeWithLLM(rawText);
-        if (llmResult) {
-          const converted = llmResultToImportFormat(llmResult);
-          parsedRecipe = converted as ParsedRecipe;
-          // Deliberately below the UI's "Looks complete" threshold: this is
-          // the least reliable parser in the system and it used to report the
-          // second highest confidence, after clearing the warnings that would
-          // have told the user to look closely.
-          confidence = 0.75;
-          finalParseMethod = 'llm';
-          warnings = [...warnings, LLM_PARSE_WARNING];
-        }
-      } catch (err) {
-        console.warn('[Recipe Import] LLM fallback failed, using regex result:', err);
+      const fallback = await tryLLMFallback(rawText);
+      if (fallback.recipe) {
+        parsedRecipe = fallback.recipe;
+        // Deliberately below the UI's "Looks complete" threshold: this is
+        // the least reliable parser in the system and it used to report the
+        // second highest confidence, after clearing the warnings that would
+        // have told the user to look closely.
+        confidence = 0.75;
+        finalParseMethod = 'llm';
       }
+      warnings = [...warnings, ...fallback.warnings];
     }
   }
 
@@ -970,19 +990,13 @@ export async function processUrlImportSession(
   // (e.g., heuristic strategy on a non-structured page). Mirrors the text
   // path; uses the visible page text the URL parser already extracted.
   if (result.confidence < FALLBACK_CONFIDENCE_THRESHOLD && result.pageText) {
-    try {
-      const { parseRecipeWithLLM, llmResultToImportFormat, LLM_PARSE_WARNING } = await import('../../services/llm-recipe-parser.js');
-      const llmResult = await parseRecipeWithLLM(result.pageText);
-      if (llmResult) {
-        const converted = llmResultToImportFormat(llmResult);
-        result.parsedRecipe = converted as ParsedRecipe;
-        (result as any).confidence = 0.75;
-        (result as any).parseMethod = 'llm';
-        result.warnings = [...(result.warnings || []), LLM_PARSE_WARNING];
-      }
-    } catch (err) {
-      console.warn('[Recipe Import] URL-path LLM fallback failed, keeping URL parser result:', err);
+    const fallback = await tryLLMFallback(result.pageText);
+    if (fallback.recipe) {
+      result.parsedRecipe = fallback.recipe;
+      (result as any).confidence = 0.75;
+      (result as any).parseMethod = 'llm';
     }
+    result.warnings = [...(result.warnings || []), ...fallback.warnings];
   }
 
   // Match ingredients against inventory
