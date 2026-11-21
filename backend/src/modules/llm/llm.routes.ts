@@ -62,7 +62,7 @@ async function verifyClaudeKey(apiKey: string): Promise<void> {
     for await (const _model of page) break; // first entry is enough
   } catch (error) {
     if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) {
-      throw Errors.validation(new ClaudeError('auth').message);
+      throw Errors.validation('Anthropic rejected this key. Check it and try again.');
     }
     if (error instanceof Anthropic.RateLimitError) throw Errors.validation(new ClaudeError('rate_limit').message);
     if (error instanceof Anthropic.APIConnectionError) throw Errors.validation(new ClaudeError('network').message);

@@ -108,7 +108,8 @@ describe('PUT /claude-key', () => {
     const res = await call(admin, 'PUT', '/claude-key', { apiKey: 'sk-ant-wrong-1234567890' });
 
     expect(res.status).toBe(400);
-    expect(res.json.error.message).toBe(CLAUDE_ERROR_MESSAGES.auth);
+    // Worded for the moment of saving: "replace it in Settings" makes no sense there.
+    expect(res.json.error.message).toBe('Anthropic rejected this key. Check it and try again.');
     expect((await call(admin, 'GET', '/backend')).json.data.keyState).toBe('none');
   });
 

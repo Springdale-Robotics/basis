@@ -12,6 +12,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { GuidedInstallDialog } from '@/components/settings/GuidedInstallDialog';
 import { ModelRoleSection, PullProgressRow } from '@/components/settings/ModelRoleSection';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { AiBackendCard } from './AiBackendCard';
 import {
   llmApi,
   connectLlmSocket,
@@ -503,13 +504,25 @@ export function AiModelsSettingsPage() {
     (tag) => !catalog.models.some((m) => normalizeTag(m.tag) === normalizeTag(tag))
   );
 
+  // With Claude selected, a missing GPU driver or Ollama isn't a problem to
+  // fix: nothing local runs. The model cards stay so switching back is easy.
+  const claudeActive = status.backend === 'claude';
+
   return (
     <div className="space-y-6">
+      <AiBackendCard />
+
       <HardwareSummaryCard hw={hardware} />
 
-      <DriverBlockerCard hw={hardware} />
+      {!claudeActive && <DriverBlockerCard hw={hardware} />}
 
-      {!status.reachable && <OllamaBlockerCard onSuccess={invalidateStatus} />}
+      {!claudeActive && !status.reachable && <OllamaBlockerCard onSuccess={invalidateStatus} />}
+
+      {claudeActive && (
+        <p className="text-sm text-muted-foreground">
+          The models below are not in use while Claude is selected.
+        </p>
+      )}
 
       <ModelRoleSection
         role="text"

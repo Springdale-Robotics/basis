@@ -16,6 +16,13 @@ export const CLAUDE_MODEL_KEY = 'ai.claudeModel';
 export const FALLBACK_CLAUDE_MODEL = { id: 'claude-haiku-5-5', displayName: 'Claude Haiku 5.5' } as const;
 
 const RESOLVE_EVERY_MS = 24 * 60 * 60 * 1000;
+/**
+ * After a failed lookup (revoked key, no internet), wait this long before
+ * asking again. Without it every page load and every scan waits on the same
+ * failing request first.
+ */
+const RETRY_AFTER_FAILURE_MS = 10 * 60 * 1000;
+let lastFailureAt: number | null = null;
 
 export interface ResolvedClaudeModel {
   id: string;
@@ -56,6 +63,7 @@ async function resolve(stored: ResolvedClaudeModel | null): Promise<ResolvedClau
     const newest = pickNewestHaiku(models);
     if (!newest) {
       logger.warn({ modelCount: models.length }, 'Models API listed no Claude Haiku that takes images');
+      lastFailureAt = Date.now();
       return fallback;
     }
 
@@ -68,12 +76,14 @@ async function resolve(stored: ResolvedClaudeModel | null): Promise<ResolvedClau
       .insert(systemSettings)
       .values({ key: CLAUDE_MODEL_KEY, value: resolved })
       .onConflictDoUpdate({ target: systemSettings.key, set: { value: resolved, updatedAt: new Date() } });
+    lastFailureAt = null;
     return resolved;
   } catch (error) {
     logger.warn(
       { error: error instanceof Error ? error.message : String(error) },
       'Could not list Claude models; keeping the last known model'
     );
+    lastFailureAt = Date.now();
     return fallback;
   }
 }
@@ -90,10 +100,18 @@ export async function getClaudeModel(opts: { force?: boolean } = {}): Promise<Re
     stored?.resolvedAt != null && Date.now() - Date.parse(stored.resolvedAt) < RESOLVE_EVERY_MS;
   if (fresh && !opts.force) return stored;
 
+  const recentlyFailed = lastFailureAt !== null && Date.now() - lastFailureAt < RETRY_AFTER_FAILURE_MS;
+  if (recentlyFailed && !opts.force) return stored ?? { ...FALLBACK_CLAUDE_MODEL, resolvedAt: null };
+
   if (!inFlight) {
     inFlight = resolve(stored).finally(() => {
       inFlight = null;
     });
   }
   return inFlight;
+}
+
+export function __resetClaudeModelForTests(): void {
+  lastFailureAt = null;
+  inFlight = null;
 }

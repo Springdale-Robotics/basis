@@ -10,7 +10,7 @@ vi.mock('../../src/modules/llm/claude/ai-backend.js', async (importOriginal) => 
   getClaudeClient: () => getClaudeClient(),
 }));
 
-const { CLAUDE_MODEL_KEY, FALLBACK_CLAUDE_MODEL, getClaudeModel, pickNewestHaiku } = await import(
+const { CLAUDE_MODEL_KEY, FALLBACK_CLAUDE_MODEL, getClaudeModel, pickNewestHaiku, __resetClaudeModelForTests } = await import(
   '../../src/modules/llm/claude/claude-model.js'
 );
 
@@ -53,6 +53,7 @@ beforeAll(clear);
 afterEach(async () => {
   await clear();
   getClaudeClient.mockReset();
+  __resetClaudeModelForTests();
 });
 
 async function storeResolved(id: string, ageHours: number): Promise<void> {
@@ -130,6 +131,21 @@ describe('getClaudeModel', () => {
     await storeResolved('claude-haiku-5-5', 25);
     clientListing(new Error('network down'));
     expect((await getClaudeModel()).id).toBe('claude-haiku-5-5');
+  });
+
+  it('does not retry a failed listing on every call — waits before asking again', async () => {
+    const list = clientListing(new Error('invalid x-api-key'));
+    await getClaudeModel();
+    await getClaudeModel();
+    await getClaudeModel();
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it('a forced lookup ignores the wait after a failure', async () => {
+    const list = clientListing(new Error('invalid x-api-key'));
+    await getClaudeModel();
+    await getClaudeModel({ force: true });
+    expect(list).toHaveBeenCalledTimes(2);
   });
 
   it('falls back to the constant when listing fails and nothing was ever resolved', async () => {
