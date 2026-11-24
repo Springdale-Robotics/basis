@@ -19,7 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { recipesApi, type IngredientMatch, type ImportSession, type ParsedRecipe, type ParseMethod } from '@/api/recipes';
 import { imageParseApi, type ParsedContent } from '@/api/image-parse';
-import { formatOcrForEditing } from '@/lib/recipe-utils';
+import { combinePagesForEditing } from '@/lib/recipe-utils';
 import { inventoryApi } from '@/api/inventory';
 import { cn } from '@/lib/utils';
 import { getErrorMessage } from '@/lib/api-error';
@@ -508,14 +508,7 @@ export function ImportRecipeDialog({ open, onOpenChange, onSuccess, defaultTab, 
         setImagePageProgress(files.length > 1 ? { done: index + 1, total: files.length } : null);
       }
 
-      if (pages.length === 1) {
-        setImageRawText(formatOcrForEditing(pages[0].rawText, pages[0].parsedContent));
-      } else {
-        // Structured data is per-page and would conflict across pages, so the
-        // combined text is formatted from raw and the user tidies the seam.
-        const combined = pages.map(p => p.rawText).filter(Boolean).join('\n\n');
-        setImageRawText(formatOcrForEditing(combined, null));
-      }
+      setImageRawText(combinePagesForEditing(pages));
       setParseWarnings([...new Set(pages.flatMap(p => p.warnings))]);
       // Only now. Held until the read succeeds so a failure leaves the photos
       // in place to retry — clearing them up front is what turned every
