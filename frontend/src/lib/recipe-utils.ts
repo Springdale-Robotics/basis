@@ -154,3 +154,25 @@ export function deduplicateIngredientMatches<M extends MatchWithConfidence>(
   }
   return grouped;
 }
+
+/**
+ * Text for the review box when a recipe was photographed across one or more
+ * pages (front and back of a card, a page that spills over).
+ *
+ * One page: its structured formatting. Several: the raw text joined in page
+ * order — per-page structure would conflict, and the method often runs across
+ * the pages ("Add 1 c." / "cheese, both corns…") — led by the first page's
+ * structured title. Without that title the parser takes the card's whole
+ * first line, attribution and all ("Spoon Bread —Donna James").
+ */
+export function combinePagesForEditing(
+  pages: Array<{ rawText: string; parsedContent: ParsedContent | null }>
+): string {
+  if (pages.length === 1) return formatOcrForEditing(pages[0].rawText, pages[0].parsedContent);
+
+  const combined = formatOcrForEditing(pages.map((p) => p.rawText).filter(Boolean).join('\n\n'), null);
+  const title = pages
+    .map((p) => (p.parsedContent?.type === 'recipe' ? (p.parsedContent.data as ParsedRecipeContent).title?.trim() : ''))
+    .find(Boolean);
+  return title ? `${title}\n\n${combined}` : combined;
+}

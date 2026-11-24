@@ -167,7 +167,7 @@ export function ReceiptUploadDialog({ open, onOpenChange }: ReceiptUploadDialogP
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+              accept="image/jpeg,image/png,image/webp"
               capture="environment"
               className="hidden"
               onChange={(e) => {

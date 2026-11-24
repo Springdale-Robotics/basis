@@ -492,7 +492,7 @@ export function ImageParseDialog({
             </div>
 
             <p className="mt-4 text-xs text-muted-foreground">
-              Supports: JPG, PNG, GIF, WebP, HEIC (max 10MB)
+              Supports: JPG, PNG, GIF, WebP (max 10MB)
             </p>
           </>
         )}

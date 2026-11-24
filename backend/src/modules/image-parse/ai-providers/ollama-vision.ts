@@ -62,7 +62,7 @@ const INFERENCE_JPEG_QUALITY = 85;
  * transcribes a handwritten index card in ~4s, while '' returns
  * done_reason 'load' in 248ms. Same image, same warm model.
  */
-const DEFAULT_TRANSCRIPTION_PROMPT =
+export const DEFAULT_TRANSCRIPTION_PROMPT =
   'Transcribe every word of text in this image exactly as written, preserving ' +
   'line breaks. Include the title, all ingredients with their quantities, and ' +
   'all instructions. Output only the transcribed text.';

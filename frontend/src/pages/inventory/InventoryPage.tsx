@@ -229,7 +229,9 @@ export function InventoryPage() {
         ? 'Receipt scanning is unavailable: OCR and the local AI model are both unreachable.'
         : !receiptStatus.ocrAvailable
           ? 'Receipt scanning is unavailable: OCR is unreachable.'
-          : 'Receipt scanning is unavailable: the local AI model is unreachable.'
+          : receiptStatus.structurerReason
+            ? `Receipt scanning is unavailable: ${receiptStatus.structurerReason}`
+            : 'Receipt scanning is unavailable: the local AI model is unreachable.'
       : null;
 
   const { data: confidenceData } = useQuery({

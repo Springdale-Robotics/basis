@@ -237,6 +237,9 @@ export async function processImageWithAI(sessionId: string, householdId: string)
         detectedType = result.structured.type as ParsedContentType;
         confidence = result.structured.confidence;
         parsedContent = normalizeParsedContent(detectedType, result.structured.data);
+        // Providers that return ingredient lines as written (Claude) leave the
+        // quantity/unit split to the CRF parser, like the heuristic path.
+        await addIngredientQuantities(parsedContent, warnings);
 
         logger.info({
           sessionId,
@@ -251,24 +254,8 @@ export async function processImageWithAI(sessionId: string, householdId: string)
         parsedContent = parseFromRawText(detectedType, rawText);
         warnings.push('No structured data from AI, using heuristic parsing');
 
-        // The recipe heuristic emits raw ingredient strings only. Run them
-        // through CRF so the user sees structured quantities/units when the
-        // parser is available; degrade gracefully with a warning otherwise.
-        if (parsedContent.type === 'recipe' && parsedContent.data.ingredients?.length) {
-          const { parseIngredientLinesViaCRF, INGREDIENT_PARSER_UNAVAILABLE_WARNING } =
-            await import('../recipes/recipe-import.service.js');
-          const rawLines = parsedContent.data.ingredients.map((i) => i.name);
-          const outcome = await parseIngredientLinesViaCRF(rawLines);
-          parsedContent.data.ingredients = outcome.ingredients.map((ing) => ({
-            name: ing.name,
-            quantity: ing.quantity,
-            unit: ing.unit,
-            confidence: outcome.degraded ? 0 : 0.75,
-          }));
-          if (outcome.degraded) {
-            warnings.push(INGREDIENT_PARSER_UNAVAILABLE_WARNING);
-          }
-        }
+        // The recipe heuristic emits raw ingredient strings only.
+        await addIngredientQuantities(parsedContent, warnings);
 
         logger.info({
           sessionId,
@@ -670,6 +657,33 @@ export async function getAIStatus(): Promise<{
 }
 
 // Helper functions
+
+/**
+ * Split recipe ingredient lines that arrived without quantities ("1½ tsp.
+ * baking powder") into quantity / unit / name with the CRF parser. Leaves
+ * ingredients alone when the provider already supplied quantities. Degrades
+ * with a warning when the parser is unavailable.
+ */
+export async function addIngredientQuantities(parsedContent: ParsedContent, warnings: string[]): Promise<void> {
+  if (parsedContent.type !== 'recipe' || !parsedContent.data.ingredients?.length) return;
+  const unquantified = parsedContent.data.ingredients.every((i) => i.quantity == null && !i.unit);
+  if (!unquantified) return;
+
+  const { parseIngredientLinesViaCRF, INGREDIENT_PARSER_UNAVAILABLE_WARNING } = await import(
+    '../recipes/recipe-import.service.js'
+  );
+  const outcome = await parseIngredientLinesViaCRF(parsedContent.data.ingredients.map((i) => i.name));
+  parsedContent.data.ingredients = outcome.ingredients.map((ing) => ({
+    name: ing.name,
+    quantity: ing.quantity,
+    unit: ing.unit,
+    // Preparation words the parser splits off ("finely grated") — dropping
+    // them turned "3c. finely grated zucchini" into "3 cup zucchini".
+    notes: ing.notes,
+    confidence: outcome.degraded ? 0 : 0.75,
+  }));
+  if (outcome.degraded) warnings.push(INGREDIENT_PARSER_UNAVAILABLE_WARNING);
+}
 
 function normalizeParsedContent(type: ParsedContentType, data: unknown): ParsedContent {
   switch (type) {

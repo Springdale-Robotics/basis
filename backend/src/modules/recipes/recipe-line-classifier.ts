@@ -99,7 +99,9 @@ const MAX_BARE_INGREDIENT_WORDS = 5;
  * Requiring the next character to be a capital or a digit keeps decimals and
  * mid-sentence initials from splitting.
  */
-const SENTENCE_BOUNDARY = /(?<=[A-Za-z0-9]{3}[.!?]["')\]]?)\s+(?=[A-Z0-9])/;
+// The degree sign counts too: "Preheat oven to 350°." ends a sentence, and a
+// temperature is never an abbreviation.
+const SENTENCE_BOUNDARY = /(?<=[A-Za-z0-9°]{3}[.!?]["')\]]?)\s+(?=[A-Z0-9])/;
 
 /**
  * Break a run of method prose into steps.

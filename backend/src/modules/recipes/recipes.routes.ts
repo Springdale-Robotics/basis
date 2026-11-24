@@ -1324,7 +1324,7 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
         import('../image-parse/ai-providers/index.js'),
       ]);
 
-      const llm = getLLMProvider();
+      const llm = await getLLMProvider();
       const [crfAvailable, imageStatus] = await Promise.all([
         isCRFParserAvailable(),
         getAllProvidersStatus(),
@@ -1606,10 +1606,16 @@ export async function recipesRoutes(app: FastifyInstance): Promise<void> {
       if (!rawText) throw Errors.validation('No source text available for re-parsing');
 
       const { parseRecipeWithLLM, llmResultToImportFormat, LLM_PARSE_WARNING } = await import('../../services/llm-recipe-parser.js');
-      const llmResult = await parseRecipeWithLLM(rawText);
-      if (!llmResult) throw Errors.validation('LLM parsing failed — no provider available or text could not be parsed');
+      const outcome = await parseRecipeWithLLM(rawText);
+      if (!outcome.ok) {
+        throw Errors.validation(
+          outcome.reason === 'provider_error'
+            ? outcome.userMessage
+            : 'LLM parsing failed — no provider available or text could not be parsed'
+        );
+      }
 
-      const converted = llmResultToImportFormat(llmResult);
+      const converted = llmResultToImportFormat(outcome.recipe);
       const parsedRecipe = converted as any;
 
       // Re-match ingredients

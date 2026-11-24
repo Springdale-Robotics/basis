@@ -9,6 +9,19 @@ import { catalogWithFit, combinedFootprint, normalizeTag, CATALOG } from './llm-
 import { fetchInstalledTags, deleteModel } from './ollama-client.js';
 import { getTextModel, getVisionModel, setModel } from './llm-settings.js';
 import { startPull } from './llm.ws.js';
+import {
+  type AiBackend,
+  type ClaudeKeyState,
+  clearClaudeKey,
+  createClaudeClient,
+  getAiBackend,
+  getClaudeKeyStatus,
+  saveClaudeKey,
+  setAiBackend,
+} from './claude/ai-backend.js';
+import { ClaudeError } from './claude/claude-call.js';
+import { getClaudeModel, MODELS_LIST_TIMEOUT_MS } from './claude/claude-model.js';
+import Anthropic from '@anthropic-ai/sdk';
 
 const updateSettingsSchema = z.object({
   textModel: z.string().min(1).max(200).optional(),
@@ -16,6 +29,52 @@ const updateSettingsSchema = z.object({
 });
 
 const pullSchema = z.object({ tag: z.string().min(1).max(200) });
+
+const backendSchema = z.object({ backend: z.enum(['local', 'claude']) });
+const claudeKeySchema = z.object({ apiKey: z.string().trim().min(20).max(300) });
+
+interface BackendState {
+  backend: AiBackend | null;
+  keyState: ClaudeKeyState;
+  keyHint: string | null;
+  model: { id: string; displayName: string } | null;
+}
+
+/** What the settings page renders. Never includes the key itself. */
+async function backendState(): Promise<BackendState> {
+  const [backend, key] = await Promise.all([getAiBackend(), getClaudeKeyStatus()]);
+  // Only ask Anthropic about models when Claude is the chosen backend: on
+  // "This server" nothing — not even a model list request — leaves the box.
+  const model = backend === 'claude' && key.state === 'set' ? await getClaudeModel() : null;
+  return {
+    backend,
+    keyState: key.state,
+    keyHint: key.hint,
+    model: model ? { id: model.id, displayName: model.displayName } : null,
+  };
+}
+
+/**
+ * Prove a key works before saving it, with the cheapest real call there is.
+ * The failure message is the same mapped text a scan would show.
+ */
+async function verifyClaudeKey(apiKey: string): Promise<void> {
+  try {
+    const page = createClaudeClient(apiKey).models.list(undefined, { timeout: MODELS_LIST_TIMEOUT_MS });
+    for await (const _model of page) break; // first entry is enough
+  } catch (error) {
+    if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) {
+      throw Errors.validation('Anthropic rejected this key. Check it and try again.');
+    }
+    if (error instanceof Anthropic.RateLimitError) throw Errors.validation(new ClaudeError('rate_limit').message);
+    if (error instanceof Anthropic.APIError && error.status === 402) {
+      throw Errors.validation(new ClaudeError('billing').message);
+    }
+    if (error instanceof Anthropic.APIConnectionError) throw Errors.validation(new ClaudeError('network').message);
+    const status = error instanceof Anthropic.APIError ? error.status : undefined;
+    throw Errors.validation(new ClaudeError('api', status).message);
+  }
+}
 
 /**
  * Where Ollama keeps its blobs on a systemd install. Deliberately not the
@@ -107,6 +166,7 @@ export async function llmRoutes(app: FastifyInstance): Promise<void> {
     return {
       success: true,
       data: {
+        backend: await getAiBackend(),
         reachable,
         installed,
         selected: { text, vision },
@@ -119,6 +179,32 @@ export async function llmRoutes(app: FastifyInstance): Promise<void> {
         footprint: combinedFootprint([text, vision], hw),
       },
     };
+  });
+
+  app.get('/backend', { preHandler: [authMiddleware, requireAdmin()] }, async () => ({
+    success: true,
+    data: await backendState(),
+  }));
+
+  app.put('/backend', { preHandler: [authMiddleware, requireAdmin()] }, async (request) => {
+    const { backend } = backendSchema.parse(request.body);
+    await setAiBackend(backend);
+    return { success: true, data: await backendState() };
+  });
+
+  app.put('/claude-key', { preHandler: [authMiddleware, requireAdmin()] }, async (request) => {
+    const { apiKey } = claudeKeySchema.parse(request.body);
+    await verifyClaudeKey(apiKey);
+    await saveClaudeKey(apiKey);
+    // A new key may see different models; look up the newest Haiku now —
+    // but only if Claude is in use (see backendState).
+    if ((await getAiBackend()) === 'claude') await getClaudeModel({ force: true });
+    return { success: true, data: await backendState() };
+  });
+
+  app.delete('/claude-key', { preHandler: [authMiddleware, requireAdmin()] }, async () => {
+    await clearClaudeKey();
+    return { success: true, data: await backendState() };
   });
 
   app.put('/settings', { preHandler: [authMiddleware, requireAdmin()] }, async (request) => {

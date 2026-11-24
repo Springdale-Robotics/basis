@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { config } from '../../config/index.js';
 import { logger } from '../../lib/logger.js';
 import { getTextModel } from '../llm/llm-settings.js';
+import { getAiBackend, getClaudeKeyStatus } from '../llm/claude/ai-backend.js';
+import { CLAUDE_ERROR_MESSAGES, claudeComplete } from '../llm/claude/claude-call.js';
 import type { TranscribedLine } from './receipt-ocr.js';
 
 /**
@@ -145,7 +147,21 @@ export function attachConfidences(
   });
 }
 
+/**
+ * Why structuring can't run, in words for the user — or null if it can (or the
+ * reason is the existing local-model one the UI already explains).
+ */
+export async function structurerUnavailableReason(): Promise<string | null> {
+  if ((await getAiBackend()) !== 'claude') return null;
+  const { state } = await getClaudeKeyStatus();
+  if (state === 'set') return null;
+  return state === 'unreadable' ? CLAUDE_ERROR_MESSAGES.key_unreadable : CLAUDE_ERROR_MESSAGES.no_key;
+}
+
 export async function isStructurerAvailable(): Promise<boolean> {
+  if ((await getAiBackend()) === 'claude') {
+    return (await getClaudeKeyStatus()).state === 'set';
+  }
   try {
     const model = await getTextModel();
     const response = await fetch(`${config.OLLAMA_HOST}/api/tags`, {
@@ -159,7 +175,19 @@ export async function isStructurerAvailable(): Promise<boolean> {
   }
 }
 
+/** Claude path: same prompt, same parser; errors already carry a user-facing message. */
+async function structureWithClaude(rawText: string): Promise<StructuredReceipt> {
+  // Generous: a long Costco receipt runs to well over a hundred lines.
+  // Thinking shares the budget; unused budget costs nothing.
+  const reply = await claudeComplete({ content: `${PROMPT}${rawText}`, maxTokens: 16000 });
+  const structured = parseStructuredResponse(reply);
+  logger.info({ merchant: structured.merchant, lineCount: structured.lines.length }, 'Receipt structured (Claude)');
+  return structured;
+}
+
 export async function structureReceipt(rawText: string): Promise<StructuredReceipt> {
+  if ((await getAiBackend()) === 'claude') return structureWithClaude(rawText);
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.RECEIPT_STRUCTURE_TIMEOUT_MS);
 

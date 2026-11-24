@@ -256,3 +256,57 @@ describe('parseRecipeTextWithConfidence: a reader that writes markdown', () => {
     expect(plain.recipe.instructions).toEqual(['Fry until golden.']);
   });
 });
+
+/**
+ * Text between the title and an explicit "Ingredients" heading is the
+ * recipe's description — a serving note, a tip, a headnote. Photo import puts
+ * Claude's notes exactly there in the review text, and the parser used to
+ * throw them away: "Excellent à la mode…" vanished from every saved recipe.
+ */
+describe('description between the title and the Ingredients heading', () => {
+  const reviewText = [
+    'Chocolate-Nut Zucchini Cake',
+    '',
+    '* Excellent à la mode with french vanilla ice cream.',
+    '',
+    'Cook: 75 min | Servings: 10',
+    '',
+    'Ingredients',
+    '3 cup flour',
+    '4 eggs',
+    '',
+    'Instructions',
+    '1. Melt chocolate.',
+    '2. Bake 1 hour.',
+  ].join('\n');
+
+  it('keeps the note as the description', () => {
+    const { recipe } = parseRecipeTextWithConfidence(reviewText);
+    expect(recipe.title).toBe('Chocolate-Nut Zucchini Cake');
+    expect(recipe.description).toBe('Excellent à la mode with french vanilla ice cream.');
+  });
+
+  it('keeps the metadata line out of the description but still reads it', () => {
+    const { recipe } = parseRecipeTextWithConfidence(reviewText);
+    expect(recipe.description).not.toMatch(/Servings|Cook:/);
+    expect(recipe.servings).toBe(10);
+    expect(recipe.cookTimeMinutes).toBe(75);
+  });
+
+  it('joins a multi-line headnote', () => {
+    const { recipe } = parseRecipeTextWithConfidence(
+      'Turkish Slippers\nDon\'t undercook.\nGo easy on cot cheese.\nIngredients\n1 egg\nInstructions\n1. Bake.'
+    );
+    expect(recipe.description).toBe("Don't undercook.\nGo easy on cot cheese.");
+  });
+
+  it('has no description when the Ingredients heading follows the title directly', () => {
+    const { recipe } = parseRecipeTextWithConfidence('Pancakes\nIngredients\n1 cup flour\nInstructions\n1. Mix.');
+    expect(recipe.description).toBeUndefined();
+  });
+
+  it('does not invent a description when there is no Ingredients heading', () => {
+    const { recipe } = parseRecipeTextWithConfidence('Pancakes\nA family favourite.\n1 cup flour\n2 eggs\nMix and fry.');
+    expect(recipe.description).toBeUndefined();
+  });
+});

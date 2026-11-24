@@ -79,6 +79,24 @@ function isIngredientGroupHeader(line: string): string | null {
 /** A bare field label, as some readers emit before the value itself. */
 const FIELD_LABEL = /^(title|name|recipe|serves|servings|prep|cook|yield)$/i;
 
+// Recipe metadata lines — times and servings. One list, read for values below
+// and used to keep such lines out of the description.
+const PREP_PATTERNS = [
+  /prep(?:aration)?\s*(?:time)?[:\s]+(\d+)\s*(min|minute|hour|hr)/i,
+  /prep[:\s]+(\d+)\s*(min|minute|hour|hr|m|h)/i,
+];
+const COOK_PATTERNS = [
+  /cook(?:ing)?\s*(?:time)?[:\s]+(\d+)\s*(min|minute|hour|hr)/i,
+  /cook[:\s]+(\d+)\s*(min|minute|hour|hr|m|h)/i,
+  /bake(?:ing)?\s*(?:time)?[:\s]+(\d+)\s*(min|minute|hour|hr)/i,
+];
+const SERVINGS_PATTERNS = [
+  /(?:serve|serving|yield|makes)[s]?[:\s]+(\d+)/i,
+  /(\d+)\s*(?:serving|portion)/i,
+];
+const isMetadataLine = (line: string) =>
+  [...PREP_PATTERNS, ...COOK_PATTERNS, ...SERVINGS_PATTERNS].some((p) => p.test(convertUnicodeFractions(line.toLowerCase())));
+
 // Enhanced section header patterns
 const SECTION_HEADERS = {
   ingredients: [
@@ -140,6 +158,7 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
 
   // Try to extract title (usually first non-empty line or largest font in PDF)
   let title = 'Untitled Recipe';
+  let titleIndex = -1;
   let description: string | undefined;
   let ingredientsStart = -1;
   let ingredientsEnd = -1;
@@ -161,6 +180,7 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
         !matchesSectionHeader(line, SECTION_HEADERS.ingredients) &&
         !matchesSectionHeader(line, SECTION_HEADERS.instructions)) {
       title = stripDecoration(line);
+      titleIndex = i;
     }
 
     // Find ingredients section
@@ -182,6 +202,18 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
       // Don't process beyond notes
       break;
     }
+  }
+
+  // Lines between the title and an explicit Ingredients heading are the
+  // description: a headnote, a serving note, a tip. Only with a heading — without
+  // one there's no telling where a description would end and the recipe begin.
+  if (ingredientsFromHeading && titleIndex > -1) {
+    const between = lines
+      .slice(titleIndex + 1, ingredientsStart - 1)
+      .filter((l) => !FIELD_LABEL.test(stripDecoration(l)) && !isMetadataLine(l))
+      .map(stripDecoration)
+      .filter(Boolean);
+    if (between.length) description = between.join('\n');
   }
 
   // If we didn't find explicit section markers, try to infer
@@ -351,11 +383,7 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
     const lower = convertUnicodeFractions(line.toLowerCase());
 
     // Prep time (various formats)
-    const prepPatterns = [
-      /prep(?:aration)?\s*(?:time)?[:\s]+(\d+)\s*(min|minute|hour|hr)/i,
-      /prep[:\s]+(\d+)\s*(min|minute|hour|hr|m|h)/i,
-    ];
-    for (const pattern of prepPatterns) {
+    for (const pattern of PREP_PATTERNS) {
       const prepMatch = lower.match(pattern);
       if (prepMatch && !prepTimeMinutes) {
         prepTimeMinutes = parseInt(prepMatch[1]) * (prepMatch[2].startsWith('h') ? 60 : 1);
@@ -363,12 +391,7 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
     }
 
     // Cook time (various formats)
-    const cookPatterns = [
-      /cook(?:ing)?\s*(?:time)?[:\s]+(\d+)\s*(min|minute|hour|hr)/i,
-      /cook[:\s]+(\d+)\s*(min|minute|hour|hr|m|h)/i,
-      /bake(?:ing)?\s*(?:time)?[:\s]+(\d+)\s*(min|minute|hour|hr)/i,
-    ];
-    for (const pattern of cookPatterns) {
+    for (const pattern of COOK_PATTERNS) {
       const cookMatch = lower.match(pattern);
       if (cookMatch && !cookTimeMinutes) {
         cookTimeMinutes = parseInt(cookMatch[1]) * (cookMatch[2].startsWith('h') ? 60 : 1);
@@ -376,11 +399,7 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
     }
 
     // Servings (various formats)
-    const servingsPatterns = [
-      /(?:serve|serving|yield|makes)[s]?[:\s]+(\d+)/i,
-      /(\d+)\s*(?:serving|portion)/i,
-    ];
-    for (const pattern of servingsPatterns) {
+    for (const pattern of SERVINGS_PATTERNS) {
       const servingsMatch = lower.match(pattern);
       if (servingsMatch && !servings) {
         servings = parseInt(servingsMatch[1]);
@@ -661,6 +680,32 @@ function parseRecipeFileFormat(text: string): {
 // Applied uniformly across text and URL import paths.
 const FALLBACK_CONFIDENCE_THRESHOLD = 0.6;
 
+/**
+ * The AI step both import paths fall back to when the basic parsers aren't
+ * confident. Never throws — the import must still finish with what the basic
+ * parsers found. A Claude failure (bad key, rate limit, …) is not silent,
+ * though: it comes back as a warning the review screen shows.
+ */
+export async function tryLLMFallback(
+  text: string
+): Promise<{ recipe: ParsedRecipe | null; warnings: string[] }> {
+  try {
+    const { parseRecipeWithLLM, llmResultToImportFormat, llmFailureWarning, LLM_PARSE_WARNING } = await import(
+      '../../services/llm-recipe-parser.js'
+    );
+    const outcome = await parseRecipeWithLLM(text);
+    if (outcome.ok) {
+      return { recipe: llmResultToImportFormat(outcome.recipe) as ParsedRecipe, warnings: [LLM_PARSE_WARNING] };
+    }
+    if (outcome.reason === 'provider_error') {
+      return { recipe: null, warnings: [llmFailureWarning(outcome.userMessage)] };
+    }
+  } catch (err) {
+    console.warn('[Recipe Import] LLM fallback failed, keeping the basic parser result:', err);
+  }
+  return { recipe: null, warnings: [] };
+}
+
 // Confidence floor applied after a successful CRF re-parse — CRF is more
 // reliable than regex for ingredient line structure.
 const CRF_CONFIDENCE_FLOOR = 0.75;
@@ -876,23 +921,17 @@ export async function processImportSession(
 
     // LLM fallback: if parsing still produced low confidence, try AI
     if (confidence < FALLBACK_CONFIDENCE_THRESHOLD) {
-      try {
-        const { parseRecipeWithLLM, llmResultToImportFormat, LLM_PARSE_WARNING } = await import('../../services/llm-recipe-parser.js');
-        const llmResult = await parseRecipeWithLLM(rawText);
-        if (llmResult) {
-          const converted = llmResultToImportFormat(llmResult);
-          parsedRecipe = converted as ParsedRecipe;
-          // Deliberately below the UI's "Looks complete" threshold: this is
-          // the least reliable parser in the system and it used to report the
-          // second highest confidence, after clearing the warnings that would
-          // have told the user to look closely.
-          confidence = 0.75;
-          finalParseMethod = 'llm';
-          warnings = [...warnings, LLM_PARSE_WARNING];
-        }
-      } catch (err) {
-        console.warn('[Recipe Import] LLM fallback failed, using regex result:', err);
+      const fallback = await tryLLMFallback(rawText);
+      if (fallback.recipe) {
+        parsedRecipe = fallback.recipe;
+        // Deliberately below the UI's "Looks complete" threshold: this is
+        // the least reliable parser in the system and it used to report the
+        // second highest confidence, after clearing the warnings that would
+        // have told the user to look closely.
+        confidence = 0.75;
+        finalParseMethod = 'llm';
       }
+      warnings = [...warnings, ...fallback.warnings];
     }
   }
 
@@ -970,19 +1009,13 @@ export async function processUrlImportSession(
   // (e.g., heuristic strategy on a non-structured page). Mirrors the text
   // path; uses the visible page text the URL parser already extracted.
   if (result.confidence < FALLBACK_CONFIDENCE_THRESHOLD && result.pageText) {
-    try {
-      const { parseRecipeWithLLM, llmResultToImportFormat, LLM_PARSE_WARNING } = await import('../../services/llm-recipe-parser.js');
-      const llmResult = await parseRecipeWithLLM(result.pageText);
-      if (llmResult) {
-        const converted = llmResultToImportFormat(llmResult);
-        result.parsedRecipe = converted as ParsedRecipe;
-        (result as any).confidence = 0.75;
-        (result as any).parseMethod = 'llm';
-        result.warnings = [...(result.warnings || []), LLM_PARSE_WARNING];
-      }
-    } catch (err) {
-      console.warn('[Recipe Import] URL-path LLM fallback failed, keeping URL parser result:', err);
+    const fallback = await tryLLMFallback(result.pageText);
+    if (fallback.recipe) {
+      result.parsedRecipe = fallback.recipe;
+      (result as any).confidence = 0.75;
+      (result as any).parseMethod = 'llm';
     }
+    result.warnings = [...(result.warnings || []), ...fallback.warnings];
   }
 
   // Match ingredients against inventory

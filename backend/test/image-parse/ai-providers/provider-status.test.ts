@@ -6,6 +6,19 @@ const mocks = vi.hoisted(() => ({
   vlmIsAvailable: vi.fn(),
   ollamaIsAvailable: vi.fn(),
   getVisionModel: vi.fn(),
+  backend: null as 'local' | 'claude' | null,
+  keyState: 'none' as 'none' | 'set' | 'unreadable',
+}));
+
+vi.mock('../../../src/modules/llm/claude/ai-backend.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/modules/llm/claude/ai-backend.js')>()),
+  getAiBackend: async () => mocks.backend,
+  getClaudeKeyStatus: async () => ({ state: mocks.keyState, hint: null }),
+}));
+
+vi.mock('../../../src/modules/llm/claude/claude-model.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/modules/llm/claude/claude-model.js')>()),
+  getClaudeModel: async () => ({ id: 'claude-haiku-6', displayName: 'Claude Haiku 6', resolvedAt: 'now' }),
 }));
 
 vi.mock('../../../src/modules/llm/ollama-client.js', () => ({
@@ -41,6 +54,7 @@ vi.mock('../../../src/modules/image-parse/ai-providers/ollama-vision.js', () => 
 const { getVisionProviderStatus, getAllProvidersStatus } = await import(
   '../../../src/modules/image-parse/ai-providers/index.js'
 );
+const { CLAUDE_ERROR_MESSAGES } = await import('../../../src/modules/llm/claude/claude-call.js');
 
 describe('vision provider status', () => {
   const originalProviderConfig = config.IMAGE_PARSE_PROVIDER;
@@ -126,5 +140,66 @@ describe('getAllProvidersStatus', () => {
     const names = [status.primary?.name, status.fallback?.name];
     expect(names).toContain('handwriting-ocr');
     expect(names).toContain('vlm-llm');
+  });
+});
+
+describe('provider status under the AI backend switch', () => {
+  const originalProviderConfig = config.IMAGE_PARSE_PROVIDER;
+  const originalApiKey = config.HANDWRITING_OCR_API_KEY;
+
+  afterEach(() => {
+    config.IMAGE_PARSE_PROVIDER = originalProviderConfig;
+    config.HANDWRITING_OCR_API_KEY = originalApiKey;
+    mocks.backend = null;
+    mocks.keyState = 'none';
+    vi.clearAllMocks();
+  });
+
+  it('claude with a key: ready, named claude, reporting the resolved model', async () => {
+    mocks.backend = 'claude';
+    mocks.keyState = 'set';
+    expect(await getVisionProviderStatus()).toEqual({
+      available: true,
+      name: 'claude',
+      model: 'claude-haiku-6',
+      expectedProcessingMs: 15000,
+      error: undefined,
+    });
+  });
+
+  it('claude without a usable key: not ready, with the matching message', async () => {
+    mocks.backend = 'claude';
+    mocks.keyState = 'unreadable';
+    const status = await getVisionProviderStatus();
+    expect(status.available).toBe(false);
+    expect(status.error).toBe(CLAUDE_ERROR_MESSAGES.key_unreadable);
+  });
+
+  it('claude: the all-providers view lists Claude alone', async () => {
+    mocks.backend = 'claude';
+    mocks.keyState = 'set';
+    config.HANDWRITING_OCR_API_KEY = 'set';
+    mocks.vlmIsAvailable.mockResolvedValue(true);
+
+    const status = await getAllProvidersStatus();
+
+    expect(status.primary?.name).toBe('claude');
+    expect(status.fallback).toBeNull();
+    expect(status.activeProvider).toBe('claude');
+    expect(mocks.vlmIsAvailable).not.toHaveBeenCalled();
+  });
+
+  it('local: the all-providers view leaves HandwritingOCR out', async () => {
+    mocks.backend = 'local';
+    config.IMAGE_PARSE_PROVIDER = 'auto';
+    config.HANDWRITING_OCR_API_KEY = 'set';
+    mocks.vlmIsAvailable.mockResolvedValue(true);
+    mocks.ollamaIsAvailable.mockResolvedValue(true);
+    mocks.getVisionModel.mockResolvedValue('qwen2.5vl:7b');
+
+    const status = await getAllProvidersStatus();
+
+    expect([status.primary?.name, status.fallback?.name]).not.toContain('handwriting-ocr');
+    expect(status.activeProvider).toBe('vlm-llm');
   });
 });

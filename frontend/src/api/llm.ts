@@ -48,7 +48,20 @@ export interface CatalogEntry {
   fit: FitVerdict;
 }
 
+/** Where AI jobs run. null = never chosen (the box's original behaviour). */
+export type AiBackend = 'local' | 'claude';
+export type ClaudeKeyState = 'none' | 'set' | 'unreadable';
+
+/** Mirrors BackendState in backend/src/modules/llm/llm.routes.ts. Never carries the key. */
+export interface AiBackendState {
+  backend: AiBackend | null;
+  keyState: ClaudeKeyState;
+  keyHint: string | null;
+  model: { id: string; displayName: string } | null;
+}
+
 export interface LlmStatus {
+  backend: AiBackend | null;
   reachable: boolean;
   installed: string[];
   selected: { text: string; vision: string };
@@ -87,6 +100,14 @@ export const llmApi = {
 
   deleteModel: (tag: string) =>
     apiDelete<{ message: string }>(`/llm/models/${encodeURIComponent(tag)}`),
+
+  getBackend: () => apiGet<AiBackendState>('/llm/backend'),
+
+  setBackend: (backend: AiBackend) => apiPut<AiBackendState>('/llm/backend', { backend }),
+
+  saveClaudeKey: (apiKey: string) => apiPut<AiBackendState>('/llm/claude-key', { apiKey }),
+
+  removeClaudeKey: () => apiDelete<AiBackendState>('/llm/claude-key'),
 };
 
 /**
