@@ -79,6 +79,24 @@ function isIngredientGroupHeader(line: string): string | null {
 /** A bare field label, as some readers emit before the value itself. */
 const FIELD_LABEL = /^(title|name|recipe|serves|servings|prep|cook|yield)$/i;
 
+// Recipe metadata lines — times and servings. One list, read for values below
+// and used to keep such lines out of the description.
+const PREP_PATTERNS = [
+  /prep(?:aration)?\s*(?:time)?[:\s]+(\d+)\s*(min|minute|hour|hr)/i,
+  /prep[:\s]+(\d+)\s*(min|minute|hour|hr|m|h)/i,
+];
+const COOK_PATTERNS = [
+  /cook(?:ing)?\s*(?:time)?[:\s]+(\d+)\s*(min|minute|hour|hr)/i,
+  /cook[:\s]+(\d+)\s*(min|minute|hour|hr|m|h)/i,
+  /bake(?:ing)?\s*(?:time)?[:\s]+(\d+)\s*(min|minute|hour|hr)/i,
+];
+const SERVINGS_PATTERNS = [
+  /(?:serve|serving|yield|makes)[s]?[:\s]+(\d+)/i,
+  /(\d+)\s*(?:serving|portion)/i,
+];
+const isMetadataLine = (line: string) =>
+  [...PREP_PATTERNS, ...COOK_PATTERNS, ...SERVINGS_PATTERNS].some((p) => p.test(convertUnicodeFractions(line.toLowerCase())));
+
 // Enhanced section header patterns
 const SECTION_HEADERS = {
   ingredients: [
@@ -140,6 +158,7 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
 
   // Try to extract title (usually first non-empty line or largest font in PDF)
   let title = 'Untitled Recipe';
+  let titleIndex = -1;
   let description: string | undefined;
   let ingredientsStart = -1;
   let ingredientsEnd = -1;
@@ -161,6 +180,7 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
         !matchesSectionHeader(line, SECTION_HEADERS.ingredients) &&
         !matchesSectionHeader(line, SECTION_HEADERS.instructions)) {
       title = stripDecoration(line);
+      titleIndex = i;
     }
 
     // Find ingredients section
@@ -182,6 +202,18 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
       // Don't process beyond notes
       break;
     }
+  }
+
+  // Lines between the title and an explicit Ingredients heading are the
+  // description: a headnote, a serving note, a tip. Only with a heading — without
+  // one there's no telling where a description would end and the recipe begin.
+  if (ingredientsFromHeading && titleIndex > -1) {
+    const between = lines
+      .slice(titleIndex + 1, ingredientsStart - 1)
+      .filter((l) => !FIELD_LABEL.test(stripDecoration(l)) && !isMetadataLine(l))
+      .map(stripDecoration)
+      .filter(Boolean);
+    if (between.length) description = between.join('\n');
   }
 
   // If we didn't find explicit section markers, try to infer
@@ -351,11 +383,7 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
     const lower = convertUnicodeFractions(line.toLowerCase());
 
     // Prep time (various formats)
-    const prepPatterns = [
-      /prep(?:aration)?\s*(?:time)?[:\s]+(\d+)\s*(min|minute|hour|hr)/i,
-      /prep[:\s]+(\d+)\s*(min|minute|hour|hr|m|h)/i,
-    ];
-    for (const pattern of prepPatterns) {
+    for (const pattern of PREP_PATTERNS) {
       const prepMatch = lower.match(pattern);
       if (prepMatch && !prepTimeMinutes) {
         prepTimeMinutes = parseInt(prepMatch[1]) * (prepMatch[2].startsWith('h') ? 60 : 1);
@@ -363,12 +391,7 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
     }
 
     // Cook time (various formats)
-    const cookPatterns = [
-      /cook(?:ing)?\s*(?:time)?[:\s]+(\d+)\s*(min|minute|hour|hr)/i,
-      /cook[:\s]+(\d+)\s*(min|minute|hour|hr|m|h)/i,
-      /bake(?:ing)?\s*(?:time)?[:\s]+(\d+)\s*(min|minute|hour|hr)/i,
-    ];
-    for (const pattern of cookPatterns) {
+    for (const pattern of COOK_PATTERNS) {
       const cookMatch = lower.match(pattern);
       if (cookMatch && !cookTimeMinutes) {
         cookTimeMinutes = parseInt(cookMatch[1]) * (cookMatch[2].startsWith('h') ? 60 : 1);
@@ -376,11 +399,7 @@ export function parseRecipeTextWithConfidence(text: string): TextParseResult {
     }
 
     // Servings (various formats)
-    const servingsPatterns = [
-      /(?:serve|serving|yield|makes)[s]?[:\s]+(\d+)/i,
-      /(\d+)\s*(?:serving|portion)/i,
-    ];
-    for (const pattern of servingsPatterns) {
+    for (const pattern of SERVINGS_PATTERNS) {
       const servingsMatch = lower.match(pattern);
       if (servingsMatch && !servings) {
         servings = parseInt(servingsMatch[1]);
