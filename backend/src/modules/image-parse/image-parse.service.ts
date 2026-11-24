@@ -677,6 +677,9 @@ export async function addIngredientQuantities(parsedContent: ParsedContent, warn
     name: ing.name,
     quantity: ing.quantity,
     unit: ing.unit,
+    // Preparation words the parser splits off ("finely grated") — dropping
+    // them turned "3c. finely grated zucchini" into "3 cup zucchini".
+    notes: ing.notes,
     confidence: outcome.degraded ? 0 : 0.75,
   }));
   if (outcome.degraded) warnings.push(INGREDIENT_PARSER_UNAVAILABLE_WARNING);

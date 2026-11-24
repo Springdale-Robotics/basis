@@ -40,6 +40,7 @@ Rules:
 - Copy wording from the photo. Do not add, correct or complete anything that is not written there.
 - The photo may be rotated or upside down; read it in its correct orientation.
 - Printed card labels (such as "Recipe from the kitchen of:" or "Serves:") are not steps.
+- If servings is a range (such as "10-12"), use the lower number.
 - If the photo has no readable text, reply {"transcription": "", "type": "unknown"}.`;
 
 const lines = z.array(z.string()).catch([]);

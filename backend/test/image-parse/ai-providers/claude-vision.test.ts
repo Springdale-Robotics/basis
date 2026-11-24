@@ -110,6 +110,8 @@ describe('ClaudeVisionProvider structured output', () => {
     const prompt = sentBlocks()[1].text as string;
     expect(prompt).toContain('JSON');
     expect(prompt).toContain('transcription');
+    // "Serves 10-12" came back as 11 in the first real test.
+    expect(prompt).toContain('lower number');
   });
 
   it('returns the recipe structured, with the printed-card title, notes as description, and ingredient lines as written', async () => {

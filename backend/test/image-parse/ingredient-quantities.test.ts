@@ -38,6 +38,17 @@ describe('addIngredientQuantities', () => {
     expect(warnings).toEqual([]);
   });
 
+  it('keeps the preparation notes the parser separates out ("finely grated")', async () => {
+    mocks.crf.mockResolvedValue({
+      degraded: false,
+      confidence: 0.99,
+      ingredients: [{ name: 'zucchini', quantity: 3, unit: 'cup', notes: 'finely grated' }],
+    });
+    const content = recipe([{ name: '3c. finely grated zucchini' }]);
+    await addIngredientQuantities(content, []);
+    expect(content.data.ingredients[0]).toMatchObject({ name: 'zucchini', quantity: 3, unit: 'cup', notes: 'finely grated' });
+  });
+
   it('leaves ingredients alone when the provider already gave quantities', async () => {
     const content = recipe([{ name: 'flour', quantity: 2, unit: 'cup' }]);
     await addIngredientQuantities(content, []);
