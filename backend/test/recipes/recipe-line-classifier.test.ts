@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasNumberedSteps, splitIntoSteps } from '../../src/modules/recipes/recipe-line-classifier.js';
+import { splitIntoSteps } from '../../src/modules/recipes/recipe-line-classifier.js';
 
 describe('splitIntoSteps', () => {
   it('splits at sentence ends', () => {
@@ -21,17 +21,5 @@ describe('splitIntoSteps', () => {
       'Grease the pan.',
     ]);
     expect(splitIntoSteps('Heat to 180°C. Add the oil.')).toEqual(['Heat to 180°C.', 'Add the oil.']);
-  });
-});
-
-describe('hasNumberedSteps', () => {
-  it('is true for two or more numbered lines', () => {
-    expect(hasNumberedSteps('1. Mix.\n2. Bake.')).toBe(true);
-    expect(hasNumberedSteps('1) Mix.\n2) Bake.')).toBe(true);
-  });
-
-  it('is false for prose or a single numbered line', () => {
-    expect(hasNumberedSteps('Mix. Bake.')).toBe(false);
-    expect(hasNumberedSteps('1 cup flour\nMix and bake.')).toBe(false);
   });
 });

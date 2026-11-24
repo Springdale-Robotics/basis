@@ -181,27 +181,20 @@ describe('ClaudeVisionProvider structured output', () => {
   });
 });
 
-describe('ClaudeVisionProvider step splitting', () => {
+describe('ClaudeVisionProvider steps', () => {
   const reply = (obj: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(obj) }], stop_reason: 'end_turn' });
-  const card = 'Melt chocolate. Let cool. Preheat oven to 350°.\nAdd 1 c. sugar. Bake 1 hour.';
-  const expected = ['Melt chocolate.', 'Let cool.', 'Preheat oven to 350°.', 'Add 1 c. sugar.', 'Bake 1 hour.'];
 
-  async function stepsFor(instructions: string[], transcription = card) {
+  it("keeps Claude's step boundaries rather than re-splitting them by rule", async () => {
+    const steps = ['Melt chocolate. Let cool.', 'Preheat oven to 350°. Grease a tube pan.'];
     mocks.create.mockResolvedValue(
-      reply({ transcription, type: 'recipe', recipe: { title: 'X', ingredients: ['1 egg'], instructions } })
+      reply({ transcription: 'x', type: 'recipe', recipe: { title: 'X', ingredients: ['1 egg'], instructions: steps } })
     );
     const result = await new ClaudeVisionProvider().parseImage(await bigPng(), 'image/png', '');
-    return (result.structured?.data as any).instructions as string[];
-  }
-
-  it('gives the same steps however Claude chunks an unnumbered method', async () => {
-    expect(await stepsFor(['Melt chocolate. Let cool. Preheat oven to 350°.', 'Add 1 c. sugar. Bake 1 hour.'])).toEqual(expected);
-    expect(await stepsFor(['Melt chocolate. Let cool. Preheat oven to 350°. Add 1 c. sugar. Bake 1 hour.'])).toEqual(expected);
-    expect(await stepsFor(expected)).toEqual(expected);
+    expect((result.structured?.data as any).instructions).toEqual(steps);
   });
 
-  it('keeps the steps as written when the card numbers them', async () => {
-    const numbered = '1. Melt chocolate. Let cool.\n2. Bake 1 hour.';
-    expect(await stepsFor(['Melt chocolate. Let cool.', 'Bake 1 hour.'], numbered)).toEqual(['Melt chocolate. Let cool.', 'Bake 1 hour.']);
+  it('asks for one action per step and carries no card-specific examples', () => {
+    expect(CLAUDE_VISION_PROMPT).toContain('one action per step');
+    expect(CLAUDE_VISION_PROMPT).not.toContain("what's cookin");
   });
 });

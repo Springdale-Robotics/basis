@@ -117,14 +117,6 @@ export function splitIntoSteps(text: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-/**
- * Did the author number their steps? Two or more numbered lines ("1. Preheat")
- * means the steps are theirs to keep; otherwise the method is prose to split.
- */
-export function hasNumberedSteps(text: string): boolean {
-  return text.split('\n').filter((line) => NUMBERED_STEP.test(line)).length >= 2;
-}
-
 export interface LineContext {
   /** Inside an explicit "Ingredients" heading. */
   inIngredientsSection: boolean;
