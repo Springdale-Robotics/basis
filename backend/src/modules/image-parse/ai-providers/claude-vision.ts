@@ -39,7 +39,6 @@ Rules:
 - Include "recipe" only when type is "recipe", and "list" only when type is "list".
 - Copy wording from the photo. Do not add, correct or complete anything that is not written there.
 - Leave out text that isn't part of this recipe, such as product labels or stickers, coupons, page tabs, or other recipes on the same page.
-- If the text starts or stops mid-sentence because it continues on another page, keep it as it is; don't complete it.
 - Don't add your own comments or explanations anywhere; leave a field empty or null rather than describing what is missing.
 - The photo may be rotated or upside down; read it in its correct orientation.
 - Printed card labels (such as "Recipe from the kitchen of:" or "Serves:") are not steps.

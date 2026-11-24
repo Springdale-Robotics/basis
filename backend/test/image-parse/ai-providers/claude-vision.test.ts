@@ -198,13 +198,13 @@ describe('ClaudeVisionProvider steps', () => {
     expect(CLAUDE_VISION_PROMPT).toContain("Leave out text that isn't part of this recipe");
   });
 
-  it('does not let Claude invent structure on a partial page', () => {
-    // Eval item C (back of a card): a completed opening fragment ("Mix
-    // cheese, …") and Claude's own comment as the description ("The card is
-    // cut off at the top…"). Pulling ingredients out of a method is wanted —
-    // it's what lets prose-only recipes match the inventory.
-    expect(CLAUDE_VISION_PROMPT).toContain("keep it as it is; don't complete it");
+  it("does not let Claude add its own commentary", () => {
+    // Eval item C (back of a card): Claude wrote "The card is cut off at the
+    // top…" as the description. A "don't complete fragments" rule was tried
+    // alongside and dropped: the eval showed it made Claude reword the method
+    // (C fell from 10/15 to 3/15).
     expect(CLAUDE_VISION_PROMPT).toContain("Don't add your own comments or explanations");
+    expect(CLAUDE_VISION_PROMPT).not.toContain("don't complete it");
   });
 
   it('asks for one action per step and carries no card-specific examples', () => {
