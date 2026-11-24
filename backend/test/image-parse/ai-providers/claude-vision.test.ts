@@ -16,7 +16,7 @@ vi.mock('../../../src/modules/llm/claude/claude-model.js', async (importOriginal
 }));
 
 const { ClaudeVisionProvider } = await import('../../../src/modules/image-parse/ai-providers/claude-vision.js');
-const { DEFAULT_TRANSCRIPTION_PROMPT } = await import('../../../src/modules/image-parse/ai-providers/ollama-vision.js');
+const { CLAUDE_VISION_PROMPT } = await import('../../../src/modules/image-parse/ai-providers/claude-vision.js');
 const { CLAUDE_ERROR_MESSAGES } = await import('../../../src/modules/llm/claude/claude-call.js');
 
 afterEach(() => mocks.create.mockReset());
@@ -60,10 +60,10 @@ describe('ClaudeVisionProvider', () => {
     expect(meta.format).toBe('jpeg');
   });
 
-  it('uses the default transcription prompt when the caller passes none', async () => {
+  it('uses the structured-reply prompt when the caller passes none', async () => {
     mocks.create.mockResolvedValue({ content: [{ type: 'text', text: 'x' }], stop_reason: 'end_turn' });
     await new ClaudeVisionProvider().parseImage(await bigPng(), 'image/png', '  ');
-    expect(sentBlocks()[1]).toEqual({ type: 'text', text: DEFAULT_TRANSCRIPTION_PROMPT });
+    expect(sentBlocks()[1]).toEqual({ type: 'text', text: CLAUDE_VISION_PROMPT });
   });
 
   it('leaves room for thinking and a long transcription (max_tokens 16000)', async () => {
@@ -98,5 +98,83 @@ describe('ClaudeVisionProvider', () => {
     await expect(new ClaudeVisionProvider().parseImage(await bigPng(), 'image/png', '')).rejects.toThrow(
       CLAUDE_ERROR_MESSAGES.auth
     );
+  });
+});
+
+describe('ClaudeVisionProvider structured output', () => {
+  const reply = (obj: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(obj) }], stop_reason: 'end_turn' });
+
+  it('asks for JSON with a verbatim transcription', async () => {
+    mocks.create.mockResolvedValue(reply({ transcription: 'Soup', type: 'unknown' }));
+    await new ClaudeVisionProvider().parseImage(await bigPng(), 'image/png', '');
+    const prompt = sentBlocks()[1].text as string;
+    expect(prompt).toContain('JSON');
+    expect(prompt).toContain('transcription');
+  });
+
+  it('returns the recipe structured, with the printed-card title, notes as description, and ingredient lines as written', async () => {
+    mocks.create.mockResolvedValue(
+      reply({
+        transcription: "Here's what's cookin': Chocolate-Nut Zucchini Cake\n3 sq. unsweetened chocolate\nMelt chocolate.",
+        type: 'recipe',
+        recipe: {
+          title: 'Chocolate-Nut Zucchini Cake',
+          description: 'Excellent à la mode with french vanilla ice cream.',
+          servings: 10,
+          ingredients: ['3 sq. unsweetened chocolate', '1½ tsp. baking powder'],
+          instructions: ['Melt chocolate over hot, not boiling, water.', 'Let cool.'],
+        },
+      })
+    );
+
+    const result = await new ClaudeVisionProvider().parseImage(await bigPng(), 'image/png', '');
+
+    expect(result.rawText).toContain("Here's what's cookin'");
+    expect(result.structured?.type).toBe('recipe');
+    const data = result.structured?.data as Record<string, any>;
+    expect(data.title).toBe('Chocolate-Nut Zucchini Cake');
+    expect(data.description).toBe('Excellent à la mode with french vanilla ice cream.');
+    expect(data.servings).toBe(10);
+    expect(data.ingredients).toEqual([{ name: '3 sq. unsweetened chocolate' }, { name: '1½ tsp. baking powder' }]);
+    expect(data.instructions).toEqual(['Melt chocolate over hot, not boiling, water.', 'Let cool.']);
+  });
+
+  it('returns a list structured as items', async () => {
+    mocks.create.mockResolvedValue(
+      reply({ transcription: 'milk\neggs', type: 'list', list: { title: 'Groceries', items: ['milk', 'eggs'] } })
+    );
+    const result = await new ClaudeVisionProvider().parseImage(await bigPng(), 'image/png', '');
+    expect(result.structured?.type).toBe('list');
+    expect((result.structured?.data as any).items).toEqual([{ content: 'milk' }, { content: 'eggs' }]);
+  });
+
+  it('keeps other kinds of content as plain text for the existing parsers', async () => {
+    mocks.create.mockResolvedValue(reply({ transcription: 'Dentist Tue 3pm', type: 'calendar_event' }));
+    const result = await new ClaudeVisionProvider().parseImage(await bigPng(), 'image/png', '');
+    expect(result.rawText).toBe('Dentist Tue 3pm');
+    expect(result.structured).toBeUndefined();
+  });
+
+  it('fails clearly, without inventing anything, when the photo has no readable text', async () => {
+    mocks.create.mockResolvedValue(reply({ transcription: '', type: 'unknown' }));
+    await expect(new ClaudeVisionProvider().parseImage(await bigPng(), 'image/png', '')).rejects.toThrow(
+      'No readable text was found in this photo.'
+    );
+  });
+
+  it('falls back to the whole reply as plain text when it is not valid JSON', async () => {
+    mocks.create.mockResolvedValue({ content: [{ type: 'text', text: 'Pancakes\n1 cup flour' }], stop_reason: 'end_turn' });
+    const result = await new ClaudeVisionProvider().parseImage(await bigPng(), 'image/png', '');
+    expect(result.rawText).toBe('Pancakes\n1 cup flour');
+    expect(result.structured).toBeUndefined();
+  });
+
+  it('accepts JSON wrapped in a code fence', async () => {
+    mocks.create.mockResolvedValue({
+      content: [{ type: 'text', text: '```json\n' + JSON.stringify({ transcription: 'milk', type: 'list', list: { items: ['milk'] } }) + '\n```' }],
+      stop_reason: 'end_turn',
+    });
+    const result = await new ClaudeVisionProvider().parseImage(await bigPng(), 'image/png', '');
+    expect(result.structured?.type).toBe('list');
   });
 });
