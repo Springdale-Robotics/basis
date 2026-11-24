@@ -3,6 +3,7 @@ import { getClaudeKeyStatus } from '../../llm/claude/ai-backend.js';
 import { claudeComplete } from '../../llm/claude/claude-call.js';
 import { FALLBACK_CLAUDE_MODEL, getClaudeModel } from '../../llm/claude/claude-model.js';
 import { z } from 'zod';
+import { hasNumberedSteps, splitIntoSteps } from '../../recipes/recipe-line-classifier.js';
 import type { VisionProvider, VisionResult } from './index.js';
 
 /**
@@ -80,6 +81,18 @@ function parseReply(text: string): z.infer<typeof replySchema> | null {
 
 const nonEmpty = (xs: string[]) => xs.map((x) => x.trim()).filter(Boolean);
 
+/**
+ * Claude chunks an unnumbered method differently from run to run (11 steps
+ * once, 3 paragraphs the next, same card). Joining and re-splitting at
+ * sentence ends makes the result depend on the card, not the run. A card that
+ * numbers its own steps keeps them as written.
+ */
+function normaliseSteps(steps: string[], transcription: string): string[] {
+  const cleaned = nonEmpty(steps);
+  if (hasNumberedSteps(transcription)) return cleaned;
+  return splitIntoSteps(cleaned.join(' '));
+}
+
 function toStructured(reply: z.infer<typeof replySchema>): VisionResult['structured'] {
   if (reply.type === 'recipe' && reply.recipe) {
     const r = reply.recipe;
@@ -93,7 +106,7 @@ function toStructured(reply: z.infer<typeof replySchema>): VisionResult['structu
         prepTimeMinutes: r.prepTimeMinutes ?? undefined,
         cookTimeMinutes: r.cookTimeMinutes ?? undefined,
         ingredients: nonEmpty(r.ingredients).map((name) => ({ name })),
-        instructions: nonEmpty(r.instructions),
+        instructions: normaliseSteps(r.instructions, reply.transcription),
       },
     };
   }

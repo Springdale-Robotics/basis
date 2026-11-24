@@ -99,7 +99,9 @@ const MAX_BARE_INGREDIENT_WORDS = 5;
  * Requiring the next character to be a capital or a digit keeps decimals and
  * mid-sentence initials from splitting.
  */
-const SENTENCE_BOUNDARY = /(?<=[A-Za-z0-9]{3}[.!?]["')\]]?)\s+(?=[A-Z0-9])/;
+// The degree sign counts too: "Preheat oven to 350°." ends a sentence, and a
+// temperature is never an abbreviation.
+const SENTENCE_BOUNDARY = /(?<=[A-Za-z0-9°]{3}[.!?]["')\]]?)\s+(?=[A-Z0-9])/;
 
 /**
  * Break a run of method prose into steps.
@@ -113,6 +115,14 @@ export function splitIntoSteps(text: string): string[] {
     .split(SENTENCE_BOUNDARY)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+}
+
+/**
+ * Did the author number their steps? Two or more numbered lines ("1. Preheat")
+ * means the steps are theirs to keep; otherwise the method is prose to split.
+ */
+export function hasNumberedSteps(text: string): boolean {
+  return text.split('\n').filter((line) => NUMBERED_STEP.test(line)).length >= 2;
 }
 
 export interface LineContext {

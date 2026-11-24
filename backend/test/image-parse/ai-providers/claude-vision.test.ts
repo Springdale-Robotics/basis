@@ -180,3 +180,28 @@ describe('ClaudeVisionProvider structured output', () => {
     expect(result.structured?.type).toBe('list');
   });
 });
+
+describe('ClaudeVisionProvider step splitting', () => {
+  const reply = (obj: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(obj) }], stop_reason: 'end_turn' });
+  const card = 'Melt chocolate. Let cool. Preheat oven to 350°.\nAdd 1 c. sugar. Bake 1 hour.';
+  const expected = ['Melt chocolate.', 'Let cool.', 'Preheat oven to 350°.', 'Add 1 c. sugar.', 'Bake 1 hour.'];
+
+  async function stepsFor(instructions: string[], transcription = card) {
+    mocks.create.mockResolvedValue(
+      reply({ transcription, type: 'recipe', recipe: { title: 'X', ingredients: ['1 egg'], instructions } })
+    );
+    const result = await new ClaudeVisionProvider().parseImage(await bigPng(), 'image/png', '');
+    return (result.structured?.data as any).instructions as string[];
+  }
+
+  it('gives the same steps however Claude chunks an unnumbered method', async () => {
+    expect(await stepsFor(['Melt chocolate. Let cool. Preheat oven to 350°.', 'Add 1 c. sugar. Bake 1 hour.'])).toEqual(expected);
+    expect(await stepsFor(['Melt chocolate. Let cool. Preheat oven to 350°. Add 1 c. sugar. Bake 1 hour.'])).toEqual(expected);
+    expect(await stepsFor(expected)).toEqual(expected);
+  });
+
+  it('keeps the steps as written when the card numbers them', async () => {
+    const numbered = '1. Melt chocolate. Let cool.\n2. Bake 1 hour.';
+    expect(await stepsFor(['Melt chocolate. Let cool.', 'Bake 1 hour.'], numbered)).toEqual(['Melt chocolate. Let cool.', 'Bake 1 hour.']);
+  });
+});
