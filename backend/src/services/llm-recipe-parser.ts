@@ -47,7 +47,8 @@ Rules:
 - Use standard unit names: cup, tsp, tbsp, oz, lb, g, kg, mL, L, piece, slice, clove, can, bunch, pinch
 - If ingredients are organized into groups (e.g., "For the sauce:", "Dough:"), use separate group objects with names
 - If no explicit groups, use a single group with name: null
-- Each instruction should be one discrete step
+- Each instruction should be one discrete step, using the text's own sentences
+- Copy the wording of names, steps and notes exactly as written: keep the spelling, abbreviations and punctuation; do not expand abbreviations ("min." stays "min."), add words, or complete sentences. You are dividing the text into fields, not rewriting it
 - If timing info isn't explicitly stated, use null
 - Omit fields that can't be determined rather than guessing`;
 

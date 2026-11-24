@@ -93,6 +93,18 @@ describe('getLLMProvider under the AI backend switch', () => {
   });
 });
 
+describe('fallback prompt keeps the recipe\'s own words', () => {
+  it('tells Claude to copy wording rather than rewrite it', async () => {
+    // Photo-import eval: this fallback turned "45 min" into "45 minutes" and
+    // "cheese, both corns, …" into "Combine cheese, both corns, …".
+    mocks.create.mockResolvedValue({ content: [{ type: 'text', text: VALID_RECIPE }], stop_reason: 'end_turn' });
+    await parseRecipeWithLLM('Pancakes');
+    const system = mocks.create.mock.calls[0][0].system as string;
+    expect(system).toContain('Copy the wording of names, steps and notes exactly');
+    expect(system).toContain('do not expand abbreviations');
+  });
+});
+
 describe('parseRecipeWithLLM outcome', () => {
   it('ok with the parsed recipe', async () => {
     mocks.create.mockResolvedValue({ content: [{ type: 'text', text: VALID_RECIPE }], stop_reason: 'end_turn' });
