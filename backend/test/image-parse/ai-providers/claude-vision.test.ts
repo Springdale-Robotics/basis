@@ -193,6 +193,11 @@ describe('ClaudeVisionProvider steps', () => {
     expect((result.structured?.data as any).instructions).toEqual(steps);
   });
 
+  it('asks Claude to leave out text that is not part of the recipe', () => {
+    // A product sticker's own instructions ended up in a recipe's notes (eval item D).
+    expect(CLAUDE_VISION_PROMPT).toContain("Leave out text that isn't part of this recipe");
+  });
+
   it('asks for one action per step and carries no card-specific examples', () => {
     expect(CLAUDE_VISION_PROMPT).toContain('one action per step');
     expect(CLAUDE_VISION_PROMPT).not.toContain("what's cookin");
