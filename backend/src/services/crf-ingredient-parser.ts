@@ -21,6 +21,16 @@ interface CRFParseResponse {
  *
  * Throws if the service is unavailable or returns an error.
  */
+/**
+ * "1-½" and "1-1/2" are mixed numbers, but the CRF model reads them as just
+ * the fraction (½). A hyphen between a whole number and a fraction can only
+ * mean that — a range runs upward, and a proper fraction is below any whole
+ * number — so send it with a space instead. Ranges ("2-3") are untouched.
+ */
+function joinMixedNumbers(line: string): string {
+  return line.replace(/(\d)\s*-\s*(?=[½¼¾⅓⅔⅛⅜⅝⅞]|\d+\/\d+)/g, '$1 ');
+}
+
 export async function parseIngredientsWithCRF(
   ingredientLines: string[]
 ): Promise<CRFParsedIngredient[]> {
@@ -31,7 +41,7 @@ export async function parseIngredientsWithCRF(
     response = await fetch(`${serviceUrl}/parse/ingredients`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ingredients: ingredientLines }),
+      body: JSON.stringify({ ingredients: ingredientLines.map(joinMixedNumbers) }),
       signal: AbortSignal.timeout(10000),
     });
   } catch (err) {
